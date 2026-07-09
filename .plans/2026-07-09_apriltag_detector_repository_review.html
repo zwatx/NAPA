@@ -12,10 +12,12 @@
 <meta name="thelab:kind" content="review">
 <meta name="thelab:status" content="done">
 <meta name="thelab:tags" content="audit,vision,python">
+<meta name="thelab:reviewof-commit" content="9a345a83bb7d9031fa1a7a6043a35cd58799567f">
+<meta name="thelab:reviewof-branch" content="master">
 <!-- Optional: issue numbers this plan closes on ship, e.g. content="3,7". They
      auto-close when the plan is marked done (`lab done … --commit`). -->
 <meta name="thelab:addresses" content="">
-<meta name="thelab:version" content="2">
+<meta name="thelab:version" content="3">
 <meta name="thelab:hosted-url" content="https://thelab.wilsonzach.com/project/apriltagdetector/review/apriltag-detector-repository-review">
 <script type="application/json" id="thelab-findings">
 [
@@ -85,7 +87,7 @@
   <section class="plan-links">
     <div class="tbl-scroll"><table class="data">
       <tr><td>Project</td><td>AprilTagDetector</td></tr>
-      <tr><td>Version</td><td id="thelab-version">v2</td></tr>
+      <tr><td>Version</td><td id="thelab-version">v3</td></tr>
       <tr><td>Status</td><td><span class="status st-done">done</span> · 2026-07-09</td></tr>
     </table></div>
   </section>
@@ -95,7 +97,7 @@
   <div class="callout"><strong>Verdict.</strong> Substantial correctness, packaging, and maintainability defects were fixed in the reviewed workspace. The code is suitable for replay and controlled bench testing. Do not treat the bundled camera calibration or field layout as competition-ready, and do not publish the package until a redistribution license and initial Git baseline exist.</div>
 
   <h2>Review scope</h2>
-  <p>This review covered the full Python runtime, profiles, tests, output contracts, build metadata, CI, documentation, generated artifacts, and the repository-only occlusion experiment. It compared the NetworkTables packet with the 2026 upstream Mechanical Advantage Northstar publisher and robot consumer. The repository has an unborn <code>master</code> branch, no remote, and no commit to cite, so this document judges the 2026-07-09 working-tree snapshot.</p>
+  <p>This review covered the full Python runtime, profiles, tests, output contracts, build metadata, CI, documentation, generated artifacts, and the repository-only occlusion experiment. It compared the NetworkTables packet with the 2026 upstream Mechanical Advantage Northstar publisher and robot consumer. The review began against an unborn <code>master</code> working tree; the accepted snapshot was subsequently recorded as commit <code>9a345a8</code>. No remote is configured.</p>
   <p>The initial baseline had 8 passing and 3 failing tests under current OpenCV, profiles that disappeared from installed wheels, deprecated ArUco calls, mixed coordinate conventions, ambiguous output semantics, epoch timestamps on a monotonic NetworkTables contract, and no supported CLI/package boundary.</p>
 
   <h2>Runtime flow reviewed</h2>
