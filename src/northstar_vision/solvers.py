@@ -339,6 +339,103 @@ class CameraPoseSolver:
             return None
         return rvec, tvec
 
+    def _solve_multi(
+        self,
+        observations: Sequence[FiducialImageObservation],
+        camera: CameraConfig,
+        tag_size_m: float,
+        tag_layout: dict[int, np.ndarray],
+        diagnostics: PoseSolveDiagnostics,
+    ) -> CameraPoseObservation | None:
+        active = list(observations)
+        outlier_iterations = 0
+        while len(active) >= 2:
+            diagnostics.iterations += 1
+            object_points, image_points = self._multi_points(active, tag_size_m, tag_layout)
+            if not np.all(np.isfinite(image_points)):
+                diagnostics.rejection_reason = "one or more tag corners are non-finite"
+                return None
+
+            candidate = self._ransac_candidate(active, object_points, image_points, camera)
+            if candidate is not None:
+                diagnostics.used_ransac = True
+            else:
+                candidate = self._generic_candidate(object_points, image_points, camera)
+            if candidate is None:
+                diagnostics.rejection_reason = "OpenCV could not produce a physically valid multi-tag pose"
+                return None
+            rvec, tvec = candidate
+            per_tag, error = self._residuals(active, object_points, image_points, rvec, tvec, camera)
+
+            # Once every tag agrees with the robust estimate, refine using all
+            # accepted corners and keep the lower-error physically valid pose.
+            if max(per_tag.values()) <= self.max_tag_reprojection_error_px:
+                refined = self._generic_candidate(object_points, image_points, camera)
+                if refined is not None:
+                    refined_per_tag, refined_error = self._residuals(
+                        active,
+                        object_points,
+                        image_points,
+                        refined[0],
+                        refined[1],
+                        camera,
+                    )
+                    if max(refined_per_tag.values()) <= self.max_tag_reprojection_error_px and refined_error <= error:
+                        rvec, tvec = refined
+                        per_tag, error = refined_per_tag, refined_error
+
+            diagnostics.per_tag_rms_reprojection_error_px.update(per_tag)
+            diagnostics.overall_rms_reprojection_error_px = error
+            worst_tag_id, worst_error = max(per_tag.items(), key=lambda item: item[1])
+            tag_errors_ok = worst_error <= self.max_tag_reprojection_error_px
+            overall_error_ok = error <= self.max_reprojection_error_px
+            if tag_errors_ok and overall_error_ok:
+                camera_to_field = opencv_pose_to_wpilib_transform(rvec, tvec)
+                field_to_camera = invert_transform(camera_to_field)
+                camera_position = field_to_camera[:3, 3]
+                if self.bounds is not None:
+                    rejection_reason = self.bounds.rejection_reason(camera_position)
+                    if rejection_reason is not None:
+                        diagnostics.rejection_reason = rejection_reason
+                        return None
+                distances = [float(np.linalg.norm(tag_layout[obs.tag_id][:3, 3] - camera_position)) for obs in active]
+                average_distance = float(np.mean(distances))
+                confidence = 1.0 / (1.0 + error + 0.1 * average_distance)
+                diagnostics.accepted_tag_ids = [obs.tag_id for obs in active]
+                return CameraPoseObservation(
+                    tag_ids=diagnostics.accepted_tag_ids.copy(),
+                    field_to_camera_0=field_to_camera,
+                    error_0=error,
+                    field_to_camera_1=None,
+                    error_1=None,
+                    average_tag_distance=average_distance,
+                    confidence=confidence,
+                    diagnostics=diagnostics,
+                )
+
+            if len(active) <= 2 or outlier_iterations >= self.max_outlier_iterations:
+                diagnostics.rejection_reason = (
+                    f"multi-tag reprojection error is {error:.3f}px overall; worst tag {worst_tag_id} "
+                    f"is {worst_error:.3f}px"
+                )
+                return None
+            if worst_error > self.max_tag_reprojection_error_px:
+                reason = (
+                    f"reprojection residual {worst_error:.3f}px exceeded {self.max_tag_reprojection_error_px:.3f}px"
+                )
+            else:
+                reason = (
+                    f"highest tag residual {worst_error:.3f}px removed because overall residual "
+                    f"{error:.3f}px exceeded {self.max_reprojection_error_px:.3f}px"
+                )
+            diagnostics.rejected_tag_reasons[worst_tag_id] = reason
+            active = [observation for observation in active if observation.tag_id != worst_tag_id]
+            outlier_iterations += 1
+
+        diagnostics.rejection_reason = "fewer than two inlier tags remain"
+        return None
+
+
 class TagAngleSolver:
     def solve(
         self,
