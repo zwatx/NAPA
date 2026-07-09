@@ -48,6 +48,9 @@ jobs:
       - run: /tmp/northstar-wheel/bin/python -m pip install dist/*.whl
       - run: cd /tmp && /tmp/northstar-wheel/bin/northstar-vision --list-profiles
       - run: cd /tmp && /tmp/northstar-wheel/bin/northstar-vision --profile laptop --check-config
+      - run: cd /tmp && /tmp/northstar-wheel/bin/northstar-benchmark --help
+      - run: cd /tmp && /tmp/northstar-wheel/bin/northstar-calibrate --help
+      - run: cd /tmp && /tmp/northstar-wheel/bin/northstar-layout --help
       - run: python -m venv /tmp/northstar-sdist
       - run: /tmp/northstar-sdist/bin/python -m pip install dist/*.tar.gz
       - run: cd /tmp && /tmp/northstar-sdist/bin/northstar-vision --profile raspi --check-config

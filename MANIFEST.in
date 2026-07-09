@@ -1,0 +1,2 @@
+include CHANGELOG.md
+include benchmarks/corpus.example.json
