@@ -147,3 +147,162 @@ class AsyncJsonlOutputPublisher(OutputPublisher):
         )
         self._thread.start()
 
+    def publish(self, result: FrameResult) -> None:
+        with self._condition:
+            self._publish_attempts += 1
+            if not self._accepting:
+                if self._writer_error is not None:
+                    raise JsonlRecorderError(f"JSONL writer failed: {self._writer_error}")
+                raise RuntimeError("Cannot publish after the JSONL publisher is closing or closed")
+
+            if len(self._queue) >= self.config.queue_size:
+                if self.config.drop_policy == "drop_newest":
+                    self._dropped_newest += 1
+                    return
+                self._queue.popleft()
+                self._dropped_oldest += 1
+
+            self._queue.append(result)
+            self._enqueued += 1
+            self._queue_high_water_mark = max(self._queue_high_water_mark, len(self._queue))
+            self._condition.notify()
+
+    def telemetry(self) -> dict[str, Any]:
+        """Return a thread-safe, JSON-serializable recorder health snapshot."""
+
+        with self._condition:
+            dropped_total = (
+                self._dropped_oldest + self._dropped_newest + self._dropped_writer_error + self._dropped_on_close
+            )
+            return {
+                "state": self._state,
+                "queue_capacity": self.config.queue_size,
+                "queue_depth": len(self._queue),
+                "queue_high_water_mark": self._queue_high_water_mark,
+                "publish_attempts": self._publish_attempts,
+                "enqueued_records": self._enqueued,
+                "written_records": self._written,
+                "dropped_records": dropped_total,
+                "dropped_oldest": self._dropped_oldest,
+                "dropped_newest": self._dropped_newest,
+                "dropped_writer_error": self._dropped_writer_error,
+                "dropped_on_close": self._dropped_on_close,
+                "rotations": self._rotations,
+                "flushes": self._flushes,
+                "fsyncs": self._fsyncs,
+                "last_fsync_duration_ms": self._last_fsync_duration_ms,
+                "retained_archives": self._retained_archives,
+                "writer_error": self._writer_error,
+                "writer_thread_alive": self._thread.is_alive(),
+                "last_write_monotonic_s": self._last_write_monotonic_s,
+                "last_write_duration_ms": self._last_write_duration_ms,
+                "mean_write_duration_ms": (
+                    None if self._written == 0 else self._total_write_duration_ms / self._written
+                ),
+                "max_write_duration_ms": None if self._written == 0 else self._max_write_duration_ms,
+            }
+
+    def wait_until_idle(self, timeout_s: float = 5.0) -> bool:
+        """Wait until all currently queued records finish, primarily for tests/tools."""
+
+        if timeout_s < 0:
+            raise ValueError("timeout_s must not be negative")
+        deadline = time.monotonic() + timeout_s
+        with self._condition:
+            while self._queue or self._in_flight:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return False
+                self._condition.wait(remaining)
+            return True
+
+    def close(self) -> None:
+        with self._close_lock:
+            if self.closed:
+                return
+            with self._condition:
+                self._accepting = False
+                if self._state == "running":
+                    self._state = "closing"
+                self._condition.notify_all()
+
+            self._thread.join(self.config.close_timeout_s)
+            if self._thread.is_alive():
+                with self._condition:
+                    self._force_stop = True
+                    self._dropped_on_close += len(self._queue)
+                    self._queue.clear()
+                    self._state = "timed_out"
+                    self.closed = True
+                    self._condition.notify_all()
+                raise JsonlRecorderCloseTimeout(
+                    f"JSONL writer did not stop within {self.config.close_timeout_s:g} seconds; "
+                    "queued records were discarded"
+                )
+
+            with self._condition:
+                self.closed = True
+                writer_error = self._writer_error
+            if writer_error is not None:
+                raise JsonlRecorderError(f"JSONL writer failed: {writer_error}")
+
+    def _writer_main(self) -> None:
+        try:
+            while True:
+                result = self._next_result()
+                if result is None:
+                    break
+                write_start = perf_counter()
+                try:
+                    line = self._line_encoder(result)
+                    if not line.endswith("\n"):
+                        line += "\n"
+                    encoded_size = len(line.encode("utf-8"))
+                    if self._should_rotate(encoded_size):
+                        self._rotate()
+                    self._file.write(line)
+                    self._current_size_bytes += encoded_size
+                    now = self.clock()
+                    if self.config.flush_interval_s == 0 or now >= self._next_flush_monotonic_s:
+                        self._flush(now)
+                    with self._condition:
+                        write_duration_ms = (perf_counter() - write_start) * 1000.0
+                        self._written += 1
+                        self._last_write_monotonic_s = now
+                        self._last_write_duration_ms = write_duration_ms
+                        self._total_write_duration_ms += write_duration_ms
+                        self._max_write_duration_ms = max(self._max_write_duration_ms, write_duration_ms)
+                except Exception as exc:
+                    self._record_writer_error(exc)
+                    break
+                finally:
+                    with self._condition:
+                        self._in_flight = False
+                        self._condition.notify_all()
+        finally:
+            self._finish_writer()
+
+    def _next_result(self) -> FrameResult | None:
+        with self._condition:
+            while not self._queue and self._accepting and not self._force_stop:
+                timeout = None
+                if self.config.flush_interval_s > 0:
+                    timeout = max(0.0, self._next_flush_monotonic_s - self.clock())
+                self._condition.wait(timeout)
+                if (
+                    not self._queue
+                    and self.config.flush_interval_s > 0
+                    and self.clock() >= self._next_flush_monotonic_s
+                ):
+                    try:
+                        self._flush(self.clock())
+                    except Exception as exc:
+                        self._record_writer_error(exc)
+                        return None
+            if self._force_stop:
+                return None
+            if not self._queue:
+                return None
+            self._in_flight = True
+            return self._queue.popleft()
+
