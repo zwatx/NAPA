@@ -332,6 +332,53 @@ class OpenCVCameraSource(FrameSource):
             self._release_capture(capture)
             raise
 
+    def _store_frame(self, frame: np.ndarray) -> None:
+        timestamp = self._wall_clock()
+        capture_monotonic_s = self._monotonic_clock()
+        with self._condition:
+            if self._closed:
+                return
+            if self._latest is not None:
+                self._frames_overwritten += 1
+            self._latest = timestamp, capture_monotonic_s, frame
+            self._frames_captured += 1
+            self._last_frame_monotonic_s = capture_monotonic_s
+            self._last_error = None
+            self._condition.notify_all()
+
+    def _release_capture(self, capture: VideoCaptureLike) -> None:
+        try:
+            capture.release()
+        except Exception as exc:
+            LOGGER.warning("Camera %s release failed: %s", self.camera_id, exc)
+
+    def _camera_properties(self) -> dict[str, tuple[int, float | int | None]]:
+        return {
+            "width": (cv2.CAP_PROP_FRAME_WIDTH, self.camera.width),
+            "height": (cv2.CAP_PROP_FRAME_HEIGHT, self.camera.height),
+            "fps": (cv2.CAP_PROP_FPS, self.camera.fps),
+            "buffer_size": (cv2.CAP_PROP_BUFFERSIZE, self.camera.buffer_size),
+            "auto_exposure": (cv2.CAP_PROP_AUTO_EXPOSURE, self.camera.auto_exposure),
+            "exposure": (cv2.CAP_PROP_EXPOSURE, self.camera.exposure),
+            "gain": (cv2.CAP_PROP_GAIN, self.camera.gain),
+            "fourcc": (cv2.CAP_PROP_FOURCC, None),
+        }
+
+    @staticmethod
+    def _positive_rounded(value: float | None) -> int | None:
+        if value is None or value <= 0:
+            return None
+        return int(round(value))
+
+    @staticmethod
+    def _decode_fourcc(value: float | None) -> str | None:
+        if value is None or value <= 0:
+            return None
+        encoded = int(round(value))
+        characters = "".join(chr((encoded >> (8 * index)) & 0xFF) for index in range(4))
+        return characters if all(32 <= ord(character) <= 126 for character in characters) else None
+
+
 class ReplaySource(FrameSource):
     def __init__(self, replay_path: str | Path, *, loop: bool = False) -> None:
         self.path = Path(replay_path).expanduser()
@@ -392,4 +439,11 @@ def make_frame_source(
     path = replay_path or profile.replay_path
     if path:
         return ReplaySource(path, loop=loop_replay)
-    return OpenCVCameraSource(profile)
+    camera = profile.camera
+    return OpenCVCameraSource(
+        profile,
+        reconnect_initial_s=camera.reconnect_initial_s,
+        reconnect_max_s=camera.reconnect_max_s,
+        read_timeout_s=camera.read_timeout_s,
+        shutdown_timeout_s=camera.shutdown_timeout_s,
+    )

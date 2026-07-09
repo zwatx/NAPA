@@ -90,3 +90,97 @@ def _wait_until(predicate: Callable[[], bool], timeout_s: float = 1.0) -> None:
         time.sleep(0.001)
 
 
+def test_latest_frame_replaces_stale_frames_and_reports_properties() -> None:
+    profile = load_profile("laptop")
+    capture = _FakeCapture([(True, _frame(1)), (True, _frame(2)), (True, _frame(3))])
+    factory_threads: list[int] = []
+
+    def factory(_camera_id: int | str) -> _FakeCapture:
+        factory_threads.append(threading.get_ident())
+        return capture
+
+    wall_values = itertools.count(100)
+    monotonic_values = itertools.count(200)
+    source = OpenCVCameraSource(
+        profile,
+        capture_factory=factory,
+        wall_clock=lambda: float(next(wall_values)),
+        monotonic_clock=lambda: float(next(monotonic_values)),
+        read_attempts=1,
+        reconnect_initial_s=0.01,
+        reconnect_max_s=0.02,
+    )
+    try:
+        _wait_until(lambda: source.health()["capture_frames_captured"] == 3)
+        ok, timestamp, capture_monotonic_s, frame = source.read()
+        assert ok and frame is not None
+        assert int(frame[0, 0, 0]) == 3
+        assert timestamp == 102.0
+        assert capture_monotonic_s == 202.0
+
+        health = source.health()
+        assert health["capture_frames_captured"] == 3
+        assert health["capture_frames_delivered"] == 1
+        assert health["capture_frames_overwritten"] == 2
+        assert health["capture_frames_dropped"] == 2
+        assert health["capture_requested"]["width"] == 1280
+        assert health["capture_negotiated"]["width"] == 1280.0
+        assert health["capture_negotiated"]["height"] == 720.0
+        assert health["capture_property_accepted"]["width"] is True
+        assert health["capture_backend"] == "FAKE"
+        assert health["capture_fourcc"] == "MJPG"
+    finally:
+        source.release()
+
+    worker_thread_ids = set(factory_threads + capture.operation_threads)
+    assert len(worker_thread_ids) == 1
+    assert threading.get_ident() not in worker_thread_ids
+    assert capture.release_count == 1
+
+
+def test_camera_reconnects_after_read_and_open_failures() -> None:
+    profile = load_profile("laptop")
+    disconnect = threading.Event()
+
+    def wait_then_disconnect() -> CaptureResult:
+        assert disconnect.wait(1.0)
+        return False, None
+
+    first = _FakeCapture([(True, _frame(1)), wait_then_disconnect])
+    unavailable = _FakeCapture([], opened=False)
+    recovered = _FakeCapture([(True, _frame(2))])
+    captures: queue.Queue[_FakeCapture] = queue.Queue()
+    for capture in (first, unavailable, recovered):
+        captures.put(capture)
+
+    def factory(_camera_id: int | str) -> _FakeCapture:
+        return captures.get_nowait()
+
+    source = OpenCVCameraSource(
+        profile,
+        capture_factory=factory,
+        read_attempts=1,
+        reconnect_initial_s=0.002,
+        reconnect_max_s=0.004,
+        read_timeout_s=1.0,
+    )
+    try:
+        assert source.read()[3] is not None
+        disconnect.set()
+        ok, _, _, frame = source.read()
+        assert ok and frame is not None
+        assert int(frame[0, 0, 0]) == 2
+        health = source.health()
+        assert health["capture_open_attempts"] >= 3
+        assert health["capture_open_failures"] >= 1
+        assert health["capture_read_failures"] >= 1
+        assert health["capture_disconnects"] >= 1
+        assert health["capture_reconnects"] >= 1
+    finally:
+        source.release()
+
+    assert first.release_count == 1
+    assert unavailable.release_count == 1
+    assert recovered.release_count == 1
+
+
