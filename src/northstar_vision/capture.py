@@ -124,6 +124,69 @@ class OpenCVCameraSource(FrameSource):
         )
         self._thread.start()
 
+    def read(self) -> tuple[bool, float, float, np.ndarray | None]:
+        deadline = None if self.read_timeout_s is None else self._monotonic_clock() + self.read_timeout_s
+        with self._condition:
+            while self._latest is None and not self._closed and self._fatal_error is None:
+                wait_s = None
+                if deadline is not None:
+                    wait_s = deadline - self._monotonic_clock()
+                    if wait_s <= 0:
+                        break
+                self._condition.wait(wait_s)
+
+            if self._fatal_error is not None:
+                raise self._fatal_error
+            if self._latest is None:
+                return False, self._wall_clock(), self._monotonic_clock(), None
+
+            timestamp, capture_monotonic_s, frame = self._latest
+            self._latest = None
+            self._frames_delivered += 1
+            return True, timestamp, capture_monotonic_s, frame
+
+    def release(self) -> None:
+        with self._condition:
+            if not self._closed:
+                self._closed = True
+                self._connected = False
+                self._latest = None
+                self._stop.set()
+                self._condition.notify_all()
+
+        if threading.current_thread() is self._thread:
+            return
+        self._thread.join(self.shutdown_timeout_s)
+        if self._thread.is_alive():
+            with self._condition:
+                self._shutdown_timed_out = True
+                self._last_error = "Timed out waiting for the camera capture thread to stop"
+            LOGGER.error("Camera %s capture thread did not stop within %.3fs", self.camera_id, self.shutdown_timeout_s)
+
+    def health(self) -> dict[str, Any]:
+        with self._condition:
+            return {
+                "source_connected": self._connected,
+                "capture_frames_captured": self._frames_captured,
+                "capture_frames_delivered": self._frames_delivered,
+                "capture_frames_overwritten": self._frames_overwritten,
+                "capture_frames_dropped": self._frames_overwritten,
+                "capture_open_attempts": self._open_attempts,
+                "capture_open_failures": self._open_failures,
+                "capture_read_failures": self._read_failures,
+                "capture_disconnects": self._disconnects,
+                "capture_reconnects": self._reconnects,
+                "capture_last_error": self._last_error,
+                "capture_last_frame_monotonic_s": self._last_frame_monotonic_s,
+                "capture_requested": {name: requested for name, (_, requested) in self._property_specs.items()},
+                "capture_property_accepted": dict(self._accepted_properties),
+                "capture_negotiated": dict(self._negotiated_properties),
+                "capture_backend": self._negotiated_backend,
+                "capture_fourcc": self._negotiated_fourcc,
+                "capture_worker_alive": self._thread.is_alive(),
+                "capture_shutdown_timed_out": self._shutdown_timed_out,
+            }
+
 class ReplaySource(FrameSource):
     def __init__(self, replay_path: str | Path, *, loop: bool = False) -> None:
         self.path = Path(replay_path).expanduser()
