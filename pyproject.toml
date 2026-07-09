@@ -24,6 +24,11 @@ dependencies = [
     "opencv-python>=4.7",
 ]
 
+[project.urls]
+Homepage = "https://github.com/Zw96042/apriltag-detector"
+Repository = "https://github.com/Zw96042/apriltag-detector.git"
+Issues = "https://github.com/Zw96042/apriltag-detector/issues"
+
 [project.optional-dependencies]
 nt = ["pyntcore>=2024"]
 test = [
