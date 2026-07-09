@@ -483,12 +483,98 @@ def load_profile(profile: str | Path) -> PlatformProfile:
             raise ProfileError(f"Invalid detection.pose_bounds: {exc}") from exc
 
     output = _mapping(data.get("output", {}), "output")
-    _reject_unknown(output, {"mode", "path", "nt_server"}, "output")
+    _reject_unknown(
+        output,
+        {
+            "mode",
+            "path",
+            "nt_server",
+            "nt_server_port",
+            "nt_delivery",
+            "nt_close_drain_s",
+            "jsonl",
+            "robot_yaw",
+        },
+        "output",
+    )
     output_mode = _string(output.get("mode", "jsonl"), "output.mode")
     if output_mode not in {"jsonl", "none", "nt"}:
         raise ProfileError("output.mode must be one of: jsonl, none, nt")
     output_path = _string(output.get("path", "northstar_output.jsonl"), "output.path")
     nt_server = _string(output.get("nt_server", "10.0.0.2"), "output.nt_server")
+    nt_server_port = _integer(output.get("nt_server_port", 0), "output.nt_server_port", minimum=0)
+    if nt_server_port > 65535:
+        raise ProfileError("output.nt_server_port must be at most 65535")
+    nt_delivery = _string(output.get("nt_delivery", "upstream"), "output.nt_delivery")
+    if nt_delivery not in {"upstream", "latest"}:
+        raise ProfileError("output.nt_delivery must be one of: upstream, latest")
+    nt_close_drain_s = _number(output.get("nt_close_drain_s", 0.1), "output.nt_close_drain_s")
+    if nt_close_drain_s < 0:
+        raise ProfileError("output.nt_close_drain_s must not be negative")
+
+    jsonl_data = _mapping(output.get("jsonl", {}), "output.jsonl")
+    _reject_unknown(
+        jsonl_data,
+        {
+            "queue_size",
+            "drop_policy",
+            "flush_interval_s",
+            "fsync_interval_s",
+            "max_file_size_bytes",
+            "rotation_interval_s",
+            "retention_files",
+            "close_timeout_s",
+        },
+        "output.jsonl",
+    )
+    drop_policy = _string(jsonl_data.get("drop_policy", "drop_oldest"), "output.jsonl.drop_policy")
+    if drop_policy not in {"drop_oldest", "drop_newest"}:
+        raise ProfileError("output.jsonl.drop_policy must be one of: drop_oldest, drop_newest")
+    max_file_size_value = jsonl_data.get("max_file_size_bytes", 64 * 1024 * 1024)
+    max_file_size_bytes = (
+        None
+        if max_file_size_value is None
+        else _integer(max_file_size_value, "output.jsonl.max_file_size_bytes", minimum=1)
+    )
+    rotation_interval_s = _optional_positive_number(
+        jsonl_data.get("rotation_interval_s", 3600.0), "output.jsonl.rotation_interval_s"
+    )
+    fsync_interval_s = _optional_positive_number(
+        jsonl_data.get("fsync_interval_s", 5.0), "output.jsonl.fsync_interval_s"
+    )
+    try:
+        jsonl_recorder = JsonlRecorderConfig(
+            queue_size=_integer(jsonl_data.get("queue_size", 256), "output.jsonl.queue_size", minimum=1),
+            drop_policy=drop_policy,
+            flush_interval_s=_number(jsonl_data.get("flush_interval_s", 1.0), "output.jsonl.flush_interval_s"),
+            fsync_interval_s=fsync_interval_s,
+            max_file_size_bytes=max_file_size_bytes,
+            rotation_interval_s=rotation_interval_s,
+            retention_files=_integer(jsonl_data.get("retention_files", 8), "output.jsonl.retention_files", minimum=0),
+            close_timeout_s=_positive_number(jsonl_data.get("close_timeout_s", 5.0), "output.jsonl.close_timeout_s"),
+        )
+    except ValueError as exc:
+        raise ProfileError(f"Invalid output.jsonl: {exc}") from exc
+
+    yaw_data = _mapping(output.get("robot_yaw", {}), "output.robot_yaw")
+    _reject_unknown(yaw_data, {"topic", "max_age_s", "queue_size"}, "output.robot_yaw")
+    yaw_topic_value = yaw_data.get("topic")
+    robot_yaw_topic = None if yaw_topic_value is None else _string(yaw_topic_value, "output.robot_yaw.topic")
+    if robot_yaw_topic is not None and not robot_yaw_topic.startswith("/"):
+        raise ProfileError("output.robot_yaw.topic must be an absolute NetworkTables path")
+    yaw_max_age_s = _positive_number(yaw_data.get("max_age_s", 0.1), "output.robot_yaw.max_age_s")
+    yaw_queue_size = _integer(yaw_data.get("queue_size", 64), "output.robot_yaw.queue_size", minimum=2)
+
+    production = _boolean(data.get("production", False), "production")
+    if production:
+        if calibration_provenance.kind is not ProvenanceKind.MEASURED:
+            raise ProfileError("production profiles require measured camera calibration provenance")
+        if calibration_rms is None or calibration_views is None:
+            raise ProfileError("production profiles require calibration reprojection error and view count")
+        if layout_provenance.kind is not ProvenanceKind.OFFICIAL:
+            raise ProfileError("production profiles require official field-layout provenance")
+        if field_length_m is None or field_width_m is None:
+            raise ProfileError("production profiles require field layout dimensions")
 
     camera = CameraConfig(
         camera_id=_camera_id(camera_data.get("id", 0)),
