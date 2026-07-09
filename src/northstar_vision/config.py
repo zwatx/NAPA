@@ -354,27 +354,64 @@ def load_profile(profile: str | Path) -> PlatformProfile:
     )
 
     layout_data = _mapping(data.get("tag_layout", {}), "tag_layout")
-    _reject_unknown(layout_data, {"tags"}, "tag_layout")
-    tags = layout_data.get("tags", [])
-    if not isinstance(tags, list):
-        raise ProfileError("tag_layout.tags must be an array")
-    layout: dict[int, np.ndarray] = {}
-    for index, tag_value in enumerate(tags):
-        context = f"tag_layout.tags[{index}]"
-        tag = _mapping(tag_value, context)
-        _reject_unknown(tag, {"id", "pose"}, context)
-        tag_id = _integer(tag.get("id"), f"{context}.id", minimum=0)
-        if tag_id in layout:
-            raise ProfileError(f"Duplicate tag ID {tag_id} in tag_layout")
-        pose = _mapping(tag.get("pose", {}), f"{context}.pose")
-        _reject_unknown(pose, {"translation_m", "rotation_rpy_rad"}, f"{context}.pose")
-        layout[tag_id] = transform_matrix(
-            _vector(pose.get("translation_m", [0.0, 0.0, 0.0]), 3, f"{context}.pose.translation_m"),
-            _vector(pose.get("rotation_rpy_rad", [0.0, 0.0, 0.0]), 3, f"{context}.pose.rotation_rpy_rad"),
+    _reject_unknown(layout_data, {"wpilib_json", "tags", "provenance", "field"}, "tag_layout")
+    wpilib_json = layout_data.get("wpilib_json")
+    if wpilib_json is not None:
+        if "tags" in layout_data or "field" in layout_data:
+            raise ProfileError("tag_layout.wpilib_json cannot be combined with inline tags or field dimensions")
+        explicit_provenance = (
+            None
+            if layout_data.get("provenance") is None
+            else _provenance(layout_data.get("provenance"), "tag_layout.provenance", source)
         )
+        path = _artifact_path(source, wpilib_json, "tag_layout.wpilib_json")
+        try:
+            layout_artifact = load_wpilib_apriltag_layout(path, provenance=explicit_provenance)
+        except (FieldLayoutError, OSError) as exc:
+            raise ProfileError(f"Invalid WPILib field-layout artifact: {exc}") from exc
+        layout = layout_artifact.as_transform_dict()
+        layout_provenance = layout_artifact.provenance
+        field_length_m = layout_artifact.field_length_m
+        field_width_m = layout_artifact.field_width_m
+    else:
+        layout_provenance = _provenance(layout_data.get("provenance"), "tag_layout.provenance", source)
+        field_data = _mapping(layout_data.get("field", {}), "tag_layout.field")
+        _reject_unknown(field_data, {"length_m", "width_m"}, "tag_layout.field")
+        field_length_m = _optional_positive_number(field_data.get("length_m"), "tag_layout.field.length_m")
+        field_width_m = _optional_positive_number(field_data.get("width_m"), "tag_layout.field.width_m")
+        if (field_length_m is None) != (field_width_m is None):
+            raise ProfileError("tag_layout.field must provide both length_m and width_m")
+        tags = layout_data.get("tags", [])
+        if not isinstance(tags, list):
+            raise ProfileError("tag_layout.tags must be an array")
+        layout = {}
+        for index, tag_value in enumerate(tags):
+            context = f"tag_layout.tags[{index}]"
+            tag = _mapping(tag_value, context)
+            _reject_unknown(tag, {"id", "pose"}, context)
+            tag_id = _integer(tag.get("id"), f"{context}.id", minimum=0)
+            if tag_id in layout:
+                raise ProfileError(f"Duplicate tag ID {tag_id} in tag_layout")
+            pose = _mapping(tag.get("pose", {}), f"{context}.pose")
+            _reject_unknown(pose, {"translation_m", "rotation_rpy_rad"}, f"{context}.pose")
+            layout[tag_id] = transform_matrix(
+                _vector(pose.get("translation_m", [0.0, 0.0, 0.0]), 3, f"{context}.pose.translation_m"),
+                _vector(pose.get("rotation_rpy_rad", [0.0, 0.0, 0.0]), 3, f"{context}.pose.rotation_rpy_rad"),
+            )
 
     detection = _mapping(data.get("detection", {}), "detection")
-    _reject_unknown(detection, {"skip_scan", "max_reprojection_error_px"}, "detection")
+    _reject_unknown(
+        detection,
+        {
+            "skip_scan",
+            "max_reprojection_error_px",
+            "max_tag_reprojection_error_px",
+            "max_outlier_iterations",
+            "ransac_iterations",
+            "pose_bounds",
+        },
+        "detection",
+    )
     skip_data = _mapping(detection.get("skip_scan", {}), "detection.skip_scan")
     _reject_unknown(
         skip_data,
@@ -410,6 +447,40 @@ def load_profile(profile: str | Path) -> PlatformProfile:
     )
     if skip_scan.max_roi_area_ratio > 1.0:
         raise ProfileError("detection.skip_scan.max_roi_area_ratio must be at most 1.0")
+
+    max_reprojection_error_px = _positive_number(
+        detection.get("max_reprojection_error_px", 5.0), "detection.max_reprojection_error_px"
+    )
+    max_tag_reprojection_error_px = _positive_number(
+        detection.get("max_tag_reprojection_error_px", max_reprojection_error_px),
+        "detection.max_tag_reprojection_error_px",
+    )
+    max_outlier_iterations = _integer(
+        detection.get("max_outlier_iterations", 8), "detection.max_outlier_iterations", minimum=0
+    )
+    ransac_iterations = _integer(detection.get("ransac_iterations", 100), "detection.ransac_iterations", minimum=1)
+    bounds_data = _mapping(detection.get("pose_bounds", {}), "detection.pose_bounds")
+    _reject_unknown(
+        bounds_data,
+        {"field_margin_m", "min_camera_height_m", "max_camera_height_m"},
+        "detection.pose_bounds",
+    )
+    camera_pose_bounds = None
+    if bounds_data:
+        try:
+            camera_pose_bounds = CameraPoseBounds(
+                field_length_m=field_length_m,
+                field_width_m=field_width_m,
+                field_margin_m=_number(bounds_data.get("field_margin_m", 0.0), "detection.pose_bounds.field_margin_m"),
+                min_camera_height_m=_optional_number(
+                    bounds_data.get("min_camera_height_m"), "detection.pose_bounds.min_camera_height_m"
+                ),
+                max_camera_height_m=_optional_number(
+                    bounds_data.get("max_camera_height_m"), "detection.pose_bounds.max_camera_height_m"
+                ),
+            )
+        except ValueError as exc:
+            raise ProfileError(f"Invalid detection.pose_bounds: {exc}") from exc
 
     output = _mapping(data.get("output", {}), "output")
     _reject_unknown(output, {"mode", "path", "nt_server"}, "output")
