@@ -51,6 +51,8 @@ jobs:
       - run: cd /tmp && /tmp/northstar-wheel/bin/northstar-benchmark --help
       - run: cd /tmp && /tmp/northstar-wheel/bin/northstar-calibrate --help
       - run: cd /tmp && /tmp/northstar-wheel/bin/northstar-layout --help
+      - run: cd /tmp && /tmp/northstar-wheel/bin/northstar-simulate --help
+      - run: cd /tmp && /tmp/northstar-wheel/bin/northstar-simulate --repetitions 1 --warmup-passes 0 --output-dir /tmp/northstar-sim
       - run: python -m venv /tmp/northstar-sdist
       - run: /tmp/northstar-sdist/bin/python -m pip install dist/*.tar.gz
       - run: cd /tmp && /tmp/northstar-sdist/bin/northstar-vision --profile raspi --check-config
