@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "name": "robot-camera-regression",
+  "description": "Copy this manifest, replace the example paths, and add SHA-256 values after the corpus is frozen.",
+  "frames": [
+    {
+      "path": "frames/tag-01-front.png",
+      "expected_tag_ids": [1]
+    },
+    {
+      "path": "frames/tags-01-02-oblique.png",
+      "expected_tag_ids": [1, 2]
+    },
+    {
+      "path": "frames/no-tags-0001.png",
+      "expected_tag_ids": []
+    }
+  ]
+}

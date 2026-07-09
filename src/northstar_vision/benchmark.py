@@ -404,3 +404,85 @@ def _reject_unknown(data: Mapping[str, object], allowed: set[str], context: str)
         raise CorpusManifestError(f"Unknown {context} field(s): {', '.join(unknown)}")
 
 
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Benchmark AprilTag detection against an annotated image corpus")
+    parser.add_argument("manifest", help="Path to the corpus manifest JSON")
+    parser.add_argument("--repetitions", type=_positive_int, default=1, help="Measured passes over the corpus")
+    parser.add_argument("--warmup-passes", type=_nonnegative_int, default=1, help="Unmeasured warm-up passes")
+    parser.add_argument(
+        "--max-failure-samples",
+        type=_nonnegative_int,
+        default=25,
+        help="Maximum mismatch examples retained in the JSON summary",
+    )
+    parser.add_argument("--no-verify-integrity", action="store_true", help="Skip file hashing and declared SHA checks")
+    parser.add_argument("--output", help="Atomically write the JSON summary to this path")
+    parser.add_argument("--pretty", action="store_true", help="Pretty-print JSON instead of compact output")
+    parser.add_argument("--min-recall", type=_ratio, help="Fail when measured recall is below this 0–1 value")
+    parser.add_argument("--min-precision", type=_ratio, help="Fail when measured precision is below this 0–1 value")
+    parser.add_argument(
+        "--max-p95-total-ms",
+        type=_positive_float,
+        help="Fail when p95 image load, detection, and scoring time exceeds this value",
+    )
+    return parser
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    try:
+        summary = run_replay_benchmark(
+            args.manifest,
+            options=BenchmarkOptions(
+                repetitions=args.repetitions,
+                warmup_passes=args.warmup_passes,
+                max_failure_samples=args.max_failure_samples,
+                verify_integrity=not args.no_verify_integrity,
+            ),
+        )
+        thresholds = BenchmarkThresholds(
+            min_recall=args.min_recall,
+            min_precision=args.min_precision,
+            max_p95_total_ms=args.max_p95_total_ms,
+        )
+        gate = evaluate_benchmark_gate(summary, thresholds)
+        summary["gate"] = gate
+        if args.output:
+            write_benchmark_summary(summary, args.output, pretty=args.pretty)
+        print(json.dumps(summary, indent=2 if args.pretty else None, separators=None if args.pretty else (",", ":")))
+    except (CorpusManifestError, OSError, RuntimeError, ValueError) as exc:
+        print(f"northstar-benchmark: error: {exc}", file=sys.stderr)
+        return 2
+    return 0 if gate["passed"] else 1
+
+
+def _positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("must be at least 1")
+    return parsed
+
+
+def _nonnegative_int(value: str) -> int:
+    parsed = int(value)
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("must not be negative")
+    return parsed
+
+
+def _ratio(value: str) -> float:
+    parsed = float(value)
+    if not math.isfinite(parsed) or not 0.0 <= parsed <= 1.0:
+        raise argparse.ArgumentTypeError("must be between 0 and 1")
+    return parsed
+
+
+def _positive_float(value: str) -> float:
+    parsed = float(value)
+    if not math.isfinite(parsed) or parsed <= 0.0:
+        raise argparse.ArgumentTypeError("must be greater than zero")
+    return parsed
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

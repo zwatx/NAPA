@@ -126,3 +126,62 @@ def test_repository_example_manifest_stays_schema_valid() -> None:
     assert manifest.frames[0].expected_tag_ids == (1,)
 
 
+def test_benchmark_summary_writer_and_console_entrypoint(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    cv2.imwrite(str(tmp_path / "blank.png"), np.full((40, 40), 255, dtype=np.uint8))
+    manifest_path = _write_manifest(tmp_path, [{"path": "blank.png", "expected_tag_ids": []}])
+    output_path = tmp_path / "reports" / "summary.json"
+
+    exit_code = main(
+        [
+            str(manifest_path),
+            "--warmup-passes",
+            "0",
+            "--max-failure-samples",
+            "0",
+            "--output",
+            str(output_path),
+        ]
+    )
+    assert exit_code == 0
+    stdout_summary = json.loads(capsys.readouterr().out)
+    file_summary = json.loads(output_path.read_text(encoding="utf-8"))
+    assert stdout_summary == file_summary
+    assert stdout_summary["accuracy"]["false_positives"] == 0
+
+    replacement = {"schema_version": 1, "replacement": True}
+    assert write_benchmark_summary(replacement, output_path) == output_path.resolve()
+    assert json.loads(output_path.read_text(encoding="utf-8")) == replacement
+
+
+def test_benchmark_options_reject_invalid_bounds() -> None:
+    with pytest.raises(ValueError, match="repetitions"):
+        BenchmarkOptions(repetitions=0)
+    with pytest.raises(ValueError, match="warmup_passes"):
+        BenchmarkOptions(warmup_passes=-1)
+    with pytest.raises(ValueError, match="max_failure_samples"):
+        BenchmarkOptions(max_failure_samples=-1)
+    with pytest.raises(ValueError, match="min_recall"):
+        BenchmarkThresholds(min_recall=1.1)
+    with pytest.raises(ValueError, match="max_p95_total_ms"):
+        BenchmarkThresholds(max_p95_total_ms=0.0)
+
+
+def test_benchmark_gate_reports_failures_and_sets_console_exit_status(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    summary = {
+        "accuracy": {"recall": 0.75, "precision": 0.5},
+        "timing": {"total_ms": {"p95_ms": 12.0}},
+    }
+    gate = evaluate_benchmark_gate(
+        summary,
+        BenchmarkThresholds(min_recall=0.8, min_precision=0.4, max_p95_total_ms=10.0),
+    )
+    assert gate["passed"] is False
+    assert len(gate["failures"]) == 2
+
+    cv2.imwrite(str(tmp_path / "blank.png"), np.full((40, 40), 255, dtype=np.uint8))
+    manifest_path = _write_manifest(tmp_path, [{"path": "blank.png", "expected_tag_ids": [1]}])
+    exit_code = main([str(manifest_path), "--warmup-passes", "0", "--min-recall", "1"])
+    assert exit_code == 1
+    assert json.loads(capsys.readouterr().out)["gate"]["passed"] is False
