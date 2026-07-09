@@ -17,8 +17,10 @@ from .geometry import (
     wpilib_points_to_opencv,
 )
 from .types import (
+    CameraPoseBounds,
     CameraPoseObservation,
     FiducialImageObservation,
+    PoseSolveDiagnostics,
     SingleTagPoseObservation,
     TagAngleObservation,
     TrigPoseObservation,
@@ -108,10 +110,34 @@ class SingleTagPoseSolver:
 
 
 class CameraPoseSolver:
-    """Estimate a WPILib field pose while preserving single-tag ambiguity."""
+    """Estimate a WPILib field pose with tag-level quality diagnostics."""
 
-    def __init__(self, max_reprojection_error_px: float = 5.0) -> None:
-        self.max_reprojection_error_px = max_reprojection_error_px
+    def __init__(
+        self,
+        max_reprojection_error_px: float = 5.0,
+        *,
+        max_tag_reprojection_error_px: float | None = None,
+        bounds: CameraPoseBounds | None = None,
+        max_outlier_iterations: int = 8,
+        ransac_iterations: int = 100,
+    ) -> None:
+        if not np.isfinite(max_reprojection_error_px) or max_reprojection_error_px <= 0.0:
+            raise ValueError("max_reprojection_error_px must be finite and greater than zero")
+        tag_limit = (
+            max_reprojection_error_px if max_tag_reprojection_error_px is None else max_tag_reprojection_error_px
+        )
+        if not np.isfinite(tag_limit) or tag_limit <= 0.0:
+            raise ValueError("max_tag_reprojection_error_px must be finite and greater than zero")
+        if isinstance(max_outlier_iterations, bool) or max_outlier_iterations < 0:
+            raise ValueError("max_outlier_iterations must be a non-negative integer")
+        if isinstance(ransac_iterations, bool) or ransac_iterations < 1:
+            raise ValueError("ransac_iterations must be a positive integer")
+        self.max_reprojection_error_px = float(max_reprojection_error_px)
+        self.max_tag_reprojection_error_px = float(tag_limit)
+        self.bounds = bounds
+        self.max_outlier_iterations = max_outlier_iterations
+        self.ransac_iterations = ransac_iterations
+        self.last_diagnostics = PoseSolveDiagnostics()
 
     def solve(
         self,
@@ -121,39 +147,73 @@ class CameraPoseSolver:
         tag_size_m: float,
         tag_layout: dict[int, np.ndarray],
     ) -> CameraPoseObservation | None:
+        diagnostics = PoseSolveDiagnostics(attempted_tag_ids=[observation.tag_id for observation in observations])
+        self.last_diagnostics = diagnostics
         known: list[FiducialImageObservation] = []
         seen_ids: set[int] = set()
         for observation in observations:
-            if observation.tag_id in tag_layout and observation.tag_id not in seen_ids:
-                known.append(observation)
-                seen_ids.add(observation.tag_id)
+            if observation.tag_id not in tag_layout:
+                diagnostics.rejected_tag_reasons[observation.tag_id] = "tag is not present in the field layout"
+                continue
+            try:
+                corners = np.asarray(observation.corners, dtype=np.float64)
+            except (TypeError, ValueError):
+                diagnostics.rejected_tag_reasons[observation.tag_id] = "corners must contain finite numbers"
+                continue
+            if corners.shape != (4, 2) or not np.all(np.isfinite(corners)):
+                diagnostics.rejected_tag_reasons[observation.tag_id] = "corners must be a finite 4x2 array"
+                continue
+            if observation.tag_id in seen_ids:
+                diagnostics.rejected_tag_reasons[observation.tag_id] = "duplicate observation ignored"
+                continue
+            known.append(observation)
+            seen_ids.add(observation.tag_id)
         if not known:
+            diagnostics.rejection_reason = "no unique observed tags are present in the field layout"
             return None
         if len(known) == 1:
             single_by_id = {pose.tag_id: pose for pose in single_tag_poses}
-            return self._solve_single(known[0], single_by_id.get(known[0].tag_id), tag_layout)
-        return self._solve_multi(known, camera, tag_size_m, tag_layout)
+            return self._solve_single(
+                known[0],
+                single_by_id.get(known[0].tag_id),
+                tag_layout,
+                diagnostics,
+            )
+        return self._solve_multi(known, camera, tag_size_m, tag_layout, diagnostics)
 
     def _solve_single(
         self,
         observation: FiducialImageObservation,
         single: SingleTagPoseObservation | None,
         tag_layout: dict[int, np.ndarray],
+        diagnostics: PoseSolveDiagnostics,
     ) -> CameraPoseObservation | None:
-        if (
-            single is None
-            or single.pose_1_rvec is None
-            or single.pose_1_tvec is None
-            or single.error_1 is None
-            or single.error_0 > self.max_reprojection_error_px
-            or single.error_1 > self.max_reprojection_error_px
-        ):
+        if single is None:
+            diagnostics.rejection_reason = "single-tag IPPE solution is unavailable"
+            return None
+        if single.pose_1_rvec is None or single.pose_1_tvec is None or single.error_1 is None:
+            diagnostics.rejection_reason = "single-tag pose does not contain both ambiguity candidates"
+            return None
+        diagnostics.per_tag_rms_reprojection_error_px[observation.tag_id] = single.error_0
+        diagnostics.overall_rms_reprojection_error_px = single.error_0
+        if single.error_0 > self.max_reprojection_error_px or single.error_1 > self.max_reprojection_error_px:
+            diagnostics.rejection_reason = (
+                f"single-tag ambiguity candidate exceeds {self.max_reprojection_error_px:.3f}px reprojection limit"
+            )
             return None
         field_to_tag = tag_layout[observation.tag_id]
         camera_to_tag_0 = opencv_pose_to_wpilib_transform(single.pose_0_rvec, single.pose_0_tvec)
         camera_to_tag_1 = opencv_pose_to_wpilib_transform(single.pose_1_rvec, single.pose_1_tvec)
         field_to_camera_0 = field_to_tag @ invert_transform(camera_to_tag_0)
         field_to_camera_1 = field_to_tag @ invert_transform(camera_to_tag_1)
+        if self.bounds is not None:
+            for index, pose in enumerate((field_to_camera_0, field_to_camera_1)):
+                rejection_reason = self.bounds.rejection_reason(pose[:3, 3])
+                if rejection_reason is not None:
+                    diagnostics.rejection_reason = f"single-tag candidate {index}: {rejection_reason}"
+                    return None
+        diagnostics.accepted_tag_ids = [observation.tag_id]
+        diagnostics.iterations = 1
         confidence = 1.0 / (1.0 + single.error_0 + 0.1 * single.distance)
         return CameraPoseObservation(
             tag_ids=[observation.tag_id],
@@ -163,76 +223,8 @@ class CameraPoseSolver:
             error_1=single.error_1,
             average_tag_distance=single.distance,
             confidence=confidence,
+            diagnostics=diagnostics,
         )
-
-    def _solve_multi(
-        self,
-        observations: Sequence[FiducialImageObservation],
-        camera: CameraConfig,
-        tag_size_m: float,
-        tag_layout: dict[int, np.ndarray],
-    ) -> CameraPoseObservation | None:
-        object_points = np.concatenate(
-            [wpilib_points_to_opencv(tag_field_corners(tag_layout[obs.tag_id], tag_size_m)) for obs in observations]
-        )
-        image_points = np.concatenate([np.asarray(obs.corners, dtype=np.float64).reshape(4, 2) for obs in observations])
-        if not np.all(np.isfinite(image_points)):
-            return None
-        flags = cv2.SOLVEPNP_SQPNP if hasattr(cv2, "SOLVEPNP_SQPNP") else cv2.SOLVEPNP_ITERATIVE
-        try:
-            ok, rvecs, tvecs, errors = cv2.solvePnPGeneric(
-                object_points,
-                image_points,
-                camera.calibration_matrix,
-                camera.distortion_coefficients,
-                flags=flags,
-            )
-        except cv2.error:
-            return None
-        if not ok or len(rvecs) == 0:
-            return None
-        candidates: list[tuple[float, np.ndarray, np.ndarray]] = []
-        for index, (candidate_rvec, candidate_tvec) in enumerate(zip(rvecs, tvecs, strict=False)):
-            candidate_error = _solution_error(
-                errors,
-                index,
-                object_points,
-                image_points,
-                candidate_rvec,
-                candidate_tvec,
-                camera,
-            )
-            if not _valid_solution(
-                candidate_rvec,
-                candidate_tvec,
-                candidate_error,
-                self.max_reprojection_error_px,
-            ):
-                continue
-            rotation, _ = cv2.Rodrigues(candidate_rvec)
-            camera_points = (rotation @ object_points.T).T + np.asarray(candidate_tvec).reshape(1, 3)
-            if np.all(camera_points[:, 2] > 0.0):
-                candidates.append((candidate_error, candidate_rvec, candidate_tvec))
-        if not candidates:
-            return None
-        error, rvec, tvec = min(candidates, key=lambda candidate: candidate[0])
-
-        camera_to_field = opencv_pose_to_wpilib_transform(rvec, tvec)
-        field_to_camera = invert_transform(camera_to_field)
-        camera_position = field_to_camera[:3, 3]
-        distances = [float(np.linalg.norm(tag_layout[obs.tag_id][:3, 3] - camera_position)) for obs in observations]
-        average_distance = float(np.mean(distances))
-        confidence = 1.0 / (1.0 + error + 0.1 * average_distance)
-        return CameraPoseObservation(
-            tag_ids=[obs.tag_id for obs in observations],
-            field_to_camera_0=field_to_camera,
-            error_0=error,
-            field_to_camera_1=None,
-            error_1=None,
-            average_tag_distance=average_distance,
-            confidence=confidence,
-        )
-
 
 class TagAngleSolver:
     def solve(
