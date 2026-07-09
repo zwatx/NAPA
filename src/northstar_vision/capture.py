@@ -252,6 +252,86 @@ class OpenCVCameraSource(FrameSource):
             self._connected = False
             self._condition.notify_all()
 
+    def _open_capture(self) -> VideoCaptureLike | None:
+        with self._condition:
+            self._open_attempts += 1
+        try:
+            capture = self._capture_factory(self.camera_id)
+        except Exception:
+            raise
+
+        try:
+            if not capture.isOpened():
+                with self._condition:
+                    if not self._closed:
+                        self._open_failures += 1
+                        self._last_error = f"Could not open camera {self.camera_id}"
+                self._release_capture(capture)
+                return None
+            if self._stop.is_set():
+                return capture
+
+            accepted: dict[str, bool] = {}
+            for name, (prop, requested) in self._property_specs.items():
+                if requested is None:
+                    continue
+                try:
+                    accepted[name] = bool(capture.set(prop, float(requested)))
+                except Exception as exc:
+                    accepted[name] = False
+                    LOGGER.warning("Camera %s could not set %s=%s: %s", self.camera_id, name, requested, exc)
+                if not accepted[name]:
+                    LOGGER.warning("Camera %s did not accept %s=%s", self.camera_id, name, requested)
+
+            negotiated: dict[str, float | None] = {}
+            for name, (prop, _) in self._property_specs.items():
+                try:
+                    value = float(capture.get(prop))
+                except Exception:
+                    value = math.nan
+                negotiated[name] = value if math.isfinite(value) else None
+
+            backend_name = None
+            get_backend_name = getattr(capture, "getBackendName", None)
+            if callable(get_backend_name):
+                try:
+                    candidate = str(get_backend_name()).strip()
+                except Exception:
+                    candidate = ""
+                backend_name = candidate or None
+            negotiated_fourcc = self._decode_fourcc(negotiated.get("fourcc"))
+
+            with self._condition:
+                self._accepted_properties = accepted
+                self._negotiated_properties = negotiated
+                self._negotiated_backend = backend_name
+                self._negotiated_fourcc = negotiated_fourcc
+            actual_width = self._positive_rounded(negotiated["width"])
+            actual_height = self._positive_rounded(negotiated["height"])
+            if (
+                actual_width is not None
+                and actual_height is not None
+                and (actual_width != self.camera.width or actual_height != self.camera.height)
+            ):
+                raise _FatalCameraConfiguration(
+                    f"Camera negotiated {actual_width}x{actual_height}, but profile calibration requires "
+                    f"{self.camera.width}x{self.camera.height}"
+                )
+
+            with self._condition:
+                if self._closed:
+                    return capture
+                if self._ever_connected:
+                    self._reconnects += 1
+                self._ever_connected = True
+                self._connected = True
+                self._last_error = None
+                self._condition.notify_all()
+            return capture
+        except Exception:
+            self._release_capture(capture)
+            raise
+
 class ReplaySource(FrameSource):
     def __init__(self, replay_path: str | Path, *, loop: bool = False) -> None:
         self.path = Path(replay_path).expanduser()
