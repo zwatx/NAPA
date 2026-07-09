@@ -306,6 +306,39 @@ class CameraPoseSolver:
         _, rvec, tvec = min(candidates, key=lambda candidate: candidate[0])
         return rvec, tvec
 
+    def _ransac_candidate(
+        self,
+        observations: Sequence[FiducialImageObservation],
+        object_points: np.ndarray,
+        image_points: np.ndarray,
+        camera: CameraConfig,
+    ) -> tuple[np.ndarray, np.ndarray] | None:
+        if len(observations) < 3:
+            return None
+        try:
+            ok, rvec, tvec, inliers = cv2.solvePnPRansac(
+                object_points,
+                image_points,
+                camera.calibration_matrix,
+                camera.distortion_coefficients,
+                iterationsCount=self.ransac_iterations,
+                reprojectionError=self.max_tag_reprojection_error_px,
+                confidence=0.99,
+                flags=cv2.SOLVEPNP_EPNP,
+            )
+        except cv2.error:
+            return None
+        if not ok or rvec is None or tvec is None or inliers is None:
+            return None
+        inlier_counts = [0] * len(observations)
+        for point_index in np.asarray(inliers).reshape(-1):
+            inlier_counts[int(point_index) // 4] += 1
+        if sum(count >= 3 for count in inlier_counts) < 2:
+            return None
+        if not _valid_solution(rvec, tvec, 0.0, float("inf")) or not self._points_in_front(object_points, rvec, tvec):
+            return None
+        return rvec, tvec
+
 class TagAngleSolver:
     def solve(
         self,
