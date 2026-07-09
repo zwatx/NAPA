@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import logging
+import math
+import threading
 import time
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any, Protocol
 
 import cv2
 import numpy as np
@@ -24,55 +28,101 @@ class FrameSource(ABC):
     def release(self) -> None:
         """Release source resources."""
 
+    def health(self) -> dict[str, Any]:
+        """Return JSON-compatible source health data."""
+
+        return {"source_connected": True}
+
+
+class VideoCaptureLike(Protocol):
+    """The small subset of ``cv2.VideoCapture`` used by the live source."""
+
+    def isOpened(self) -> bool: ...
+
+    def set(self, prop_id: int, value: float) -> bool: ...
+
+    def get(self, prop_id: int) -> float: ...
+
+    def read(self) -> tuple[bool, np.ndarray | None]: ...
+
+    def release(self) -> None: ...
+
+
+CaptureFactory = Callable[[int | str], VideoCaptureLike]
+
+
+class _FatalCameraConfiguration(RuntimeError):
+    pass
+
 
 class OpenCVCameraSource(FrameSource):
     is_live = True
 
-    def __init__(self, profile: PlatformProfile, *, read_attempts: int = 3) -> None:
+    def __init__(
+        self,
+        profile: PlatformProfile,
+        *,
+        read_attempts: int = 3,
+        reconnect_initial_s: float = 0.1,
+        reconnect_max_s: float = 2.0,
+        read_timeout_s: float | None = None,
+        shutdown_timeout_s: float = 2.0,
+        capture_factory: CaptureFactory = cv2.VideoCapture,
+        wall_clock: Callable[[], float] = time.time,
+        monotonic_clock: Callable[[], float] = time.perf_counter,
+    ) -> None:
         camera = profile.camera
+        if isinstance(read_attempts, bool) or not isinstance(read_attempts, int) or read_attempts < 1:
+            raise ValueError("read_attempts must be at least one")
+        if not math.isfinite(reconnect_initial_s) or reconnect_initial_s <= 0:
+            raise ValueError("reconnect_initial_s must be greater than zero")
+        if not math.isfinite(reconnect_max_s) or reconnect_max_s < reconnect_initial_s:
+            raise ValueError("reconnect_max_s must be at least reconnect_initial_s")
+        if read_timeout_s is not None and (not math.isfinite(read_timeout_s) or read_timeout_s <= 0):
+            raise ValueError("read_timeout_s must be greater than zero")
+        if not math.isfinite(shutdown_timeout_s) or shutdown_timeout_s < 0:
+            raise ValueError("shutdown_timeout_s must not be negative")
+
+        self.camera = camera
         self.camera_id = camera.camera_id
-        self.read_attempts = max(1, read_attempts)
-        self.cap = cv2.VideoCapture(camera.camera_id)
-        if not self.cap.isOpened():
-            self.cap.release()
-            raise RuntimeError(f"Could not open camera {camera.camera_id}")
+        self.read_attempts = read_attempts
+        self.reconnect_initial_s = reconnect_initial_s
+        self.reconnect_max_s = reconnect_max_s
+        self.read_timeout_s = read_timeout_s
+        self.shutdown_timeout_s = shutdown_timeout_s
+        self._capture_factory = capture_factory
+        self._wall_clock = wall_clock
+        self._monotonic_clock = monotonic_clock
 
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, camera.width)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, camera.height)
-        if camera.fps is not None:
-            self._set_optional(cv2.CAP_PROP_FPS, camera.fps, "fps")
-        if camera.buffer_size is not None:
-            self._set_optional(cv2.CAP_PROP_BUFFERSIZE, camera.buffer_size, "buffer_size")
-        if camera.auto_exposure is not None:
-            self._set_optional(cv2.CAP_PROP_AUTO_EXPOSURE, camera.auto_exposure, "auto_exposure")
-        if camera.exposure is not None:
-            self._set_optional(cv2.CAP_PROP_EXPOSURE, camera.exposure, "exposure")
-        if camera.gain is not None:
-            self._set_optional(cv2.CAP_PROP_GAIN, camera.gain, "gain")
-
-        actual_width = int(round(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH)))
-        actual_height = int(round(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT)))
-        if actual_width > 0 and actual_height > 0 and (actual_width != camera.width or actual_height != camera.height):
-            self.cap.release()
-            raise RuntimeError(
-                f"Camera negotiated {actual_width}x{actual_height}, but profile calibration requires "
-                f"{camera.width}x{camera.height}"
-            )
-
-    def _set_optional(self, prop: int, value: float | int, name: str) -> None:
-        if not self.cap.set(prop, value):
-            LOGGER.warning("Camera %s did not accept %s=%s", self.camera_id, name, value)
-
-    def read(self) -> tuple[bool, float, float, np.ndarray | None]:
-        for _ in range(self.read_attempts):
-            ok, frame = self.cap.read()
-            if ok and frame is not None:
-                return True, time.time(), time.perf_counter(), frame
-        return False, time.time(), time.perf_counter(), None
-
-    def release(self) -> None:
-        self.cap.release()
-
+        self._condition = threading.Condition()
+        self._stop = threading.Event()
+        self._latest: tuple[float, float, np.ndarray] | None = None
+        self._closed = False
+        self._connected = False
+        self._fatal_error: RuntimeError | None = None
+        self._last_error: str | None = None
+        self._frames_captured = 0
+        self._frames_delivered = 0
+        self._frames_overwritten = 0
+        self._open_attempts = 0
+        self._open_failures = 0
+        self._read_failures = 0
+        self._disconnects = 0
+        self._reconnects = 0
+        self._ever_connected = False
+        self._shutdown_timed_out = False
+        self._last_frame_monotonic_s: float | None = None
+        self._property_specs = self._camera_properties()
+        self._accepted_properties: dict[str, bool] = {}
+        self._negotiated_properties: dict[str, float | None] = {}
+        self._negotiated_backend: str | None = None
+        self._negotiated_fourcc: str | None = None
+        self._thread = threading.Thread(
+            target=self._capture_loop,
+            name=f"camera-{self.camera_id}-capture",
+            daemon=True,
+        )
+        self._thread.start()
 
 class ReplaySource(FrameSource):
     def __init__(self, replay_path: str | Path, *, loop: bool = False) -> None:
