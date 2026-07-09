@@ -72,3 +72,78 @@ class JsonlRecorderConfig:
             raise ValueError("close_timeout_s must be greater than zero")
 
 
+class AsyncJsonlOutputPublisher(OutputPublisher):
+    """Write frame records off the processing thread with bounded memory.
+
+    ``publish`` never waits for disk I/O. When the bounded queue is full it
+    applies the configured drop policy and exposes the decision through
+    :meth:`telemetry`. ``close`` drains accepted records for at most
+    ``close_timeout_s``; a stuck writer raises :class:`TimeoutError` and the
+    daemon writer is told to discard any work that has not started.
+    """
+
+    def __init__(
+        self,
+        path: str | Path = "northstar_output.jsonl",
+        *,
+        config: JsonlRecorderConfig | None = None,
+        clock: Callable[[], float] = perf_counter,
+        _line_encoder: Callable[[FrameResult], str] | None = None,
+    ) -> None:
+        self.path = Path(path).expanduser()
+        self.config = config or JsonlRecorderConfig()
+        self.clock = clock
+        self._line_encoder = _line_encoder or self._encode_line
+        self._condition = threading.Condition()
+        self._close_lock = threading.Lock()
+        self._queue: deque[FrameResult] = deque()
+        self._in_flight = False
+        self._accepting = True
+        self._force_stop = False
+        self.closed = False
+        self._state = "running"
+        self._writer_error: str | None = None
+
+        self._publish_attempts = 0
+        self._enqueued = 0
+        self._written = 0
+        self._dropped_oldest = 0
+        self._dropped_newest = 0
+        self._dropped_writer_error = 0
+        self._dropped_on_close = 0
+        self._queue_high_water_mark = 0
+        self._rotations = 0
+        self._flushes = 0
+        self._fsyncs = 0
+        self._last_fsync_duration_ms: float | None = None
+        self._last_write_monotonic_s: float | None = None
+        self._last_write_duration_ms: float | None = None
+        self._total_write_duration_ms = 0.0
+        self._max_write_duration_ms = 0.0
+        self._archive_sequence = 0
+
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._file = self.path.open("a", encoding="utf-8")
+        try:
+            try:
+                self._current_size_bytes = self.path.stat().st_size
+            except OSError:
+                self._current_size_bytes = 0
+            now = self.clock()
+            self._opened_monotonic_s = now
+            self._next_flush_monotonic_s = now + self.config.flush_interval_s
+            self._next_fsync_monotonic_s = (
+                None if self.config.fsync_interval_s is None else now + self.config.fsync_interval_s
+            )
+            self._retained_archives = self._prune_archives()
+        except BaseException:
+            self._file.close()
+            raise
+
+        self._thread = threading.Thread(
+            target=self._writer_main,
+            name=f"northstar-jsonl-{self.path.name}",
+            daemon=True,
+        )
+        self._thread.start()
+
