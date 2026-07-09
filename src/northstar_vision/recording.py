@@ -306,3 +306,84 @@ class AsyncJsonlOutputPublisher(OutputPublisher):
             self._in_flight = True
             return self._queue.popleft()
 
+    def _encode_line(self, result: FrameResult) -> str:
+        payload = frame_result_to_dict(result)
+        if self.config.include_writer_telemetry:
+            payload["health"] = dict(payload["health"])
+            payload["health"]["jsonl_writer"] = self.telemetry()
+        return json.dumps(payload, separators=(",", ":"))
+
+    def _should_rotate(self, next_record_size: int) -> bool:
+        if self._current_size_bytes <= 0:
+            return False
+        if (
+            self.config.max_file_size_bytes is not None
+            and self._current_size_bytes + next_record_size > self.config.max_file_size_bytes
+        ):
+            return True
+        return bool(
+            self.config.rotation_interval_s is not None
+            and self.clock() - self._opened_monotonic_s >= self.config.rotation_interval_s
+        )
+
+    def _rotate(self) -> None:
+        self._flush(self.clock(), force_fsync=True)
+        self._file.close()
+        archive = self._next_archive_path()
+        try:
+            os.replace(self.path, archive)
+            self._file = self.path.open("a", encoding="utf-8")
+        except Exception:
+            # Reopen the active path when possible so final cleanup remains safe.
+            if self._file.closed:
+                self._file = self.path.open("a", encoding="utf-8")
+            raise
+        self._current_size_bytes = 0
+        self._opened_monotonic_s = self.clock()
+        with self._condition:
+            self._rotations += 1
+        retained_archives = self._prune_archives()
+        with self._condition:
+            self._retained_archives = retained_archives
+
+    def _flush(self, now: float, *, force_fsync: bool = False) -> None:
+        self._file.flush()
+        with self._condition:
+            self._flushes += 1
+        should_fsync = self.config.fsync_interval_s is not None and (
+            force_fsync or self._next_fsync_monotonic_s is None or now >= self._next_fsync_monotonic_s
+        )
+        if should_fsync:
+            fsync_start = perf_counter()
+            os.fsync(self._file.fileno())
+            fsync_duration_ms = (perf_counter() - fsync_start) * 1000.0
+            with self._condition:
+                self._fsyncs += 1
+                self._last_fsync_duration_ms = fsync_duration_ms
+            self._next_fsync_monotonic_s = now + self.config.fsync_interval_s
+        self._next_flush_monotonic_s = now + self.config.flush_interval_s
+
+    def _record_writer_error(self, exc: Exception) -> None:
+        with self._condition:
+            if self._writer_error is None:
+                self._writer_error = f"{type(exc).__name__}: {exc}"
+            self._accepting = False
+            self._state = "failed"
+            self._dropped_writer_error += len(self._queue)
+            self._queue.clear()
+            self._condition.notify_all()
+
+    def _finish_writer(self) -> None:
+        try:
+            self._flush(self.clock(), force_fsync=True)
+        except Exception as exc:
+            self._record_writer_error(exc)
+        try:
+            self._file.close()
+        except Exception as exc:
+            self._record_writer_error(exc)
+        with self._condition:
+            if self._state not in {"failed", "timed_out"}:
+                self._state = "closed"
+            self._condition.notify_all()
+
