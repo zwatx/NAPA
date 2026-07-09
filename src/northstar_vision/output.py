@@ -5,13 +5,16 @@ import math
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from pathlib import Path
-from time import perf_counter
-from typing import Any
+from time import perf_counter, sleep
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
 from .geometry import rotation_matrix_to_quaternion_wxyz
-from .types import CameraPoseObservation, FrameResult, SingleTagPoseObservation
+from .types import CameraPoseObservation, FrameResult, PoseSolveDiagnostics, SingleTagPoseObservation
+
+if TYPE_CHECKING:
+    from .recording import JsonlRecorderConfig
 
 JSON_SCHEMA_VERSION = 1
 
@@ -104,6 +107,26 @@ def _camera_pose_to_dict(observation: CameraPoseObservation | None) -> dict[str,
     }
 
 
+def _pose_diagnostics_to_dict(observation: PoseSolveDiagnostics | None) -> dict[str, Any] | None:
+    if observation is None:
+        return None
+    return {
+        "attempted_tag_ids": observation.attempted_tag_ids,
+        "accepted_tag_ids": observation.accepted_tag_ids,
+        "rejected_tags": [
+            {"tag_id": tag_id, "reason": reason} for tag_id, reason in sorted(observation.rejected_tag_reasons.items())
+        ],
+        "per_tag_rms_reprojection_error_px": [
+            {"tag_id": tag_id, "rms_reprojection_error_px": error}
+            for tag_id, error in sorted(observation.per_tag_rms_reprojection_error_px.items())
+        ],
+        "overall_rms_reprojection_error_px": observation.overall_rms_reprojection_error_px,
+        "iterations": observation.iterations,
+        "used_ransac": observation.used_ransac,
+        "rejection_reason": observation.rejection_reason,
+    }
+
+
 def frame_result_to_dict(result: FrameResult) -> dict[str, Any]:
     """Return a complete, self-describing JSON representation of a frame."""
 
@@ -117,6 +140,7 @@ def frame_result_to_dict(result: FrameResult) -> dict[str, Any]:
         ],
         "single_tag_poses": [_single_tag_pose_to_dict(observation) for observation in result.single_tag_poses],
         "camera_pose": _camera_pose_to_dict(result.camera_pose),
+        "pose_diagnostics": _pose_diagnostics_to_dict(result.pose_diagnostics),
         "tag_angles": [
             {
                 "tag_id": observation.tag_id,
@@ -150,6 +174,11 @@ class OutputPublisher(ABC):
     def close(self) -> None:
         """Release publisher resources."""
 
+    def telemetry(self) -> dict[str, Any]:
+        """Return JSON-compatible output health data."""
+
+        return {}
+
 
 class NullOutputPublisher(OutputPublisher):
     def publish(self, result: FrameResult) -> None:
@@ -159,57 +188,42 @@ class NullOutputPublisher(OutputPublisher):
         return None
 
 
-class JsonlOutputPublisher(OutputPublisher):
+class NTOutputPublisher(OutputPublisher):
     def __init__(
         self,
-        path: str | Path = "northstar_output.jsonl",
+        device_id: str,
+        server: str,
         *,
-        flush_interval_s: float = 1.0,
+        server_port: int = 0,
+        send_all: bool = True,
+        close_drain_s: float = 0.1,
         clock: Callable[[], float] = perf_counter,
     ) -> None:
-        if flush_interval_s < 0:
-            raise ValueError("flush_interval_s must not be negative")
-        self.path = Path(path).expanduser()
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.file = self.path.open("a", encoding="utf-8")
-        self.flush_interval_s = flush_interval_s
-        self.clock = clock
-        self.next_flush = clock() + flush_interval_s
-        self.closed = False
-
-    def publish(self, result: FrameResult) -> None:
-        if self.closed:
-            raise RuntimeError("Cannot publish after the JSONL publisher is closed")
-        self.file.write(json.dumps(frame_result_to_dict(result), separators=(",", ":")) + "\n")
-        now = self.clock()
-        if self.flush_interval_s == 0 or now >= self.next_flush:
-            self.file.flush()
-            self.next_flush = now + self.flush_interval_s
-
-    def close(self) -> None:
-        if not self.closed:
-            self.file.flush()
-            self.file.close()
-            self.closed = True
-
-
-class NTOutputPublisher(OutputPublisher):
-    def __init__(self, device_id: str, server: str, *, clock: Callable[[], float] = perf_counter) -> None:
+        if server_port < 0 or server_port > 65535:
+            raise ValueError("server_port must be between 0 and 65535")
+        if not math.isfinite(close_drain_s) or close_drain_s < 0:
+            raise ValueError("close_drain_s must be finite and non-negative")
         try:
             import ntcore
         except ImportError as exc:
             raise RuntimeError("Install northstar-vision[nt] to use NetworkTables output") from exc
         self.ntcore = ntcore
         self.clock = clock
+        self.send_all = send_all
+        self.delivery_policy = "upstream_lossless" if send_all else "latest_value"
+        self.close_drain_s = close_drain_s
         self.instance = ntcore.NetworkTableInstance.create()
         self.publishers: list[Any] = []
         self.closed = True
         try:
-            self.instance.setServer(server)
+            if server_port:
+                self.instance.setServer(server, server_port)
+            else:
+                self.instance.setServer(server)
             self.instance.startClient4(device_id)
             table = self.instance.getTable(f"/{device_id}/output")
             self.observations = table.getDoubleArrayTopic("observations").publish(
-                ntcore.PubSubOptions(periodic=0.01, sendAll=True, keepDuplicates=True)
+                ntcore.PubSubOptions(periodic=0.01, sendAll=send_all, keepDuplicates=True)
             )
             self.publishers.append(self.observations)
             self.fps = table.getIntegerTopic("fps_apriltags").publish()
@@ -219,7 +233,7 @@ class NTOutputPublisher(OutputPublisher):
             self.health = table.getStringTopic("health").publish()
             self.publishers.append(self.health)
         except BaseException:
-            self._close_resources(raise_errors=False)
+            self._close_resources(raise_errors=False, drain=False)
             raise
         self.closed = False
 
@@ -238,14 +252,29 @@ class NTOutputPublisher(OutputPublisher):
         health = {**result.health, "nt_connected": self.instance.isConnected()}
         self.health.set(json.dumps(health, separators=(",", ":")))
 
+    def telemetry(self) -> dict[str, Any]:
+        return {
+            "type": "networktables",
+            "connected": bool(self.instance.isConnected()),
+            "delivery_policy": self.delivery_policy,
+            "close_drain_s": self.close_drain_s,
+        }
+
     def close(self) -> None:
         if self.closed:
             return
         self.closed = True
-        self._close_resources(raise_errors=True)
+        self._close_resources(raise_errors=True, drain=True)
 
-    def _close_resources(self, *, raise_errors: bool) -> None:
+    def _close_resources(self, *, raise_errors: bool, drain: bool) -> None:
         errors: list[Exception] = []
+        if self.publishers:
+            try:
+                self.instance.flush()
+            except Exception as exc:
+                errors.append(exc)
+            if drain and self.close_drain_s > 0:
+                sleep(self.close_drain_s)
         for publisher in reversed(self.publishers):
             try:
                 publisher.close()
@@ -270,11 +299,23 @@ def make_output_publisher(
     nt_server: str,
     *,
     output_path: str | Path = "northstar_output.jsonl",
+    nt_server_port: int = 0,
+    nt_send_all: bool = True,
+    nt_close_drain_s: float = 0.1,
+    jsonl_config: JsonlRecorderConfig | None = None,
 ) -> OutputPublisher:
     if mode == "nt":
-        return NTOutputPublisher(device_id, nt_server)
+        return NTOutputPublisher(
+            device_id,
+            nt_server,
+            server_port=nt_server_port,
+            send_all=nt_send_all,
+            close_drain_s=nt_close_drain_s,
+        )
     if mode == "none":
         return NullOutputPublisher()
     if mode == "jsonl":
-        return JsonlOutputPublisher(output_path)
+        from .recording import AsyncJsonlOutputPublisher
+
+        return AsyncJsonlOutputPublisher(output_path, config=jsonl_config)
     raise ValueError(f"Unknown output mode {mode!r}; expected jsonl, nt, or none")

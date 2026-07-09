@@ -38,13 +38,13 @@ from northstar_vision.geometry import (
     wpilib_points_to_opencv,
 )
 from northstar_vision.output import (
-    JsonlOutputPublisher,
     NTOutputPublisher,
     OutputPublisher,
     encode_observations,
     frame_result_to_dict,
     make_output_publisher,
 )
+from northstar_vision.recording import AsyncJsonlOutputPublisher, JsonlRecorderConfig
 from northstar_vision.service import NorthstarVisionService
 from northstar_vision.types import FiducialImageObservation, FrameResult, TagAngleObservation
 
@@ -425,7 +425,16 @@ def test_json_output_is_complete_and_buffered(tmp_path: Path) -> None:
     assert payload["tag_angles"][0]["camera_to_tag_translation_m"]
 
     path = tmp_path / "logs" / "frames.jsonl"
-    publisher = JsonlOutputPublisher(path, flush_interval_s=60.0, clock=lambda: 0.0)
+    publisher = AsyncJsonlOutputPublisher(
+        path,
+        config=JsonlRecorderConfig(
+            flush_interval_s=60.0,
+            fsync_interval_s=None,
+            max_file_size_bytes=None,
+            rotation_interval_s=None,
+        ),
+        clock=lambda: 0.0,
+    )
     publisher.publish(frame)
     publisher.close()
     written = json.loads(path.read_text(encoding="utf-8"))
@@ -474,6 +483,7 @@ def test_networktables_publisher_uses_capture_timestamp_and_releases_resources(m
         def __init__(self) -> None:
             self.table = FakeTable()
             self.stopped = False
+            self.flushed = False
 
         def setServer(self, _server: str) -> None:
             return None
@@ -486,6 +496,9 @@ def test_networktables_publisher_uses_capture_timestamp_and_releases_resources(m
 
         def isConnected(self) -> bool:
             return True
+
+        def flush(self) -> None:
+            self.flushed = True
 
         def stopClient(self) -> None:
             self.stopped = True
@@ -509,7 +522,7 @@ def test_networktables_publisher_uses_capture_timestamp_and_releases_resources(m
         _now=lambda: 2_000_000,
     )
     monkeypatch.setitem(sys.modules, "ntcore", fake_ntcore)
-    publisher = NTOutputPublisher("device", "server", clock=lambda: 2.0)
+    publisher = NTOutputPublisher("device", "server", close_drain_s=0.0, clock=lambda: 2.0)
     publisher.publish(
         FrameResult(
             timestamp=1_700_000_000.0,
@@ -520,7 +533,7 @@ def test_networktables_publisher_uses_capture_timestamp_and_releases_resources(m
     observations = instance.table.topics["observations"].publisher.values
     assert observations == [([0.0], 1_250_000)]
     publisher.close()
-    assert instance.stopped and FakeNetworkTableInstance.destroyed
+    assert instance.flushed and instance.stopped and FakeNetworkTableInstance.destroyed
     assert all(topic.publisher.closed for topic in instance.table.topics.values())
 
 
