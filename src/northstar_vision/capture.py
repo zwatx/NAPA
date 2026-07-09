@@ -187,6 +187,71 @@ class OpenCVCameraSource(FrameSource):
                 "capture_shutdown_timed_out": self._shutdown_timed_out,
             }
 
+    def _capture_loop(self) -> None:
+        reconnect_delay = self.reconnect_initial_s
+        while not self._stop.is_set():
+            capture: VideoCaptureLike | None = None
+            try:
+                capture = self._open_capture()
+                if capture is None:
+                    if self._stop.wait(reconnect_delay):
+                        break
+                    reconnect_delay = min(self.reconnect_max_s, max(self.reconnect_initial_s, reconnect_delay * 2))
+                    continue
+
+                consecutive_failures = 0
+                while not self._stop.is_set():
+                    try:
+                        ok, frame = capture.read()
+                    except Exception as exc:  # OpenCV backends can surface device loss as cv2.error.
+                        ok, frame = False, None
+                        error = f"Camera read failed: {exc}"
+                    else:
+                        error = "Camera stopped returning frames"
+
+                    if self._stop.is_set():
+                        break
+                    if ok and isinstance(frame, np.ndarray) and frame.size > 0:
+                        consecutive_failures = 0
+                        reconnect_delay = self.reconnect_initial_s
+                        self._store_frame(frame)
+                        continue
+
+                    consecutive_failures += 1
+                    with self._condition:
+                        self._read_failures += 1
+                        self._last_error = error
+                    if consecutive_failures >= self.read_attempts:
+                        with self._condition:
+                            self._disconnects += 1
+                        break
+            except _FatalCameraConfiguration as exc:
+                with self._condition:
+                    if not self._closed:
+                        self._fatal_error = exc
+                        self._last_error = str(exc)
+                    self._condition.notify_all()
+                break
+            except Exception as exc:
+                with self._condition:
+                    if not self._closed:
+                        self._open_failures += 1
+                        self._last_error = f"Could not initialize camera {self.camera_id}: {exc}"
+            finally:
+                with self._condition:
+                    self._connected = False
+                    self._condition.notify_all()
+                if capture is not None:
+                    self._release_capture(capture)
+
+            if not self._stop.is_set() and self._stop.wait(reconnect_delay):
+                break
+            reconnect_delay = min(self.reconnect_max_s, max(self.reconnect_initial_s, reconnect_delay * 2))
+
+        with self._condition:
+            self._connected = False
+            self._condition.notify_all()
+
 class ReplaySource(FrameSource):
     def __init__(self, replay_path: str | Path, *, loop: bool = False) -> None:
         self.path = Path(replay_path).expanduser()
