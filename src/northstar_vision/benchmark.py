@@ -111,3 +111,87 @@ def evaluate_benchmark_gate(summary: Mapping[str, Any], thresholds: BenchmarkThr
     return {"passed": not failures, "thresholds": configured, "measured": measured, "failures": failures}
 
 
+def load_corpus_manifest(path: str | Path) -> CorpusManifest:
+    """Load a strict, portable image-corpus manifest.
+
+    Frame paths must be relative to the manifest and may not escape its
+    directory. Optional SHA-256 values protect individual compressed image
+    files; :func:`run_replay_benchmark` also computes a whole-corpus digest by
+    default.
+    """
+
+    manifest_path = Path(path).expanduser().resolve()
+    try:
+        raw_bytes = manifest_path.read_bytes()
+    except OSError as exc:
+        raise CorpusManifestError(f"Could not read corpus manifest {manifest_path}: {exc}") from exc
+    try:
+        data = json.loads(raw_bytes)
+    except json.JSONDecodeError as exc:
+        raise CorpusManifestError(f"Invalid JSON at line {exc.lineno}: {exc.msg}") from exc
+    if not isinstance(data, Mapping):
+        raise CorpusManifestError("Corpus manifest must be a JSON object")
+    _reject_unknown(data, {"schema_version", "name", "description", "frames"}, "manifest")
+    schema_version = data.get("schema_version")
+    if isinstance(schema_version, bool) or schema_version != CORPUS_SCHEMA_VERSION:
+        raise CorpusManifestError(f"schema_version must be {CORPUS_SCHEMA_VERSION}")
+
+    name = _nonempty_string(data.get("name"), "name")
+    description_value = data.get("description", "")
+    if not isinstance(description_value, str):
+        raise CorpusManifestError("description must be a string")
+    frame_values = data.get("frames")
+    if not isinstance(frame_values, list) or not frame_values:
+        raise CorpusManifestError("frames must be a non-empty array")
+
+    root = manifest_path.parent
+    frames: list[CorpusFrame] = []
+    seen_paths: set[str] = set()
+    for index, value in enumerate(frame_values):
+        context = f"frames[{index}]"
+        if not isinstance(value, Mapping):
+            raise CorpusManifestError(f"{context} must be an object")
+        _reject_unknown(value, {"path", "expected_tag_ids", "sha256"}, context)
+        relative_path = _nonempty_string(value.get("path"), f"{context}.path")
+        relative = Path(relative_path)
+        if relative.is_absolute():
+            raise CorpusManifestError(f"{context}.path must be relative to the manifest")
+        resolved = (root / relative).resolve()
+        if not resolved.is_relative_to(root):
+            raise CorpusManifestError(f"{context}.path must not escape the manifest directory")
+        portable_path = relative.as_posix()
+        if portable_path in seen_paths:
+            raise CorpusManifestError(f"Duplicate frame path {portable_path!r}")
+        seen_paths.add(portable_path)
+
+        expected_value = value.get("expected_tag_ids")
+        if not isinstance(expected_value, list):
+            raise CorpusManifestError(f"{context}.expected_tag_ids must be an array")
+        expected: list[int] = []
+        for tag_index, tag_id in enumerate(expected_value):
+            if isinstance(tag_id, bool) or not isinstance(tag_id, int) or tag_id < 0:
+                raise CorpusManifestError(f"{context}.expected_tag_ids[{tag_index}] must be a non-negative integer")
+            expected.append(tag_id)
+        if len(expected) != len(set(expected)):
+            raise CorpusManifestError(f"{context}.expected_tag_ids must not contain duplicates")
+
+        sha_value = value.get("sha256")
+        if sha_value is not None:
+            if (
+                not isinstance(sha_value, str)
+                or len(sha_value) != 64
+                or any(character not in "0123456789abcdefABCDEF" for character in sha_value)
+            ):
+                raise CorpusManifestError(f"{context}.sha256 must contain 64 hexadecimal characters")
+            sha_value = sha_value.lower()
+        frames.append(CorpusFrame(portable_path, resolved, tuple(sorted(expected)), sha_value))
+
+    return CorpusManifest(
+        path=manifest_path,
+        name=name,
+        description=description_value,
+        frames=tuple(frames),
+        manifest_sha256=hashlib.sha256(raw_bytes).hexdigest(),
+    )
+
+
