@@ -82,3 +82,47 @@ def test_replay_benchmark_reports_accuracy_percentiles_and_bounded_failures(tmp_
     json.dumps(summary)
 
 
+def test_manifest_integrity_hash_is_enforced(tmp_path: Path) -> None:
+    image_path = tmp_path / "frame.png"
+    cv2.imwrite(str(image_path), np.zeros((20, 20), dtype=np.uint8))
+    actual_hash = hashlib.sha256(image_path.read_bytes()).hexdigest()
+    manifest_path = _write_manifest(
+        tmp_path,
+        [{"path": "frame.png", "expected_tag_ids": [], "sha256": actual_hash}],
+    )
+    manifest = load_corpus_manifest(manifest_path)
+    assert manifest.frames[0].sha256 == actual_hash
+
+    image_path.write_bytes(b"changed")
+    with pytest.raises(CorpusManifestError, match="SHA-256 mismatch"):
+        run_replay_benchmark(manifest, options=BenchmarkOptions(warmup_passes=0))
+
+
+@pytest.mark.parametrize(
+    ("frame", "extra", "message"),
+    [
+        ({"path": "../outside.png", "expected_tag_ids": []}, {}, "must not escape"),
+        ({"path": "frame.png", "expected_tag_ids": [1, 1]}, {}, "must not contain duplicates"),
+        ({"path": "frame.png", "expected_tag_ids": [True]}, {}, "non-negative integer"),
+        ({"path": "frame.png", "expected_tag_ids": [], "unknown": 1}, {}, "Unknown frames"),
+        ({"path": "frame.png", "expected_tag_ids": []}, {"unknown": 1}, "Unknown manifest"),
+    ],
+)
+def test_manifest_validation_is_strict(
+    tmp_path: Path,
+    frame: dict[str, object],
+    extra: dict[str, object],
+    message: str,
+) -> None:
+    path = _write_manifest(tmp_path, [frame], **extra)
+    with pytest.raises(CorpusManifestError, match=message):
+        load_corpus_manifest(path)
+
+
+def test_repository_example_manifest_stays_schema_valid() -> None:
+    repository_root = Path(__file__).resolve().parents[1]
+    manifest = load_corpus_manifest(repository_root / "benchmarks" / "corpus.example.json")
+    assert manifest.name == "robot-camera-regression"
+    assert manifest.frames[0].expected_tag_ids == (1,)
+
+

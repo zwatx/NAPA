@@ -321,3 +321,86 @@ def run_replay_benchmark(
     }
 
 
+def write_benchmark_summary(summary: Mapping[str, Any], path: str | Path, *, pretty: bool = False) -> Path:
+    """Atomically write a benchmark summary, returning the resolved path."""
+
+    destination = Path(path).expanduser().resolve()
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary_name: str | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=destination.parent,
+            prefix=f".{destination.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as temporary:
+            temporary_name = temporary.name
+            json.dump(summary, temporary, indent=2 if pretty else None, separators=None if pretty else (",", ":"))
+            temporary.write("\n")
+            temporary.flush()
+            os.fsync(temporary.fileno())
+        os.replace(temporary_name, destination)
+    except BaseException:
+        if temporary_name is not None:
+            Path(temporary_name).unlink(missing_ok=True)
+        raise
+    return destination
+
+
+def _verify_corpus(manifest: CorpusManifest) -> str:
+    corpus_digest = hashlib.sha256()
+    for frame in manifest.frames:
+        file_digest = hashlib.sha256()
+        corpus_digest.update(frame.relative_path.encode("utf-8"))
+        corpus_digest.update(b"\0")
+        try:
+            with frame.path.open("rb") as source:
+                while chunk := source.read(1024 * 1024):
+                    file_digest.update(chunk)
+                    corpus_digest.update(chunk)
+        except OSError as exc:
+            raise CorpusManifestError(f"Could not read corpus frame {frame.relative_path}: {exc}") from exc
+        actual_digest = file_digest.hexdigest()
+        if frame.sha256 is not None and actual_digest != frame.sha256:
+            raise CorpusManifestError(
+                f"SHA-256 mismatch for {frame.relative_path}: expected {frame.sha256}, got {actual_digest}"
+            )
+        corpus_digest.update(b"\0")
+    return corpus_digest.hexdigest()
+
+
+def _decode_image(frame: CorpusFrame) -> np.ndarray:
+    image = cv2.imread(str(frame.path), cv2.IMREAD_COLOR)
+    if image is None:
+        raise CorpusManifestError(f"Could not decode corpus frame {frame.relative_path}")
+    return image
+
+
+def _timing_summary(samples: Sequence[float]) -> dict[str, float | int]:
+    values = np.asarray(samples, dtype=np.float64)
+    p50, p95, p99 = np.percentile(values, [50.0, 95.0, 99.0])
+    return {
+        "samples": len(samples),
+        "min_ms": float(np.min(values)),
+        "mean_ms": float(np.mean(values)),
+        "p50_ms": float(p50),
+        "p95_ms": float(p95),
+        "p99_ms": float(p99),
+        "max_ms": float(np.max(values)),
+    }
+
+
+def _nonempty_string(value: object, context: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise CorpusManifestError(f"{context} must be a non-empty string")
+    return value.strip()
+
+
+def _reject_unknown(data: Mapping[str, object], allowed: set[str], context: str) -> None:
+    unknown = sorted(set(data) - allowed)
+    if unknown:
+        raise CorpusManifestError(f"Unknown {context} field(s): {', '.join(unknown)}")
+
+
