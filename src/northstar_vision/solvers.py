@@ -226,6 +226,86 @@ class CameraPoseSolver:
             diagnostics=diagnostics,
         )
 
+    @staticmethod
+    def _multi_points(
+        observations: Sequence[FiducialImageObservation],
+        tag_size_m: float,
+        tag_layout: dict[int, np.ndarray],
+    ) -> tuple[np.ndarray, np.ndarray]:
+        object_points = np.concatenate(
+            [wpilib_points_to_opencv(tag_field_corners(tag_layout[obs.tag_id], tag_size_m)) for obs in observations]
+        )
+        image_points = np.concatenate([np.asarray(obs.corners, dtype=np.float64).reshape(4, 2) for obs in observations])
+        return object_points, image_points
+
+    @staticmethod
+    def _points_in_front(object_points: np.ndarray, rvec: np.ndarray, tvec: np.ndarray) -> bool:
+        rotation, _ = cv2.Rodrigues(rvec)
+        camera_points = (rotation @ object_points.T).T + np.asarray(tvec).reshape(1, 3)
+        return bool(np.all(camera_points[:, 2] > 0.0))
+
+    @staticmethod
+    def _residuals(
+        observations: Sequence[FiducialImageObservation],
+        object_points: np.ndarray,
+        image_points: np.ndarray,
+        rvec: np.ndarray,
+        tvec: np.ndarray,
+        camera: CameraConfig,
+    ) -> tuple[dict[int, float], float]:
+        projected, _ = cv2.projectPoints(
+            object_points,
+            rvec,
+            tvec,
+            camera.calibration_matrix,
+            camera.distortion_coefficients,
+        )
+        squared = np.sum((projected.reshape(-1, 2) - image_points) ** 2, axis=1)
+        per_tag = {
+            observation.tag_id: float(np.sqrt(np.mean(squared[index * 4 : (index + 1) * 4])))
+            for index, observation in enumerate(observations)
+        }
+        return per_tag, float(np.sqrt(np.mean(squared)))
+
+    def _generic_candidate(
+        self,
+        object_points: np.ndarray,
+        image_points: np.ndarray,
+        camera: CameraConfig,
+    ) -> tuple[np.ndarray, np.ndarray] | None:
+        flags = cv2.SOLVEPNP_SQPNP if hasattr(cv2, "SOLVEPNP_SQPNP") else cv2.SOLVEPNP_ITERATIVE
+        try:
+            ok, rvecs, tvecs, errors = cv2.solvePnPGeneric(
+                object_points,
+                image_points,
+                camera.calibration_matrix,
+                camera.distortion_coefficients,
+                flags=flags,
+            )
+        except cv2.error:
+            return None
+        if not ok or len(rvecs) == 0:
+            return None
+        candidates: list[tuple[float, np.ndarray, np.ndarray]] = []
+        for index, (candidate_rvec, candidate_tvec) in enumerate(zip(rvecs, tvecs, strict=False)):
+            error = _solution_error(
+                errors,
+                index,
+                object_points,
+                image_points,
+                candidate_rvec,
+                candidate_tvec,
+                camera,
+            )
+            if _valid_solution(candidate_rvec, candidate_tvec, error, float("inf")) and self._points_in_front(
+                object_points, candidate_rvec, candidate_tvec
+            ):
+                candidates.append((error, candidate_rvec, candidate_tvec))
+        if not candidates:
+            return None
+        _, rvec, tvec = min(candidates, key=lambda candidate: candidate[0])
+        return rvec, tvec
+
 class TagAngleSolver:
     def solve(
         self,
