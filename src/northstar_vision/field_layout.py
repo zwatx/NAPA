@@ -140,3 +140,80 @@ class AprilTagFieldLayout:
             raise FieldLayoutError(str(exc)) from exc
 
 
+def load_wpilib_apriltag_layout(
+    path: str | Path,
+    *,
+    provenance: ArtifactProvenance | None = None,
+    validate_bounds: bool = True,
+) -> AprilTagFieldLayout:
+    """Import a WPILib AprilTag JSON layout without changing its field axes.
+
+    WPILib JSON translations and quaternions already use the same +X forward,
+    +Y left, +Z up field convention as this package. Each returned matrix is a
+    field-to-tag transform and can be passed directly to ``CameraPoseSolver``.
+
+    A parsed file defaults to ``IMPORTED`` rather than ``OFFICIAL``. Callers
+    must supply explicit official provenance after verifying the file source.
+    """
+
+    source = Path(path).expanduser()
+    try:
+        with source.open("r", encoding="utf-8") as file:
+            data = json.load(file)
+    except FileNotFoundError as exc:
+        raise FieldLayoutError(f"field layout not found: {source}") from exc
+    except json.JSONDecodeError as exc:
+        raise FieldLayoutError(f"invalid field-layout JSON at line {exc.lineno}: {exc.msg}") from exc
+    except OSError as exc:
+        raise FieldLayoutError(f"could not read field layout {source}: {exc}") from exc
+    root = _mapping(data, "field layout")
+    field = _mapping(root.get("field"), "field")
+    field_length = _number(field.get("length"), "field.length", positive=True)
+    field_width = _number(field.get("width"), "field.width", positive=True)
+    tags = root.get("tags")
+    if not isinstance(tags, list):
+        raise FieldLayoutError("tags must be a JSON array")
+
+    transforms: dict[int, np.ndarray] = {}
+    for index, raw_tag in enumerate(tags):
+        context = f"tags[{index}]"
+        tag = _mapping(raw_tag, context)
+        id_keys = [key for key in ("ID", "id") if key in tag]
+        if len(id_keys) != 1:
+            raise FieldLayoutError(f"{context} must contain exactly one of 'ID' or 'id'")
+        tag_id_value = tag[id_keys[0]]
+        if isinstance(tag_id_value, bool) or not isinstance(tag_id_value, int) or tag_id_value < 0:
+            raise FieldLayoutError(f"{context}.{id_keys[0]} must be a non-negative integer")
+        if tag_id_value in transforms:
+            raise FieldLayoutError(f"duplicate tag ID {tag_id_value}")
+
+        pose = _mapping(tag.get("pose"), f"{context}.pose")
+        translation = _mapping(pose.get("translation"), f"{context}.pose.translation")
+        rotation = _mapping(pose.get("rotation"), f"{context}.pose.rotation")
+        quaternion = _mapping(rotation.get("quaternion"), f"{context}.pose.rotation.quaternion")
+        transform = np.eye(4, dtype=np.float64)
+        transform[:3, :3] = _quaternion_rotation(
+            _component(quaternion, "w", f"{context}.pose.rotation.quaternion"),
+            _component(quaternion, "x", f"{context}.pose.rotation.quaternion"),
+            _component(quaternion, "y", f"{context}.pose.rotation.quaternion"),
+            _component(quaternion, "z", f"{context}.pose.rotation.quaternion"),
+            f"{context}.pose.rotation.quaternion",
+        )
+        transform[:3, 3] = [
+            _component(translation, "x", f"{context}.pose.translation"),
+            _component(translation, "y", f"{context}.pose.translation"),
+            _component(translation, "z", f"{context}.pose.translation"),
+        ]
+        transforms[tag_id_value] = transform
+
+    layout = AprilTagFieldLayout(
+        tag_poses=transforms,
+        field_length_m=field_length,
+        field_width_m=field_width,
+        provenance=(
+            provenance if provenance is not None else ArtifactProvenance(ProvenanceKind.IMPORTED, str(source.resolve()))
+        ),
+    )
+    if validate_bounds:
+        layout.validate_tag_bounds()
+    return layout
