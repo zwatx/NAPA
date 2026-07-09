@@ -302,6 +302,121 @@ def save_calibration(path: str | Path, camera_matrix: np.ndarray, distortion_coe
     )
 
 
+def discover_checkerboard_images(directory: str | Path) -> tuple[Path, ...]:
+    """Return common image files in deterministic order for calibration."""
+
+    root = Path(directory).expanduser()
+    if not root.is_dir():
+        raise CalibrationError(f"checkerboard image directory not found: {root}")
+    suffixes = {".bmp", ".jpeg", ".jpg", ".png", ".tif", ".tiff"}
+    return tuple(sorted(path for path in root.iterdir() if path.is_file() and path.suffix.lower() in suffixes))
+
+
+def calibrate_checkerboard_images(
+    image_paths: Sequence[str | Path],
+    checkerboard: CheckerboardSpec,
+    *,
+    minimum_views: int = 8,
+    calibration_flags: int = 0,
+) -> CameraCalibration:
+    """Measure intrinsics from checkerboard photographs.
+
+    Images without a complete checkerboard are recorded in ``rejected_images``.
+    All accepted images must have the same resolution. ``columns`` and ``rows``
+    in ``checkerboard`` are inner-corner counts, not square counts.
+    """
+
+    if minimum_views < 3:
+        raise CalibrationError("minimum_views must be at least 3")
+    paths = tuple(Path(path).expanduser() for path in image_paths)
+    if not paths:
+        raise CalibrationError("at least one checkerboard image path is required")
+
+    template = np.zeros((checkerboard.columns * checkerboard.rows, 3), dtype=np.float32)
+    template[:, :2] = np.mgrid[0 : checkerboard.columns, 0 : checkerboard.rows].T.reshape(-1, 2)
+    template *= checkerboard.square_size_m
+    object_points: list[np.ndarray] = []
+    image_points: list[np.ndarray] = []
+    accepted_paths: list[Path] = []
+    rejected_paths: list[str] = []
+    image_size: tuple[int, int] | None = None
+    detection_flags = cv2.CALIB_CB_ADAPTIVE_THRESH | cv2.CALIB_CB_NORMALIZE_IMAGE
+
+    for path in paths:
+        image = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
+        if image is None:
+            rejected_paths.append(f"{path}: unreadable")
+            continue
+        current_size = (int(image.shape[1]), int(image.shape[0]))
+        if image_size is None:
+            image_size = current_size
+        elif current_size != image_size:
+            raise CalibrationError(
+                f"checkerboard images mix resolutions {image_size[0]}x{image_size[1]} and "
+                f"{current_size[0]}x{current_size[1]} ({path})"
+            )
+        found, corners = cv2.findChessboardCorners(
+            image,
+            (checkerboard.columns, checkerboard.rows),
+            flags=detection_flags,
+        )
+        if not found or corners is None:
+            rejected_paths.append(f"{path}: complete checkerboard not found")
+            continue
+        refined = cv2.cornerSubPix(
+            image,
+            np.asarray(corners, dtype=np.float32),
+            (11, 11),
+            (-1, -1),
+            (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_MAX_ITER, 30, 1e-3),
+        )
+        object_points.append(template.copy())
+        image_points.append(refined)
+        accepted_paths.append(path)
+
+    if image_size is None:
+        raise CalibrationError("none of the checkerboard images could be read")
+    if len(image_points) < minimum_views:
+        raise CalibrationError(
+            f"only {len(image_points)} complete checkerboard views were found; at least {minimum_views} are required"
+        )
+    try:
+        rms, camera_matrix, distortion, rotation_vectors, translation_vectors = cv2.calibrateCamera(
+            object_points,
+            image_points,
+            image_size,
+            None,
+            None,
+            flags=calibration_flags,
+        )
+    except cv2.error as exc:
+        raise CalibrationError(f"OpenCV checkerboard calibration failed: {exc}") from exc
+
+    view_errors: list[float] = []
+    for world_points, detected, rvec, tvec in zip(
+        object_points,
+        image_points,
+        rotation_vectors,
+        translation_vectors,
+        strict=True,
+    ):
+        projected, _ = cv2.projectPoints(world_points, rvec, tvec, camera_matrix, distortion)
+        residual = projected.reshape(-1, 2) - detected.reshape(-1, 2)
+        view_errors.append(float(np.sqrt(np.mean(np.sum(residual * residual, axis=1)))))
+    source = f"checkerboard calibration from {len(accepted_paths)} images"
+    return CameraCalibration(
+        camera_matrix=camera_matrix,
+        distortion_coefficients=distortion,
+        image_size=image_size,
+        provenance=ArtifactProvenance(ProvenanceKind.MEASURED, source),
+        rms_reprojection_error_px=float(rms),
+        mean_reprojection_error_px=float(np.mean(view_errors)),
+        views_used=len(image_points),
+        checkerboard=checkerboard,
+        rejected_images=tuple(rejected_paths),
+    )
+
+
 def undistorted_corner_angles(
     corners: np.ndarray, camera_matrix: np.ndarray, distortion_coefficients: np.ndarray
 ) -> np.ndarray:
