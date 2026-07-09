@@ -156,53 +156,79 @@ JSONL output records attempted, accepted, and rejected tag IDs, per-tag and over
 iterations, and the final rejection reason. Raw image/tag-angle observations remain available even when a field pose is
 rejected. The existing `confidence` value is only a display heuristic; pose acceptance does not use it.
 
-## Outputs
+## NetworkTables and robot yaw
 
-### NetworkTables
+The service publishes to `/<device_id>/output` using the upstream topic names. `observations` carries the frame's
+capture timestamp translated into NetworkTables synchronized monotonic time, followed by additional `fps_apriltags`,
+`latency_ms`, and `health` topics.
 
-The Raspberry Pi profile publishes to `/<device_id>/output` and uses the upstream Northstar topic names. The
-`observations` array is timestamped in NetworkTables' synchronized monotonic time base, translated from the frame's
-local receive time, and contains:
-
-1. Pose count/type: `0` for none, `1` for one multi-tag pose, `2` for two ambiguous single-tag poses.
-2. Eight values per pose: reprojection error, XYZ, quaternion WXYZ.
-3. Ten values per detected tag: ID, eight undistorted corner angles in radians, distance in meters.
-
-Additional `fps_apriltags`, `latency_ms`, and `health` topics provide runtime telemetry. A one-tag field estimate keeps
-both IPPE solutions when both satisfy the configured reprojection limit so the robot can disambiguate using its current
-heading. If either candidate fails, the global single-tag field pose is suppressed while the tag-angle record remains;
-the upstream packet has no safe one-candidate single-tag discriminator. A multi-tag estimate is only produced from at
-least two unique known tags.
-
-### JSONL
-
-JSONL is self-describing and includes image corners, both per-tag IPPE candidates, global camera-pose candidates,
-tag-angle data, trig poses, quality values, and stage timing. Choose its destination explicitly when useful:
+Delivery semantics are explicit:
 
 ```bash
-northstar-vision --profile laptop --output jsonl --output-path recordings/run.jsonl
+# Preserve every update for upstream compatibility.
+northstar-vision --profile raspi --nt-delivery upstream
+
+# Prefer the newest value when intermediate frames are disposable.
+northstar-vision --profile raspi --nt-delivery latest
 ```
 
-Writes are buffered and flushed periodically instead of forcing an SD-card flush for every frame. Rotation and
-retention are not implemented yet, so long-running deployments should prefer NetworkTables or `--output none`.
+Shutdown flushes pending topics and allows a bounded 100 ms drain by default so short runs do not discard their final
+observation. Configure that budget with `output.nt_close_drain_s` or `--nt-close-drain`.
 
-## Detection and performance
-
-The optional skip-scan prefilter samples the image, rejects flat frames, detects on a small set of merged regions, and
-falls back to full-frame detection for busy scenes. It never decodes a tag itself. It is disabled in the bundled
-profiles because the optimized full-frame path is faster in the current laptop benchmark; enable it only after replay
-testing on the target camera and Raspberry Pi. Use `--enable-skip-scan` for that experiment. To force the full-frame
-path during comparisons:
+Trig localization is suppressed by default because a timeless heading is unsafe. Subscribe to an absolute
+NetworkTables double topic in radians to buffer timestamped samples, interpolate across angle wrap, and align yaw to
+frame capture time:
 
 ```bash
-northstar-vision --profile laptop --disable-skip-scan
+northstar-vision --profile raspi \
+  --robot-yaw-topic /RobotState/yaw \
+  --yaw-max-age 0.10
 ```
 
-The hot path avoids deprecated ArUco functions, repeated camera-matrix inversion, redundant full-frame contrast scans,
-and per-frame JSONL flushes. Health output separates acquisition wait, post-receive processing, frame age, detection,
-solve, and previous-publish timing.
+`--robot-yaw` remains available only for controlled bench tests. Stale or unavailable samples produce no trig pose and
+are visible in health telemetry. The robot-side yaw publisher must enable duplicate delivery (`keepDuplicates=True`,
+normally with `sendAll=True`) or publish a changing heartbeat contract. A default publisher can suppress repeated
+stationary headings; those samples then age out deliberately even while NetworkTables remains connected.
 
-## Development
+## Bounded JSONL recording
+
+JSONL contains corners, both single-tag candidates, field-pose candidates, tag angles, trig poses, pose diagnostics,
+quality data, timings, and output health. The async writer has a fixed queue, configurable drop policy, size/time
+rotation, archive retention, periodic flush/fsync policy, bounded close, and write/drop/error telemetry.
+
+```bash
+northstar-vision --profile laptop --output jsonl \
+  --output-path recordings/run.jsonl \
+  --jsonl-queue-size 256 \
+  --jsonl-drop-policy drop_oldest \
+  --jsonl-max-size-mib 64 \
+  --jsonl-rotate-seconds 3600 \
+  --jsonl-retention-files 8 \
+  --jsonl-fsync-interval 5
+```
+
+Use `0` to disable size rotation, time rotation, or periodic fsync through their corresponding CLI options. The active
+file is not counted in `retention-files`.
+
+## Replay benchmark
+
+Copy `benchmarks/corpus.example.json`, place annotated images beside it, and freeze each image with an optional SHA-256.
+Manifest paths must stay beneath the manifest directory. The command streams frames and reports recall, precision,
+false positives/negatives, bounded mismatch samples, peak decoded image size, and p50/p95/p99 load, detection, scoring,
+and total time.
+
+```bash
+northstar-benchmark benchmarks/pi-corpus.json \
+  --repetitions 5 --warmup-passes 1 \
+  --min-recall 0.99 --min-precision 1.0 \
+  --max-p95-total-ms 30 \
+  --output reports/pi-benchmark.json --pretty
+```
+
+An input/configuration error exits `2`; a failed performance/accuracy gate exits `1`. Keep skip-scan disabled unless a
+representative Raspberry Pi corpus shows recall parity and a useful percentile improvement over full-frame detection.
+
+## Development and packaging
 
 ```bash
 python -m pip install -e '.[dev,nt]'
@@ -210,15 +236,21 @@ ruff format --check .
 ruff check .
 pytest --cov=northstar_vision
 python -m build
+python -m twine check dist/*
 ```
 
-The earlier occlusion-tolerant detector remains in the source repository under `experiments/occlusion_detector/` as
-unsupported research code; it is not included in wheels or source distributions. Its legacy camera demo, benchmark
-launcher, fallback test runner, and runtime re-export were removed from the supported package surface.
+CI covers Python 3.11–3.14, OpenCV 4.7 on Python 3.11, the current OpenCV release, real local NetworkTables timestamp
+integration, and fresh wheel/sdist command smoke tests. The package includes typed source, bundled example profiles,
+and all four command entry points. The source archive also includes the benchmark manifest template and changelog.
 
-## Current limitations
+Unsupported occlusion-tolerant research remains under `experiments/occlusion_detector/` and is excluded from wheels
+and source distributions. Deprecated ArUco calls, legacy launchers, and the obsolete synchronous JSONL writer are not
+part of the supported runtime.
 
-- Live capture is still sequential; a bounded latest-frame capture worker and automatic camera reconnect are planned.
-- `--robot-yaw` is static for a run. Production trig localization should ingest timestamped robot orientation.
-- Pose rejection uses reprojection error and cheirality, but does not yet use multi-tag RANSAC or field-bound checks.
-- The repository does not yet declare a redistribution license; choose one before publishing a package.
+## Remaining release gates
+
+- Choose a redistribution license and provide author, maintainer, repository, and release-policy metadata.
+- Capture measured camera calibration and select the official season layout for the actual robot.
+- Build and run a representative Raspberry Pi corpus; choose team-owned recall, pose-error, and latency budgets.
+- Validate camera reconnect, pose accuracy, robot-side timestamp behavior, and delivery policy on real hardware/radio.
+- Complete an eight-hour Raspberry Pi soak with thermal, RSS, queue, disk-growth, and frame-age evidence.
