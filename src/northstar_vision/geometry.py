@@ -104,8 +104,9 @@ def tag_field_corners(field_to_tag: np.ndarray, tag_size_m: float) -> np.ndarray
     ``field_to_tag`` is the pose of the tag in the field (a transform from tag
     coordinates to field coordinates). A WPILib tag lies in its local Y/Z
     plane with +X normal to its face. The order matches official AprilRobotics
-    tag artwork and upstream Northstar; OpenCV-generated marker images must be
-    rotated 180 degrees to represent that physical artwork orientation.
+    tag artwork and upstream Northstar. An unrotated OpenCV-generated marker
+    can be warped directly into this ordered corner array; rotating it to look
+    like the physical artwork also requires remapping destination corners.
     """
 
     half = tag_size_m / 2.0

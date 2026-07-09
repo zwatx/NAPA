@@ -8,6 +8,8 @@
 - Added robust multi-tag pose solving with RANSAC, iterative outlier rejection, per-tag residuals, physical bounds, and rejection diagnostics.
 - Added timestamped NetworkTables robot-yaw interpolation and stale-yaw suppression for trig localization.
 - Added an integrity-checked replay benchmark with accuracy and latency percentiles.
+- Added deterministic camera-free AprilTag rendering, pose ground truth, replay artifacts, gates, and optimization comparisons.
+- Removed a duplicate two-tag PnP solve, cached field-corner geometry, and reduced skip-scan statistics overhead.
 - Added real local NetworkTables integration coverage and command/package smoke tests.
 - Removed the obsolete synchronous JSONL writer from the runtime surface.
 

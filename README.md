@@ -23,13 +23,14 @@ Install RobotPy NetworkTables support on a coprocessor with:
 python -m pip install '.[nt]'
 ```
 
-The package provides four commands:
+The package provides five commands:
 
 ```text
 northstar-vision      run the camera or replay service
 northstar-calibrate   measure intrinsics from checkerboard images
 northstar-layout      validate a WPILib AprilTag field layout
 northstar-benchmark   measure an annotated image corpus and enforce gates
+northstar-simulate    generate and score deterministic camera-free scenes
 ```
 
 ## Quick start
@@ -142,8 +143,10 @@ above. `camera.robot_to_camera` is the camera pose in the robot frame. The tag f
 its face normal.
 
 The corner convention matches official AprilRobotics/FRC artwork and upstream Northstar. OpenCV's
-`generateImageMarker()` produces the equivalent dictionary image rotated 180 degrees relative to that artwork; rotate
-generated fixtures before validating field transforms.
+`generateImageMarker()` raster is rotated 180 degrees relative to that artwork. When warping into the ordered points
+returned by `tag_field_corners()`, map the unrotated raster TL/TR/BR/BL directly to corners 0/1/2/3; that destination
+order already accounts for the artwork convention. Do not add a second 180-degree rotation without also remapping
+the destination corners.
 
 ## Pose quality
 
@@ -210,6 +213,50 @@ northstar-vision --profile laptop --output jsonl \
 Use `0` to disable size rotation, time rotation, or periodic fsync through their corresponding CLI options. The active
 file is not counted in `retention-files`.
 
+## Hardware-free simulation
+
+Generate deterministic AprilTag scenes and run them through the same detector, single-tag solver, multi-tag solver,
+health collection, and service orchestration used by a real camera:
+
+```bash
+northstar-simulate --profile laptop --suite standard \
+  --repetitions 5 --compare-optimizations \
+  --output-dir reports/synthetic --pretty
+```
+
+The standard suite covers clean and oblique views, blur/noise, dark motion-compressed input, partial occlusion, a
+layout outlier, single-tag ambiguity, and a blank frame. The `sweep` suite moves the synthetic camera through 31
+poses. The command gates ID recall/precision, ordered-corner error, pose solve rate, translation/rotation error, and
+outlier rejection. It also reports render, detection, solve, and total processing percentiles.
+
+Generated artifacts include a strict replay `corpus.json`, `ground-truth.json`, a compatible
+`simulation-profile.json`, PNG frames, and `simulation-report.json`. They can exercise either supported workflow:
+
+```bash
+northstar-vision --profile reports/synthetic/simulation-profile.json \
+  --replay reports/synthetic/frames --output none
+northstar-benchmark reports/synthetic/corpus.json --repetitions 5
+```
+
+With `--compare-optimizations`, the report measures subpixel corner refinement and skip-scan against identical seeded
+frames. A candidate is only marked for hardware follow-up when its gates, accuracy, and pose solve counts match, plus
+it improves median processing by at least 5% or p95 by at least 20% without regressing median by more than 10%. This
+comparison does not silently change the production detector configuration.
+
+```mermaid
+flowchart LR
+    scenarios[Deterministic scenarios] --> renderer[Synthetic camera renderer]
+    renderer --> source[In-memory camera source]
+    source --> service[Normal Northstar service]
+    service --> scorer[Ground-truth scorer]
+    renderer --> corpus[Replay corpus and truth]
+    scorer --> report[Gate and optimization report]
+```
+
+Simulation is deliberately labeled synthetic evidence. It can validate software behavior and regression safety now,
+but it cannot validate a physical lens/calibration, exposure or rolling shutter, USB reconnects, Raspberry Pi thermal
+performance, or radio/NetworkTables timing.
+
 ## Replay benchmark
 
 Copy `benchmarks/corpus.example.json`, place annotated images beside it, and freeze each image with an optional SHA-256.
@@ -240,8 +287,9 @@ python -m twine check dist/*
 ```
 
 CI covers Python 3.11–3.14, OpenCV 4.7 on Python 3.11, the current OpenCV release, real local NetworkTables timestamp
-integration, and fresh wheel/sdist command smoke tests. The package includes typed source, bundled example profiles,
-and all four command entry points. The source archive also includes the benchmark manifest template and changelog.
+integration, the deterministic simulator, and fresh wheel/sdist command smoke tests. The package includes typed
+source, bundled example profiles, and all five command entry points. The source archive also includes the benchmark
+manifest template and changelog.
 
 Unsupported occlusion-tolerant research remains under `experiments/occlusion_detector/` and is excluded from wheels
 and source distributions. Deprecated ArUco calls, legacy launchers, and the obsolete synchronous JSONL writer are not
