@@ -138,6 +138,7 @@ class CameraPoseSolver:
         self.max_outlier_iterations = max_outlier_iterations
         self.ransac_iterations = ransac_iterations
         self.last_diagnostics = PoseSolveDiagnostics()
+        self._field_corner_cache: dict[int, tuple[float, np.ndarray, np.ndarray]] = {}
 
     def solve(
         self,
@@ -226,17 +227,33 @@ class CameraPoseSolver:
             diagnostics=diagnostics,
         )
 
-    @staticmethod
     def _multi_points(
+        self,
         observations: Sequence[FiducialImageObservation],
         tag_size_m: float,
         tag_layout: dict[int, np.ndarray],
     ) -> tuple[np.ndarray, np.ndarray]:
-        object_points = np.concatenate(
-            [wpilib_points_to_opencv(tag_field_corners(tag_layout[obs.tag_id], tag_size_m)) for obs in observations]
-        )
-        image_points = np.concatenate([np.asarray(obs.corners, dtype=np.float64).reshape(4, 2) for obs in observations])
+        object_points = np.empty((len(observations) * 4, 3), dtype=np.float64)
+        image_points = np.empty((len(observations) * 4, 2), dtype=np.float64)
+        for index, observation in enumerate(observations):
+            start = index * 4
+            object_points[start : start + 4] = self._cached_field_corners(observation.tag_id, tag_size_m, tag_layout)
+            image_points[start : start + 4] = np.asarray(observation.corners, dtype=np.float64).reshape(4, 2)
         return object_points, image_points
+
+    def _cached_field_corners(
+        self,
+        tag_id: int,
+        tag_size_m: float,
+        tag_layout: dict[int, np.ndarray],
+    ) -> np.ndarray:
+        transform = np.asarray(tag_layout[tag_id], dtype=np.float64)
+        cached = self._field_corner_cache.get(tag_id)
+        if cached is not None and cached[0] == tag_size_m and np.array_equal(cached[1], transform):
+            return cached[2]
+        corners = wpilib_points_to_opencv(tag_field_corners(transform, tag_size_m))
+        self._field_corner_cache[tag_id] = (tag_size_m, transform.copy(), corners)
+        return corners
 
     @staticmethod
     def _points_in_front(object_points: np.ndarray, rvec: np.ndarray, tvec: np.ndarray) -> bool:
@@ -357,7 +374,8 @@ class CameraPoseSolver:
                 return None
 
             candidate = self._ransac_candidate(active, object_points, image_points, camera)
-            if candidate is not None:
+            used_ransac_candidate = candidate is not None
+            if used_ransac_candidate:
                 diagnostics.used_ransac = True
             else:
                 candidate = self._generic_candidate(object_points, image_points, camera)
@@ -369,7 +387,7 @@ class CameraPoseSolver:
 
             # Once every tag agrees with the robust estimate, refine using all
             # accepted corners and keep the lower-error physically valid pose.
-            if max(per_tag.values()) <= self.max_tag_reprojection_error_px:
+            if used_ransac_candidate and max(per_tag.values()) <= self.max_tag_reprojection_error_px:
                 refined = self._generic_candidate(object_points, image_points, camera)
                 if refined is not None:
                     refined_per_tag, refined_error = self._residuals(

@@ -120,3 +120,34 @@ def test_multi_tag_solver_explains_failure_when_two_tags_disagree() -> None:
     assert solver.last_diagnostics.rejection_reason is not None
     assert "reprojection error" in solver.last_diagnostics.rejection_reason
     assert solver.last_diagnostics.overall_rms_reprojection_error_px is not None
+
+
+def test_two_tag_solver_does_not_repeat_identical_generic_solve(monkeypatch: pytest.MonkeyPatch) -> None:
+    profile, _, layout, observations = _scene()
+    solver = CameraPoseSolver(max_reprojection_error_px=2.0)
+    original = solver._generic_candidate
+    calls = 0
+
+    def counted_candidate(*args: object, **kwargs: object) -> tuple[np.ndarray, np.ndarray] | None:
+        nonlocal calls
+        calls += 1
+        return original(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(solver, "_generic_candidate", counted_candidate)
+
+    result = solver.solve(observations[:2], [], profile.camera, profile.tag_size_m, layout)
+
+    assert result is not None
+    assert calls == 1
+
+
+def test_field_corner_cache_refreshes_after_layout_mutation() -> None:
+    profile, _, layout, observations = _scene()
+    solver = CameraPoseSolver()
+    original_points, _ = solver._multi_points(observations[:2], profile.tag_size_m, layout)
+
+    layout[1][1, 3] += 0.25
+    updated_points, _ = solver._multi_points(observations[:2], profile.tag_size_m, layout)
+
+    assert not np.array_equal(updated_points[:4], original_points[:4])
+    assert np.array_equal(updated_points[4:], original_points[4:])

@@ -52,7 +52,8 @@ class BlockSkipPrefilter:
         height, width = gray.shape[:2]
         stride = max(1, int(self.config.stride))
         sampled = gray[::stride, ::stride]
-        if sampled.size == 0 or float(np.std(sampled)) < self.config.min_global_std:
+        sampled_std = 0.0 if sampled.size == 0 else float(cv2.meanStdDev(sampled)[1][0, 0])
+        if sampled_std < self.config.min_global_std:
             return []
 
         gradient = self._sampled_gradient(sampled)
