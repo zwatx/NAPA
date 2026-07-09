@@ -387,3 +387,23 @@ class AsyncJsonlOutputPublisher(OutputPublisher):
                 self._state = "closed"
             self._condition.notify_all()
 
+    def _next_archive_path(self) -> Path:
+        timestamp_ns = time.time_ns()
+        while True:
+            self._archive_sequence += 1
+            archive = self.path.with_name(
+                f"{self.path.stem}.archive-{timestamp_ns}-{self._archive_sequence:04d}{self.path.suffix}"
+            )
+            if not archive.exists():
+                return archive
+
+    def _archive_paths(self) -> list[Path]:
+        pattern = f"{self.path.stem}.archive-*{self.path.suffix}"
+        return sorted((path for path in self.path.parent.glob(pattern) if path.is_file()), key=lambda path: path.name)
+
+    def _prune_archives(self) -> int:
+        archives = self._archive_paths()
+        excess = len(archives) - self.config.retention_files
+        for archive in archives[: max(0, excess)]:
+            archive.unlink(missing_ok=True)
+        return min(len(archives), self.config.retention_files)

@@ -119,3 +119,105 @@ def test_async_recorder_applies_bounded_drop_policy(
     assert timestamps == expected_timestamps
 
 
+def test_async_recorder_rotates_by_size_and_caps_retention(tmp_path: Path) -> None:
+    path = tmp_path / "frames.jsonl"
+    publisher = AsyncJsonlOutputPublisher(
+        path,
+        config=JsonlRecorderConfig(
+            flush_interval_s=0,
+            max_file_size_bytes=15,
+            rotation_interval_s=None,
+            retention_files=2,
+            include_writer_telemetry=False,
+        ),
+        _line_encoder=lambda result: json.dumps({"t": int(result.timestamp)}),
+    )
+    for index in range(5):
+        publisher.publish(_frame(index))
+    publisher.close()
+
+    archives = sorted(tmp_path.glob("frames.archive-*.jsonl"))
+    assert len(archives) == 2
+    retained = [
+        json.loads(line)["t"]
+        for file_path in [*archives, path]
+        for line in file_path.read_text(encoding="utf-8").splitlines()
+    ]
+    assert retained == [2, 3, 4]
+    health = publisher.telemetry()
+    assert health["rotations"] == 4
+    assert health["retained_archives"] == 2
+
+
+def test_async_recorder_rotates_by_elapsed_time(tmp_path: Path) -> None:
+    now = [0.0]
+    path = tmp_path / "timed.jsonl"
+    publisher = AsyncJsonlOutputPublisher(
+        path,
+        config=JsonlRecorderConfig(
+            flush_interval_s=0,
+            max_file_size_bytes=None,
+            rotation_interval_s=1.0,
+            include_writer_telemetry=False,
+        ),
+        clock=lambda: now[0],
+        _line_encoder=lambda result: json.dumps({"t": int(result.timestamp)}),
+    )
+    publisher.publish(_frame(0))
+    assert publisher.wait_until_idle()
+    now[0] = 1.5
+    publisher.publish(_frame(1))
+    publisher.close()
+
+    assert len(list(tmp_path.glob("timed.archive-*.jsonl"))) == 1
+    assert publisher.telemetry()["rotations"] == 1
+
+
+def test_async_recorder_surfaces_writer_errors(tmp_path: Path) -> None:
+    def broken_encoder(_result: FrameResult) -> str:
+        raise OSError("disk unavailable")
+
+    publisher = AsyncJsonlOutputPublisher(
+        tmp_path / "broken.jsonl",
+        config=JsonlRecorderConfig(max_file_size_bytes=None, rotation_interval_s=None),
+        _line_encoder=broken_encoder,
+    )
+    publisher.publish(_frame(0))
+    assert publisher.wait_until_idle()
+    health = publisher.telemetry()
+    assert health["state"] == "failed"
+    assert "disk unavailable" in health["writer_error"]
+    with pytest.raises(RuntimeError, match="JSONL writer failed"):
+        publisher.publish(_frame(1))
+    with pytest.raises(RuntimeError, match="JSONL writer failed"):
+        publisher.close()
+
+
+def test_async_recorder_close_has_a_hard_timeout(tmp_path: Path) -> None:
+    encoder_started = threading.Event()
+    release_encoder = threading.Event()
+
+    def stuck_encoder(result: FrameResult) -> str:
+        encoder_started.set()
+        release_encoder.wait(2.0)
+        return json.dumps({"timestamp_s": result.timestamp})
+
+    publisher = AsyncJsonlOutputPublisher(
+        tmp_path / "stuck.jsonl",
+        config=JsonlRecorderConfig(
+            close_timeout_s=0.02,
+            max_file_size_bytes=None,
+            rotation_interval_s=None,
+        ),
+        _line_encoder=stuck_encoder,
+    )
+    publisher.publish(_frame(0))
+    assert encoder_started.wait(1.0)
+    started = time.monotonic()
+    try:
+        with pytest.raises(JsonlRecorderCloseTimeout, match="did not stop"):
+            publisher.close()
+    finally:
+        release_encoder.set()
+    assert time.monotonic() - started < 0.5
+    assert publisher.telemetry()["state"] == "timed_out"
