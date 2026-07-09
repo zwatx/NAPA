@@ -184,3 +184,100 @@ def test_camera_reconnects_after_read_and_open_failures() -> None:
     assert recovered.release_count == 1
 
 
+def test_negotiated_resolution_mismatch_is_fatal() -> None:
+    profile = load_profile("laptop")
+    capture = _FakeCapture([], width=640.0, height=480.0)
+    source = OpenCVCameraSource(
+        profile,
+        capture_factory=lambda _camera_id: capture,
+        reconnect_initial_s=0.01,
+        reconnect_max_s=0.02,
+        read_timeout_s=0.5,
+    )
+    try:
+        with pytest.raises(RuntimeError, match="negotiated 640x480"):
+            source.read()
+    finally:
+        source.release()
+
+    assert capture.release_count == 1
+    assert source.health()["source_connected"] is False
+
+
+def test_release_is_idempotent_and_wakes_a_waiting_reader() -> None:
+    profile = load_profile("laptop")
+    capture = _FakeCapture([])
+    source = OpenCVCameraSource(
+        profile,
+        capture_factory=lambda _camera_id: capture,
+        read_attempts=1,
+        reconnect_initial_s=0.01,
+        reconnect_max_s=0.02,
+        shutdown_timeout_s=0.5,
+    )
+    result: list[CaptureResult] = []
+
+    def consume() -> None:
+        ok, _, _, frame = source.read()
+        result.append((ok, frame))
+
+    consumer = threading.Thread(target=consume)
+    consumer.start()
+    assert capture.read_started.wait(1.0)
+    source.release()
+    source.release()
+    consumer.join(1.0)
+
+    assert result == [(False, None)]
+    assert not consumer.is_alive()
+    assert capture.release_count == 1
+    assert source.health()["capture_shutdown_timed_out"] is False
+    assert len(set(capture.operation_threads)) == 1
+
+
+def test_release_during_camera_open_cannot_restore_connection_state() -> None:
+    profile = load_profile("laptop")
+    factory_started = threading.Event()
+    allow_factory_to_finish = threading.Event()
+    capture = _FakeCapture([(True, _frame(1))])
+
+    def factory(_camera_id: int | str) -> _FakeCapture:
+        factory_started.set()
+        assert allow_factory_to_finish.wait(1.0)
+        return capture
+
+    source = OpenCVCameraSource(
+        profile,
+        capture_factory=factory,
+        reconnect_initial_s=0.01,
+        reconnect_max_s=0.02,
+        shutdown_timeout_s=0.05,
+    )
+    assert factory_started.wait(1.0)
+    source.release()
+    assert source.health()["capture_shutdown_timed_out"] is True
+    assert source.health()["source_connected"] is False
+
+    allow_factory_to_finish.set()
+    source.release()
+
+    health = source.health()
+    assert health["source_connected"] is False
+    assert health["capture_worker_alive"] is False
+    assert capture.release_count == 1
+    assert not capture.read_started.is_set()
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"read_attempts": 0}, "read_attempts"),
+        ({"reconnect_initial_s": -0.1}, "reconnect_initial_s"),
+        ({"reconnect_initial_s": 0.2, "reconnect_max_s": 0.1}, "reconnect_max_s"),
+        ({"read_timeout_s": 0.0}, "read_timeout_s"),
+        ({"shutdown_timeout_s": -1.0}, "shutdown_timeout_s"),
+    ],
+)
+def test_live_capture_runtime_options_are_validated(kwargs: dict[str, float | int], message: str) -> None:
+    with pytest.raises(ValueError, match=message):
+        OpenCVCameraSource(load_profile("laptop"), **kwargs)

@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import argparse
 import logging
+import math
 from collections.abc import Sequence
+from dataclasses import replace
 
 from . import __version__
 from .config import ProfileError, available_profiles, load_profile
+from .orientation import NetworkTablesRobotYawSource
 from .output import make_output_publisher
 from .service import NorthstarVisionService
 
@@ -16,6 +19,34 @@ def _positive_int(value: str) -> int:
     parsed = int(value)
     if parsed < 1:
         raise argparse.ArgumentTypeError("must be at least 1")
+    return parsed
+
+
+def _positive_float(value: str) -> float:
+    parsed = float(value)
+    if not math.isfinite(parsed) or parsed <= 0:
+        raise argparse.ArgumentTypeError("must be greater than zero")
+    return parsed
+
+
+def _nonnegative_float(value: str) -> float:
+    parsed = float(value)
+    if not math.isfinite(parsed) or parsed < 0:
+        raise argparse.ArgumentTypeError("must not be negative")
+    return parsed
+
+
+def _nonnegative_int(value: str) -> int:
+    parsed = int(value)
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("must not be negative")
+    return parsed
+
+
+def _port(value: str) -> int:
+    parsed = int(value)
+    if parsed < 0 or parsed > 65535:
+        raise argparse.ArgumentTypeError("must be between 0 and 65535")
     return parsed
 
 
@@ -32,7 +63,71 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--show", action="store_true", help="Show an OpenCV debug overlay window")
     parser.add_argument("--output", choices=["jsonl", "nt", "none"], help="Override the profile output mode")
     parser.add_argument("--output-path", help="JSONL destination (only used for --output jsonl)")
-    parser.add_argument("--robot-yaw", type=float, default=0.0, help="Robot yaw in WPILib radians for trig output")
+    parser.add_argument("--nt-server", help="Override the profile NetworkTables server")
+    parser.add_argument("--nt-server-port", type=_port, help="NetworkTables server port (0 uses default)")
+    parser.add_argument(
+        "--nt-close-drain",
+        type=_nonnegative_float,
+        help="Bounded seconds to drain the final NetworkTables update during shutdown",
+    )
+    parser.add_argument(
+        "--nt-delivery",
+        choices=["upstream", "latest"],
+        default=None,
+        help="Preserve every upstream-compatible update or bound delivery to the latest value",
+    )
+    parser.add_argument("--jsonl-queue-size", type=_positive_int, help="Bounded recorder queue depth")
+    parser.add_argument(
+        "--jsonl-drop-policy",
+        choices=["drop_oldest", "drop_newest"],
+        default=None,
+        help="Recorder behavior when its queue is full",
+    )
+    parser.add_argument(
+        "--jsonl-flush-interval",
+        type=_nonnegative_float,
+        default=None,
+        help="Seconds between recorder flushes (0 flushes every record)",
+    )
+    parser.add_argument(
+        "--jsonl-fsync-interval",
+        type=_nonnegative_float,
+        default=None,
+        help="Seconds between durable recorder syncs (0 disables fsync)",
+    )
+    parser.add_argument(
+        "--jsonl-max-size-mib",
+        type=_nonnegative_float,
+        default=None,
+        help="Rotate the active recording at this size (0 disables size rotation)",
+    )
+    parser.add_argument(
+        "--jsonl-rotate-seconds",
+        type=_nonnegative_float,
+        default=None,
+        help="Rotate the active recording after this duration (0 disables time rotation)",
+    )
+    parser.add_argument(
+        "--jsonl-retention-files",
+        type=_nonnegative_int,
+        default=None,
+        help="Number of rotated JSONL archives retained",
+    )
+    yaw = parser.add_mutually_exclusive_group()
+    yaw.add_argument("--robot-yaw", type=float, help="Static WPILib yaw in radians for controlled bench tests")
+    yaw.add_argument("--robot-yaw-topic", help="Absolute NetworkTables double topic containing robot yaw radians")
+    parser.add_argument(
+        "--yaw-max-age",
+        type=_positive_float,
+        default=None,
+        help="Maximum yaw sample age in seconds before trig localization is suppressed",
+    )
+    parser.add_argument(
+        "--yaw-queue-size",
+        type=_positive_int,
+        default=None,
+        help="Timestamped robot-yaw samples retained for interpolation",
+    )
     parser.add_argument("--max-frames", type=_positive_int, help="Stop after this many successfully processed frames")
     skip_scan = parser.add_mutually_exclusive_group()
     skip_scan.add_argument("--enable-skip-scan", action="store_true", help="Enable ROI prefiltering for this run")

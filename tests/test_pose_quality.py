@@ -93,3 +93,30 @@ def test_multi_tag_solver_rejects_corrupted_tag_and_recovers_pose() -> None:
     assert 4 in result.diagnostics.rejected_tag_reasons
     assert result.diagnostics.per_tag_rms_reprojection_error_px[4] > 100.0
 
+
+def test_multi_tag_solver_reports_bounds_rejection() -> None:
+    profile, _, layout, observations = _scene()
+    solver = CameraPoseSolver(
+        max_reprojection_error_px=2.0,
+        bounds=CameraPoseBounds(max_camera_height_m=0.5),
+    )
+
+    result = solver.solve(observations[:3], [], profile.camera, profile.tag_size_m, layout)
+
+    assert result is None
+    assert solver.last_diagnostics.accepted_tag_ids == []
+    assert solver.last_diagnostics.rejection_reason is not None
+    assert "camera height" in solver.last_diagnostics.rejection_reason
+
+
+def test_multi_tag_solver_explains_failure_when_two_tags_disagree() -> None:
+    profile, _, layout, observations = _scene()
+    observations[1].corners = observations[1].corners + np.array([180.0, 90.0])
+    solver = CameraPoseSolver(max_reprojection_error_px=1.0, max_tag_reprojection_error_px=2.0)
+
+    result = solver.solve(observations[:2], [], profile.camera, profile.tag_size_m, layout)
+
+    assert result is None
+    assert solver.last_diagnostics.rejection_reason is not None
+    assert "reprojection error" in solver.last_diagnostics.rejection_reason
+    assert solver.last_diagnostics.overall_rms_reprojection_error_px is not None
