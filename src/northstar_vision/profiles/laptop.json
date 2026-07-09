@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "name": "laptop",
+  "device_id": "northstar_laptop",
+  "platform": "laptop",
+  "tag_size_m": 0.1651,
+  "camera": {
+    "id": 0,
+    "width": 1280,
+    "height": 720,
+    "fps": 30,
+    "buffer_size": 1,
+    "auto_exposure": null,
+    "exposure": null,
+    "gain": null,
+    "calibration": {
+      "camera_matrix": [[900.0, 0.0, 640.0], [0.0, 900.0, 360.0], [0.0, 0.0, 1.0]],
+      "distortion_coefficients": [0.0, 0.0, 0.0, 0.0, 0.0]
+    },
+    "robot_to_camera": {
+      "translation_m": [0.25, 0.0, 0.35],
+      "rotation_rpy_rad": [0.0, 0.0, 0.0]
+    }
+  },
+  "tag_layout": {
+    "tags": [
+      {"id": 1, "pose": {"translation_m": [2.0, 1.0, 1.4], "rotation_rpy_rad": [0.0, 0.0, 3.141592653589793]}},
+      {"id": 2, "pose": {"translation_m": [4.0, 1.0, 1.4], "rotation_rpy_rad": [0.0, 0.0, 3.141592653589793]}},
+      {"id": 3, "pose": {"translation_m": [2.0, 3.0, 1.4], "rotation_rpy_rad": [0.0, 0.0, 0.0]}},
+      {"id": 4, "pose": {"translation_m": [4.0, 3.0, 1.4], "rotation_rpy_rad": [0.0, 0.0, 0.0]}}
+    ]
+  },
+  "detection": {
+    "max_reprojection_error_px": 5.0,
+    "skip_scan": {
+      "enabled": false,
+      "stride": 4,
+      "min_global_std": 3.0,
+      "min_edge_strength": 18.0,
+      "dilation_px": 56,
+      "padding_px": 48,
+      "min_roi_size_px": 48,
+      "max_rois": 8,
+      "max_roi_area_ratio": 0.45
+    }
+  },
+  "output": {
+    "mode": "jsonl",
+    "path": "northstar_output.jsonl",
+    "nt_server": "10.0.0.2"
+  }
+}

@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- TheLab metadata (read by the `lab` CLI on publish; do not remove).
+     thelab:plan is the STABLE plan id — re-publishing this file updates the same
+     plan (bumping its version) even if the title changes. -->
+<meta name="thelab:project" content="AprilTagDetector">
+<meta name="thelab:title" content="AprilTag Detector Hardening Roadmap">
+<meta name="thelab:plan" content="apriltag-detector-hardening-roadmap">
+<meta name="thelab:kind" content="plan">
+<meta name="thelab:status" content="active">
+<meta name="thelab:tags" content="roadmap,performance,reliability">
+<!-- Optional: issue numbers this plan closes on ship, e.g. content="3,7". They
+     auto-close when the plan is marked done (`lab done … --commit`). -->
+<meta name="thelab:addresses" content="1,2,3,4,5,6,7,8">
+<meta name="thelab:version" content="1">
+<meta name="thelab:hosted-url" content="https://thelab.wilsonzach.com/project/apriltagdetector/plan/apriltag-detector-hardening-roadmap">
+<title>AprilTag Detector Hardening Roadmap</title>
+<style>
+  /* Self-contained. Mirrors The Lab reader so the local file looks like the hosted
+     one. This block is NOT published: the hosted view uses The Lab's own reader
+     stylesheet, and only the article content below is published. */
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    background: #0a0a0a; color: #a1a1a1;
+    font-size: 15px; line-height: 1.7; letter-spacing: -0.006em;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 820px; margin: 0 auto; padding: 40px 24px 96px; }
+  a { color: #4e9bfa; text-decoration: none; } a:hover { text-decoration: underline; }
+  img { max-width: 100%; height: auto; }
+  h1 { font-size: 30px; font-weight: 600; letter-spacing: -0.025em; line-height: 1.2; color: #ededed; margin-bottom: 8px; }
+  h2 { font-size: 17px; font-weight: 600; letter-spacing: -0.015em; color: #ededed; margin: 56px 0 16px; padding-top: 24px; border-top: 1px solid #222; }
+  h3 { font-size: 14px; font-weight: 600; color: #ededed; margin: 32px 0 12px; }
+  p { margin: 0 0 12px; } strong { color: #ededed; font-weight: 600; }
+  ul, ol { margin: 0 0 12px 22px; } li { margin: 4px 0; }
+  .lede { color: #ededed; font-size: 16px; margin: 4px 0 8px; }
+  code { font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace; }
+  pre.code { background: #0d0d0d; border: 1px solid #222; border-radius: 6px; padding: 16px 20px; overflow-x: auto; font-size: 12.5px; line-height: 1.65; color: #a1a1a1; tab-size: 2; margin: 16px 0; }
+  .callout { border: 1px solid #222; border-left: 2px solid #4e9bfa; border-radius: 0 6px 6px 0; padding: 14px 20px; margin: 20px 0; font-size: 13.5px; color: #a1a1a1; }
+  .callout strong { color: #ededed; }
+  figure { margin: 16px 0; } figcaption { font-size: 12px; color: #6b6b6b; padding-top: 8px; font-family: ui-monospace, Menlo, monospace; }
+  .fig-scroll { overflow-x: auto; border: 1px solid #222; border-radius: 6px; }
+  .fig-scroll svg { display: block; width: 100%; height: auto; }
+  .tbl-scroll { overflow-x: auto; }
+  table.data { width: 100%; border-collapse: collapse; font-size: 13.5px; margin: 12px 0; }
+  table.data th { text-align: left; font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.07em; color: #6b6b6b; padding: 10px 14px; border-bottom: 1px solid #222; }
+  table.data td { padding: 10px 14px; border-bottom: 1px solid #222; color: #a1a1a1; vertical-align: top; }
+  table.data tr:last-child td { border-bottom: 0; }
+  table.data td:first-child { color: #ededed; white-space: nowrap; }
+  .plan-links { margin: 16px 0 8px; }
+  .plan-links table.data td:first-child { font-size: 11px; text-transform: uppercase; letter-spacing: 0.07em; color: #6b6b6b; width: 90px; }
+  .plan-links table.data td:nth-child(2) { color: #ededed; font-family: ui-monospace, Menlo, monospace; font-size: 12.5px; word-break: break-all; }
+  .status { display: inline-flex; align-items: center; gap: 7px; }
+  .status::before { content: ""; width: 7px; height: 7px; border-radius: 50%; }
+  .st-draft::before { border: 1px solid #6b6b6b; }
+  .st-active::before { background: #4e9bfa; }
+  .st-done::before { background: #ededed; }
+  .st-archived::before { background: #333; }
+  .controls { display: grid; grid-template-columns: repeat(3, minmax(150px, 1fr)); gap: 14px; padding: 16px; border: 1px solid #222; border-radius: 6px; margin: 16px 0; background: #0d0d0d; }
+  .controls label { display: grid; gap: 7px; color: #ededed; font-size: 12px; }
+  .controls output { color: #4e9bfa; font-family: ui-monospace, Menlo, monospace; }
+  .actions { display: flex; align-items: center; gap: 12px; margin: 12px 0 18px; }
+  button { appearance: none; border: 1px solid #333; border-radius: 6px; background: #151515; color: #ededed; padding: 8px 12px; cursor: pointer; }
+  button:hover { border-color: #4e9bfa; }
+  .copy-status { color: #6b6b6b; font-size: 12px; }
+  .score { color: #4e9bfa !important; font-family: ui-monospace, Menlo, monospace; text-align: right; }
+  @media (max-width: 650px) { .controls { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<main class="wrap">
+<article>
+  <h1>AprilTag Detector Hardening Roadmap</h1>
+
+  <!-- Plan meta: local-file chrome only — `lab publish` strips this whole section
+       from the published body (The Lab renders its own header + metadata rail). The
+       CLI fills the Version cell on publish (v1, v2, …). -->
+  <section class="plan-links">
+    <div class="tbl-scroll"><table class="data">
+      <tr><td>Project</td><td>AprilTagDetector</td></tr>
+      <tr><td>Version</td><td id="thelab-version">v1</td></tr>
+      <tr><td>Status</td><td><span class="status st-active">active</span> · 2026-07-09</td></tr>
+    </table></div>
+  </section>
+
+  <p class="lede">Turn the cleaned prototype into a bounded-latency, measurable robot service through four gated phases: production inputs, replay evidence, real-time isolation, and pose/output validation.</p>
+
+  <div class="callout"><strong>Plan boundary.</strong> The repository refactor and package repair are complete. This roadmap begins where hardware-specific evidence is required. It addresses review issues #1–#8 and deliberately blocks release until calibration, licensing, live NetworkTables timing, and target-device soak tests pass.</div>
+
+  <h2>Target operating flow</h2>
+  <figure>
+    <div class="fig-scroll">
+      <svg viewBox="0 0 780 310" role="img" aria-labelledby="target-title target-desc" xmlns="http://www.w3.org/2000/svg">
+        <title id="target-title">Target bounded-latency AprilTag architecture</title>
+        <desc id="target-desc">A camera worker replaces stale frames in a single slot, the processor validates detections and poses, then bounded output adapters publish NetworkTables and recordings with telemetry.</desc>
+        <defs><marker id="a" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8 Z" fill="#4e9bfa"/></marker></defs>
+        <rect x="18" y="92" width="116" height="70" rx="8" fill="#111" stroke="#333"/><text x="76" y="119" text-anchor="middle" fill="#ededed" font-size="13">Camera backend</text><text x="76" y="140" text-anchor="middle" fill="#777" font-size="11">V4L2 / chosen format</text>
+        <rect x="164" y="76" width="132" height="102" rx="8" fill="#111" stroke="#4e9bfa"/><text x="230" y="103" text-anchor="middle" fill="#ededed" font-size="13">Capture worker</text><text x="230" y="124" text-anchor="middle" fill="#777" font-size="11">size-one latest slot</text><text x="230" y="143" text-anchor="middle" fill="#777" font-size="11">reconnect + timestamps</text><text x="230" y="162" text-anchor="middle" fill="#777" font-size="11">drop counters</text>
+        <rect x="326" y="76" width="132" height="102" rx="8" fill="#111" stroke="#333"/><text x="392" y="103" text-anchor="middle" fill="#ededed" font-size="13">Vision processor</text><text x="392" y="124" text-anchor="middle" fill="#777" font-size="11">detect + PnP</text><text x="392" y="143" text-anchor="middle" fill="#777" font-size="11">residuals + bounds</text><text x="392" y="162" text-anchor="middle" fill="#777" font-size="11">immutable result</text>
+        <rect x="488" y="24" width="132" height="76" rx="8" fill="#111" stroke="#333"/><text x="554" y="52" text-anchor="middle" fill="#ededed" font-size="13">NT latest/bounded</text><text x="554" y="73" text-anchor="middle" fill="#777" font-size="11">capture timestamp</text>
+        <rect x="488" y="154" width="132" height="76" rx="8" fill="#111" stroke="#333"/><text x="554" y="182" text-anchor="middle" fill="#ededed" font-size="13">Recorder queue</text><text x="554" y="203" text-anchor="middle" fill="#777" font-size="11">rotate + retention</text>
+        <rect x="650" y="76" width="112" height="102" rx="8" fill="#111" stroke="#333"/><text x="706" y="103" text-anchor="middle" fill="#ededed" font-size="13">Telemetry</text><text x="706" y="124" text-anchor="middle" fill="#777" font-size="11">frame age p95</text><text x="706" y="143" text-anchor="middle" fill="#777" font-size="11">drops / queues</text><text x="706" y="162" text-anchor="middle" fill="#777" font-size="11">pose rejections</text>
+        <rect x="326" y="238" width="132" height="50" rx="8" fill="#111" stroke="#333"/><text x="392" y="268" text-anchor="middle" fill="#ededed" font-size="13">Timestamped robot yaw</text>
+        <path d="M134 127 H160" stroke="#4e9bfa" stroke-width="2" marker-end="url(#a)"/><path d="M296 127 H322" stroke="#4e9bfa" stroke-width="2" marker-end="url(#a)"/><path d="M458 108 C470 108 470 62 484 62" fill="none" stroke="#4e9bfa" stroke-width="2" marker-end="url(#a)"/><path d="M458 147 C470 147 470 192 484 192" fill="none" stroke="#4e9bfa" stroke-width="2" marker-end="url(#a)"/><path d="M620 62 C636 62 636 108 646 108" fill="none" stroke="#4e9bfa" stroke-width="2" marker-end="url(#a)"/><path d="M620 192 C636 192 636 147 646 147" fill="none" stroke="#4e9bfa" stroke-width="2" marker-end="url(#a)"/><path d="M392 238 V182" stroke="#4e9bfa" stroke-width="2" marker-end="url(#a)"/>
+      </svg>
+    </div>
+    <figcaption>all potentially blocking I/O moves behind a bounded ownership boundary</figcaption>
+  </figure>
+
+  <h2>Working priority model</h2>
+  <p>The static order below is the recommended dependency sequence. In the local file, adjust the three weights to explore a different emphasis; rows re-score and sort automatically. Score is <code>(reliability × R + performance × P + release × G) ÷ effort</code>. It is a decision aid, not a substitute for phase dependencies.</p>
+  <div class="controls" aria-label="Priority weights">
+    <label>Reliability weight <output id="reliability-value">5</output><input id="reliability-weight" type="range" min="1" max="5" value="5"></label>
+    <label>Performance weight <output id="performance-value">3</output><input id="performance-weight" type="range" min="1" max="5" value="3"></label>
+    <label>Release weight <output id="release-value">4</output><input id="release-weight" type="range" min="1" max="5" value="4"></label>
+  </div>
+  <div class="actions"><button id="copy-priorities" type="button">Copy as Markdown</button><span id="copy-status" class="copy-status" aria-live="polite">Local interactive control; hosted copy remains readable.</span></div>
+  <div class="tbl-scroll"><table class="data" id="priority-table">
+    <thead><tr><th>Issue</th><th>Work item</th><th>Rel.</th><th>Perf.</th><th>Release</th><th>Effort</th><th>Score</th></tr></thead>
+    <tbody>
+      <tr data-reliability="2" data-performance="0" data-release="5" data-effort="1"><td>#7</td><td>License + first release baseline</td><td>2</td><td>0</td><td>5</td><td>1</td><td class="score">30.0</td></tr>
+      <tr data-reliability="5" data-performance="0" data-release="5" data-effort="3"><td>#2</td><td>Measured calibration + official field layout</td><td>5</td><td>0</td><td>5</td><td>3</td><td class="score">15.0</td></tr>
+      <tr data-reliability="4" data-performance="4" data-release="3" data-effort="3"><td>#5</td><td>Pi replay corpus + benchmark gate</td><td>4</td><td>4</td><td>3</td><td>3</td><td class="score">14.7</td></tr>
+      <tr data-reliability="5" data-performance="4" data-release="4" data-effort="4"><td>#8</td><td>Live NT timing + queue semantics</td><td>5</td><td>4</td><td>4</td><td>4</td><td class="score">13.3</td></tr>
+      <tr data-reliability="5" data-performance="5" data-release="3" data-effort="4"><td>#1</td><td>Latest-frame capture + reconnect</td><td>5</td><td>5</td><td>3</td><td>4</td><td class="score">13.0</td></tr>
+      <tr data-reliability="5" data-performance="2" data-release="4" data-effort="5"><td>#3</td><td>Pose outliers, residuals + bounds</td><td>5</td><td>2</td><td>4</td><td>5</td><td class="score">9.4</td></tr>
+      <tr data-reliability="4" data-performance="1" data-release="2" data-effort="3"><td>#6</td><td>Timestamped robot yaw</td><td>4</td><td>1</td><td>2</td><td>3</td><td class="score">10.3</td></tr>
+      <tr data-reliability="3" data-performance="5" data-release="2" data-effort="4"><td>#4</td><td>Bounded rotating recorder</td><td>3</td><td>5</td><td>2</td><td>4</td><td class="score">9.5</td></tr>
+    </tbody>
+  </table></div>
+
+  <h2>Execution phases</h2>
+  <h3>Phase 0 — owner and hardware prerequisites</h3>
+  <ol>
+    <li><strong>#7:</strong> choose a license, author/project metadata, repository remote, and release policy. Create the first commit only after the current working tree is reviewed.</li>
+    <li><strong>#2:</strong> identify the exact Pi, OS, camera, lens, resolution, exposure strategy, and robot mount. Calibrate that assembly and import the official season layout instead of editing bundled examples in place.</li>
+    <li>Save production values in a new explicit deployment profile; retain laptop/raspi examples for development and make example status machine-readable.</li>
+  </ol>
+  <p><strong>Gate:</strong> no package publication or robot localization test until license and production profile inputs exist.</p>
+
+  <h3>Phase 1 — evidence before concurrency</h3>
+  <ol>
+    <li><strong>#5:</strong> capture a versioned corpus spanning tag distances, angles, motion blur, partial occlusion, glare, dim scenes, duplicate/unknown tags, blank frames, camera interruptions, and multi-tag views.</li>
+    <li>Add a replay benchmark that records detection recall, false positives, p50/p95/p99 processing time, end-to-end frame age, pose residuals, and memory growth. Store summarized fixtures or download instructions rather than large raw logs in the package.</li>
+    <li><strong>#8:</strong> run a local NT server/robot-side subscriber harness and record publisher-to-consumer timestamp error, disconnect behavior, backlog depth, and recovery under induced packet loss.</li>
+  </ol>
+  <p><strong>Gate:</strong> a repeatable baseline report runs in one command on laptop and Pi; it makes no claim from a single average latency.</p>
+
+  <h3>Phase 2 — bounded real-time boundaries</h3>
+  <ol>
+    <li><strong>#1:</strong> give one worker exclusive ownership of the camera. Replace frames atomically in a size-one slot; count overwritten frames; reconnect with bounded backoff; publish actual negotiated backend, resolution, FPS, and format.</li>
+    <li>Keep all OpenCV capture operations on that worker, propagate capture wall/monotonic timestamps together, and make shutdown idempotent even during reconnect.</li>
+    <li><strong>#4:</strong> give JSONL one bounded queue and writer. Define drop-old/drop-new behavior, rotate by size or time, cap retention, and expose queue depth, drops, write latency, and last error.</li>
+    <li>Resolve <strong>#8</strong> queue semantics from Phase 1 evidence: retain upstream <code>sendAll</code> only if the measured robot contract requires every frame and the queue remains bounded; otherwise choose latest-value delivery explicitly.</li>
+  </ol>
+  <p><strong>Gate:</strong> a camera stall, disk stall, or network stall cannot grow memory or make processed frame age increase without bound.</p>
+
+  <h3>Phase 3 — pose trust and time alignment</h3>
+  <ol>
+    <li><strong>#3:</strong> add per-tag residuals, duplicate-ID handling, iterative/RANSAC outlier removal for multi-tag solves, configured field/height bounds, and rejection reasons. Keep raw image observations available even when a field pose is rejected.</li>
+    <li>Validate official artwork corner order with captured tags and preserve the golden real-detector test. Compare estimated camera poses against surveyed ground truth at multiple distances and viewing angles.</li>
+    <li><strong>#6:</strong> subscribe to robot yaw with source timestamps, keep a short interpolation buffer, sample at frame capture time, report age, and suppress trig localization when yaw is stale or outside the buffer.</li>
+    <li>Turn confidence from an informal scalar into a documented quality model or remove it from decision-making until it is calibrated against observed error.</li>
+  </ol>
+  <p><strong>Gate:</strong> accepted poses stay inside configured physical bounds, corrupted-tag tests reject safely, and replayed pose error meets the team-selected percentile budget.</p>
+
+  <h3>Phase 4 — release candidate</h3>
+  <ol>
+    <li>Run an eight-hour Pi soak with camera, NT server, and bounded recording enabled; capture thermals, RSS memory, frame-age percentiles, reconnects, dropped frames, queue high-water marks, and disk growth.</li>
+    <li>Run the full Python 3.11–3.14 CI matrix, OpenCV 4.7 floor, current OpenCV, wheel/sdist smoke installs, real NT integration test, and replay corpus gate.</li>
+    <li>Freeze profile/schema/output versions, document upgrade compatibility, rebuild distributions from the committed tag, and publish only after issue #7 is complete.</li>
+  </ol>
+
+  <h2>Provisional service budgets</h2>
+  <div class="tbl-scroll"><table class="data">
+    <thead><tr><th>Signal</th><th>Initial gate</th><th>Measurement point</th></tr></thead>
+    <tbody>
+      <tr><td>Input mode</td><td>1280×720 at 30 fps</td><td>Negotiated camera properties and received frames.</td></tr>
+      <tr><td>Frame age</td><td>p95 ≤ 50 ms; p99 ≤ 80 ms</td><td>Capture monotonic time to completed publish handoff.</td></tr>
+      <tr><td>Reconnect</td><td>Resume valid frames within 2 s after camera return</td><td>Physical disconnect/reconnect test.</td></tr>
+      <tr><td>Memory</td><td>No monotonic growth; every queue has a configured maximum</td><td>Eight-hour RSS and queue high-water marks.</td></tr>
+      <tr><td>Detection</td><td>No recall regression versus full-frame baseline</td><td>Versioned Pi corpus by scenario bucket.</td></tr>
+      <tr><td>Disk</td><td>Retention cap respected; capture thread never waits on storage</td><td>Forced slow/full filesystem test.</td></tr>
+      <tr><td>Time sync</td><td>Robot receives capture timestamps within the agreed error budget</td><td>Live server/subscriber harness under network impairment.</td></tr>
+    </tbody>
+  </table></div>
+  <p>These are starting budgets, not promises. Phase 1 replaces them with team-approved values tied to the target Pi, camera, robot loop, and field strategy.</p>
+
+  <h2>Risks &amp; mitigations</h2>
+  <div class="tbl-scroll"><table class="data">
+    <thead><tr><th>Risk</th><th>Likelihood</th><th>Mitigation</th></tr></thead>
+    <tbody>
+      <tr><td>Threaded capture introduces shutdown races</td><td>medium</td><td>Single camera owner, explicit state machine, fault-injection tests, idempotent close, bounded joins.</td></tr>
+      <tr><td>Optimization improves laptop numbers but harms Pi recall</td><td>high</td><td>Full-frame remains reference; require per-bucket replay parity and Pi percentile evidence.</td></tr>
+      <tr><td>Outlier rejection hides layout/calibration errors</td><td>medium</td><td>Publish rejection reasons and residuals; validate surveyed ground truth before tuning thresholds.</td></tr>
+      <tr><td>Dropping NT updates violates robot consumer assumptions</td><td>medium</td><td>Decide from a live consumer test and version the wire behavior; do not change silently.</td></tr>
+      <tr><td>Recorder queue protects latency but loses diagnostics</td><td>medium</td><td>Document drop policy, expose counters, preserve a bounded pre/post-fault window where feasible.</td></tr>
+      <tr><td>Unlicensed or uncommitted artifact is published</td><td>low</td><td>Make license, clean committed tree, tag, and artifact provenance explicit release gates.</td></tr>
+    </tbody>
+  </table></div>
+
+  <h2>Definition of done</h2>
+  <ul>
+    <li>Issues #1–#8 are closed with evidence, not just code presence; this plan is marked done against the release commit.</li>
+    <li>The target architecture has no unbounded queue, no cross-thread camera ownership, and no output I/O on the capture/processing critical path.</li>
+    <li>A checked-in benchmark definition and reproducible corpus manifest show detection, pose, timing, and resource percentiles on the chosen Raspberry Pi.</li>
+    <li>Robot-side live testing proves timestamp interpretation, disconnect recovery, and chosen queue semantics.</li>
+    <li>Production calibration/layout/profile provenance is documented and examples cannot be mistaken for competition measurements.</li>
+    <li>The tagged wheel and sdist are built by CI from a licensed, committed tree and install cleanly in fresh environments.</li>
+  </ul>
+
+  <h2>Open owner decisions</h2>
+  <ul>
+    <li>License, author/maintainer metadata, Git remote, and whether 0.2.0 is private alpha or a public release.</li>
+    <li>Raspberry Pi model, 64-bit OS image, camera/lens, V4L2 pixel format, exposure strategy, and exact mount.</li>
+    <li>Competition field/layout source and the acceptable surveyed pose-error percentiles.</li>
+    <li>Whether the robot needs every NT observation or always prefers the newest bounded-latency pose.</li>
+  </ul>
+</article>
+</main>
+<script>
+(() => {
+  const table = document.getElementById("priority-table");
+  const body = table.querySelector("tbody");
+  const controls = {
+    reliability: document.getElementById("reliability-weight"),
+    performance: document.getElementById("performance-weight"),
+    release: document.getElementById("release-weight")
+  };
+  const score = (row) => {
+    const d = row.dataset;
+    return (
+      Number(d.reliability) * Number(controls.reliability.value) +
+      Number(d.performance) * Number(controls.performance.value) +
+      Number(d.release) * Number(controls.release.value)
+    ) / Number(d.effort);
+  };
+  const refresh = () => {
+    Object.entries(controls).forEach(([name, input]) => {
+      document.getElementById(`${name}-value`).value = input.value;
+    });
+    const rows = Array.from(body.querySelectorAll("tr"));
+    rows.forEach((row) => { row.querySelector(".score").textContent = score(row).toFixed(1); });
+    rows.sort((a, b) => score(b) - score(a)).forEach((row) => body.appendChild(row));
+  };
+  Object.values(controls).forEach((input) => input.addEventListener("input", refresh));
+  const markdown = () => {
+    const weights = `Reliability ${controls.reliability.value}, Performance ${controls.performance.value}, Release ${controls.release.value}`;
+    const lines = Array.from(body.querySelectorAll("tr")).map((row, index) => {
+      const cells = row.querySelectorAll("td");
+      return `${index + 1}. ${cells[0].textContent} — ${cells[1].textContent} (score ${cells[6].textContent})`;
+    });
+    return `## AprilTagDetector priorities\n\nWeights: ${weights}\n\n${lines.join("\n")}`;
+  };
+  document.getElementById("copy-priorities").addEventListener("click", async () => {
+    const status = document.getElementById("copy-status");
+    try {
+      await navigator.clipboard.writeText(markdown());
+      status.textContent = "Copied prioritized roadmap as Markdown.";
+    } catch (_error) {
+      const area = document.createElement("textarea");
+      area.value = markdown();
+      document.body.appendChild(area);
+      area.select();
+      document.execCommand("copy");
+      area.remove();
+      status.textContent = "Copied prioritized roadmap as Markdown.";
+    }
+  });
+  refresh();
+})();
+</script>
+</body>
+</html>

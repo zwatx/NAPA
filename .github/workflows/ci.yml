@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - python-version: "3.11"
+            opencv-floor: true
+          - python-version: "3.12"
+            opencv-floor: false
+          - python-version: "3.13"
+            opencv-floor: false
+          - python-version: "3.14"
+            opencv-floor: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - run: python -m pip install --upgrade pip
+      - if: matrix.opencv-floor
+        run: python -m pip install 'numpy<2' 'opencv-python==4.7.0.72'
+      - run: python -m pip install -e '.[dev,nt]'
+      - run: ruff format --check .
+      - run: ruff check .
+      - run: pytest --cov=northstar_vision
+
+  package-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+      - run: python -m pip install --upgrade pip build twine
+      - run: python -m build
+      - run: python -m twine check dist/*
+      - run: python -m venv /tmp/northstar-wheel
+      - run: /tmp/northstar-wheel/bin/python -m pip install dist/*.whl
+      - run: cd /tmp && /tmp/northstar-wheel/bin/northstar-vision --list-profiles
+      - run: cd /tmp && /tmp/northstar-wheel/bin/northstar-vision --profile laptop --check-config
+      - run: python -m venv /tmp/northstar-sdist
+      - run: /tmp/northstar-sdist/bin/python -m pip install dist/*.tar.gz
+      - run: cd /tmp && /tmp/northstar-sdist/bin/northstar-vision --profile raspi --check-config
+      - uses: actions/upload-artifact@v4
+        with:
+          name: northstar-vision-dist
+          path: dist/*
