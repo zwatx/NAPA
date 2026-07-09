@@ -12,12 +12,12 @@
 <meta name="thelab:kind" content="review">
 <meta name="thelab:status" content="done">
 <meta name="thelab:tags" content="audit,vision,python">
-<meta name="thelab:reviewof-commit" content="9a345a83bb7d9031fa1a7a6043a35cd58799567f">
+<meta name="thelab:reviewof-commit" content="39f04c9c8aa08486bcaf8801adc810ea29dd7b50">
 <meta name="thelab:reviewof-branch" content="master">
 <!-- Optional: issue numbers this plan closes on ship, e.g. content="3,7". They
      auto-close when the plan is marked done (`lab done … --commit`). -->
 <meta name="thelab:addresses" content="">
-<meta name="thelab:version" content="3">
+<meta name="thelab:version" content="6">
 <meta name="thelab:hosted-url" content="https://thelab.wilsonzach.com/project/apriltagdetector/review/apriltag-detector-repository-review">
 <script type="application/json" id="thelab-findings">
 [
@@ -87,17 +87,17 @@
   <section class="plan-links">
     <div class="tbl-scroll"><table class="data">
       <tr><td>Project</td><td>AprilTagDetector</td></tr>
-      <tr><td>Version</td><td id="thelab-version">v3</td></tr>
+      <tr><td>Version</td><td id="thelab-version">v6</td></tr>
       <tr><td>Status</td><td><span class="status st-done">done</span> · 2026-07-09</td></tr>
     </table></div>
   </section>
 
-  <p class="lede">The prototype is now an installable, tested Northstar-compatible service; the remaining risk is hardware validation and production data, not basic package integrity.</p>
+  <p class="lede">The 0.3.0 hardening implementation now has bounded capture/recording boundaries, robust pose diagnostics, timestamp-aligned yaw, replay gates, and verified distribution artifacts; remaining risk is physical evidence and release ownership.</p>
 
-  <div class="callout"><strong>Verdict.</strong> Substantial correctness, packaging, and maintainability defects were fixed in the reviewed workspace. The code is suitable for replay and controlled bench testing. Do not treat the bundled camera calibration or field layout as competition-ready, and do not publish the package until a redistribution license and initial Git baseline exist.</div>
+  <div class="callout"><strong>Follow-up verdict.</strong> The locally actionable findings were implemented and independently re-audited through <code>39f04c9</code>. The code and 0.3.0 artifacts are suitable for replay and controlled bench testing. Do not treat the bundled calibration/layout as competition-ready or publish until a redistribution license and release metadata exist.</div>
 
   <h2>Review scope</h2>
-  <p>This review covered the full Python runtime, profiles, tests, output contracts, build metadata, CI, documentation, generated artifacts, and the repository-only occlusion experiment. It compared the NetworkTables packet with the 2026 upstream Mechanical Advantage Northstar publisher and robot consumer. The review began against an unborn <code>master</code> working tree; the accepted snapshot was subsequently recorded as commit <code>9a345a8</code>. No remote is configured.</p>
+  <p>This review covered the full Python runtime, profiles, tests, output contracts, build metadata, CI, documentation, generated artifacts, and the repository-only occlusion experiment. It compared the NetworkTables packet with the 2026 upstream Mechanical Advantage Northstar publisher and robot consumer. The review began against an unborn <code>master</code> working tree; the accepted snapshot was subsequently recorded as commit <code>9a345a8</code>. The repository now targets <a href="https://github.com/Zw96042/apriltag-detector">github.com/Zw96042/apriltag-detector</a>.</p>
   <p>The initial baseline had 8 passing and 3 failing tests under current OpenCV, profiles that disappeared from installed wheels, deprecated ArUco calls, mixed coordinate conventions, ambiguous output semantics, epoch timestamps on a monotonic NetworkTables contract, and no supported CLI/package boundary.</p>
 
   <h2>Runtime flow reviewed</h2>
@@ -114,11 +114,25 @@
         <rect x="650" y="20" width="110" height="54" rx="8" fill="#111" stroke="#333"/><text x="705" y="52" text-anchor="middle" fill="#ededed" font-size="13">NetworkTables</text>
         <rect x="650" y="108" width="110" height="54" rx="8" fill="#111" stroke="#333"/><text x="705" y="140" text-anchor="middle" fill="#ededed" font-size="13">JSONL</text>
         <path d="M140 91 H170" stroke="#4e9bfa" stroke-width="2" marker-end="url(#arrow)"/><path d="M294 91 H324" stroke="#4e9bfa" stroke-width="2" marker-end="url(#arrow)"/><path d="M462 91 H492" stroke="#4e9bfa" stroke-width="2" marker-end="url(#arrow)"/><path d="M616 80 C632 80 632 47 646 47" fill="none" stroke="#4e9bfa" stroke-width="2" marker-end="url(#arrow)"/><path d="M616 102 C632 102 632 135 646 135" fill="none" stroke="#4e9bfa" stroke-width="2" marker-end="url(#arrow)"/>
-        <text x="20" y="190" fill="#6b6b6b" font-size="11">Blue path is implemented. Latest-frame capture and asynchronous recording remain roadmap work.</text>
+        <text x="20" y="190" fill="#6b6b6b" font-size="11">The processing path now uses latest-frame capture and a bounded asynchronous recording boundary.</text>
       </svg>
     </div>
     <figcaption>supported processing boundary after the refactor</figcaption>
   </figure>
+
+  <h2>0.3.0 follow-up review</h2>
+  <div class="tbl-scroll"><table class="data">
+    <thead><tr><th>Area</th><th>Result</th><th>Review evidence</th></tr></thead>
+    <tbody>
+      <tr><td>Capture latency</td><td>One worker exclusively owns the camera and atomically replaces a size-one frame slot. Reconnect, overwrite, negotiated backend/FourCC, and bounded-shutdown state are observable.</td><td>Ten deterministic open/read/reconnect/race/fatal-resolution tests.</td></tr>
+      <tr><td>Recorder isolation</td><td>Serialization and disk I/O moved behind a fixed queue with explicit loss policy, rotation, retention, fsync cadence, bounded close, and detailed telemetry.</td><td>Seventeen queue, rotation, error, durability, and timeout tests.</td></tr>
+      <tr><td>Pose trust</td><td>Multi-tag RANSAC/iterative rejection, tag residuals, field/height bounds, duplicate rejection, and reasons are serialized without discarding raw observations.</td><td>Synthetic corrupted-tag and physical-bound regressions.</td></tr>
+      <tr><td>Time alignment</td><td>Yaw samples are translated from NT time, interpolated across wrap at capture time, and rejected when stale. Identical observation updates retain fresh timestamps.</td><td>Four real local NT server/client tests plus unit interpolation tests.</td></tr>
+      <tr><td>Shutdown delivery</td><td>NT close flushes and uses a configurable bounded drain; the back-to-back publish/close regression was reproduced before the fix and passes repeatedly afterward.</td><td>Five repeated integration runs during follow-up.</td></tr>
+      <tr><td>Production inputs</td><td>Measured calibration and official-layout types are exact, external artifacts are resolution/bounds validated, and example profiles cannot opt into production.</td><td>Artifact workflow, wrong-provenance, and profile-gate regressions.</td></tr>
+      <tr><td>Packaging</td><td>Version moved to 0.3.0 with dependency-free version metadata, changelog, manifest template, four commands, and expanded CI smoke checks.</td><td>Fresh wheel/sdist build, metadata check, content inspection, and isolated installs.</td></tr>
+    </tbody>
+  </table></div>
 
   <h2>Resolved findings</h2>
   <div class="tbl-scroll"><table class="data">
@@ -144,7 +158,7 @@
       <tr><td>Blank frames</td><td>Skip-scan 0.083 ms</td><td>Full uniformity gate 0.050 ms</td><td>Use cheap min/max gate.</td></tr>
       <tr><td>Synthetic recall</td><td>140 / 140 skip-scan</td><td>140 / 140 full frame</td><td>No recall reason to enable skip-scan.</td></tr>
       <tr><td>Tiny-tag gate</td><td>Sparse sampling missed 21 of 384 detected cases</td><td>384 / 384 retained</td><td>Use full-image min/max, not sparse contrast samples.</td></tr>
-      <tr><td>Old JSONL behavior</td><td>About 0.75 GB/day at 30 fps; about 2.59M flushes/day</td><td>Compact JSON + periodic flush</td><td>Rotation/async writer remains open.</td></tr>
+      <tr><td>Old JSONL behavior</td><td>About 0.75 GB/day at 30 fps; about 2.59M flushes/day</td><td>Bounded async queue, 64 MiB or hourly rotation, eight archives, 5 s fsync cadence</td><td>Target-Pi slow/full-disk evidence remains.</td></tr>
     </tbody>
   </table></div>
   <p>These are local microbenchmarks and a 140-scene synthetic corpus, not Raspberry Pi production claims. They are useful for rejecting regressions and choosing the default path; the roadmap requires a target-device replay gate.</p>
@@ -154,30 +168,29 @@
     <thead><tr><th>Priority</th><th>Finding</th><th>Why it remains</th></tr></thead>
     <tbody>
       <tr><td>P0</td><td>Real calibration and official field layout</td><td>Correct values require the actual camera, lens, mount, resolution, and season field data.</td></tr>
-      <tr><td>P0</td><td>License and first Git baseline</td><td>License selection and committing are owner decisions; publishing without them would be unsafe.</td></tr>
-      <tr><td>P1</td><td>Latest-frame capture and reconnect</td><td>Requires target camera/backend testing and a deliberate concurrency boundary.</td></tr>
+      <tr><td>P0</td><td>License and release metadata</td><td>The Git baseline and 0.3.0 artifacts exist; license, authors/URLs, remote, and public release policy are owner decisions.</td></tr>
       <tr><td>P1</td><td>Robust pose acceptance</td><td>RANSAC, residual telemetry, and bounds need real difficult-frame validation.</td></tr>
-      <tr><td>P1</td><td>Live NT timing/backpressure test</td><td>Local API and mocked timestamp tests cannot reproduce radio loss or robot scheduling.</td></tr>
-      <tr><td>P2</td><td>Bounded asynchronous recorder</td><td>Current periodic buffering still serializes and writes synchronously.</td></tr>
-      <tr><td>P2</td><td>Timestamped robot yaw</td><td>Static CLI yaw is acceptable for a bench tool, not moving-robot trig localization.</td></tr>
+      <tr><td>P1</td><td>Live NT timing/backpressure test</td><td>Real local server/client tests cannot reproduce radio loss or robot scheduling.</td></tr>
       <tr><td>P2</td><td>Pi corpus and benchmark gate</td><td>Laptop microbenchmarks do not establish Raspberry Pi throughput or thermal behavior.</td></tr>
+      <tr><td>P2</td><td>Physical soak and native camera interruption</td><td>A bounded caller cannot forcibly interrupt a backend stuck inside native <code>VideoCapture.read()</code>; validate the selected V4L2 path or isolate capture by process if needed.</td></tr>
     </tbody>
   </table></div>
 
   <h2>Verification</h2>
   <ul>
     <li><code>ruff format --check .</code> and <code>ruff check .</code> pass.</li>
-    <li>37 tests pass on Python 3.11 / OpenCV 4.7 and Python 3.14 / OpenCV 5; measured coverage is 71.65% with a 60% CI floor.</li>
-    <li>Wheel and source distribution build cleanly, pass <code>twine check</code>, install in isolated environments, resolve bundled profiles outside the repo, and pass <code>pip check</code>.</li>
-    <li>Installed wheel completes replay through real RobotPy NTCore on Python 3.11 and 3.14 without a server.</li>
+    <li>100 tests pass on Python 3.11 / OpenCV 4.7 / NTCore with 76.92% branch coverage; 96 pass and one NT-gated module skips on Python 3.14 / OpenCV 5 with 76.60% coverage.</li>
+    <li>Four real local NTCore integration tests cover yaw timestamp interpolation, producer duplicate suppression, observation capture timestamps, identical latest-value delivery, and final-update drain.</li>
+    <li>The 0.3.0 wheel and source distribution build cleanly, pass <code>twine check</code>, contain all intended commands/resources, install in isolated environments, and validate bundled profiles outside the repository.</li>
     <li>Not verified: a physical camera, Raspberry Pi sustained load, live roboRIO time synchronization, actual camera calibration, or official field measurements.</li>
   </ul>
 
   <h2>Open decisions</h2>
   <ul>
     <li>Choose the redistribution license and repository remote before any public release.</li>
-    <li>Choose whether NetworkTables should preserve upstream lossless <code>sendAll</code> behavior or prioritize bounded latest-pose latency during stalls.</li>
+    <li>Choose whether the deployed profile preserves upstream lossless <code>sendAll</code> behavior or prioritizes latest-pose latency after live radio testing.</li>
     <li>Choose the target Raspberry Pi model, OS image, camera backend, pixel format, and performance budget for the production gate.</li>
+    <li>Ensure robot-side yaw publishing preserves duplicate stationary samples or carries an explicit heartbeat.</li>
   </ul>
 </article>
 </main>

@@ -15,7 +15,7 @@
 <!-- Optional: issue numbers this plan closes on ship, e.g. content="3,7". They
      auto-close when the plan is marked done (`lab done … --commit`). -->
 <meta name="thelab:addresses" content="1,2,3,4,5,6,7,8">
-<meta name="thelab:version" content="2">
+<meta name="thelab:version" content="5">
 <meta name="thelab:hosted-url" content="https://thelab.wilsonzach.com/project/apriltagdetector/plan/apriltag-detector-hardening-roadmap">
 <title>AprilTag Detector Hardening Roadmap</title>
 <style>
@@ -82,14 +82,32 @@
   <section class="plan-links">
     <div class="tbl-scroll"><table class="data">
       <tr><td>Project</td><td>AprilTagDetector</td></tr>
-      <tr><td>Version</td><td id="thelab-version">v2</td></tr>
+      <tr><td>Version</td><td id="thelab-version">v5</td></tr>
       <tr><td>Status</td><td><span class="status st-active">active</span> · 2026-07-09</td></tr>
     </table></div>
   </section>
 
-  <p class="lede">Turn the cleaned prototype into a bounded-latency, measurable robot service through four gated phases: production inputs, replay evidence, real-time isolation, and pose/output validation.</p>
+  <p class="lede">The bounded runtime and measurement tooling are implemented through <code>39f04c9</code>; the active roadmap now tracks production inputs, Raspberry Pi evidence, robot-side timing, and release ownership.</p>
 
   <div class="callout"><strong>Plan boundary.</strong> The repository refactor and package repair are complete. This roadmap begins where hardware-specific evidence is required. It addresses review issues #1–#8 and deliberately blocks release until calibration, licensing, live NetworkTables timing, and target-device soak tests pass.</div>
+
+  <h2>Implementation checkpoint — 2026-07-09</h2>
+  <p>The commit series ending at <code>39f04c9</code> implements the locally actionable architecture and was reviewed with independent packaging, concurrency, pose, and NetworkTables audits. The plan remains active because code cannot substitute for the exact camera, Raspberry Pi, robot radio, surveyed field inputs, or owner-selected license.</p>
+  <div class="tbl-scroll"><table class="data">
+    <thead><tr><th>Issue</th><th>Implemented evidence</th><th>Remaining gate</th></tr></thead>
+    <tbody>
+      <tr><td>#1</td><td>Single-owner capture worker, size-one latest slot, overwrite/reconnect/property/backend/FourCC telemetry, bounded idempotent shutdown, and fault-injection tests.</td><td>Physical backend reconnect and native-read behavior move to the soak gate.</td></tr>
+      <tr><td>#2</td><td>Checkerboard command, versioned calibration artifacts, strict WPILib import, relative artifact references, and production provenance rejection.</td><td>Measure the actual camera/mount and choose the official season layout.</td></tr>
+      <tr><td>#3</td><td>RANSAC, iterative tag-level rejection, duplicate handling, residual telemetry, physical bounds, raw-observation preservation, and rejection reasons.</td><td>Captured difficult frames and surveyed pose-error percentiles.</td></tr>
+      <tr><td>#4</td><td>Bounded async writer with drop-old/drop-new policy, size/time rotation, retention, flush/fsync policy, bounded close, and queue/write/error telemetry.</td><td>Slow/full SD-card fault injection on the target Pi remains part of soak testing.</td></tr>
+      <tr><td>#5</td><td>Integrity-checked corpus manifest and one-command recall, precision, false-positive, percentile, memory, and pass/fail benchmark report.</td><td>Capture and run the representative Raspberry Pi corpus.</td></tr>
+      <tr><td>#6</td><td>Timestamped NT yaw queue, wrap-safe interpolation at capture time, staleness health, and trig-pose suppression. Producer duplicate/heartbeat requirements are documented and tested.</td><td>Robot code must publish the agreed duplicate/heartbeat contract.</td></tr>
+      <tr><td>#7</td><td>Reviewed Git baseline, GitHub remote, changelog, 0.3.0 version boundary, clean wheel/sdist, and four packaged commands.</td><td>License, authors/URLs, and release policy remain owner decisions.</td></tr>
+      <tr><td>#8</td><td>Real local server/client tests cover capture timestamps, identical latest-value updates, yaw delivery, duplicate suppression, explicit delivery modes, and final-update drain.</td><td>Measure roboRIO/radio loss, stalls, reconnect, and select the deployment policy.</td></tr>
+    </tbody>
+  </table></div>
+  <p><strong>Verification checkpoint:</strong> 100 tests pass on Python 3.11 with OpenCV 4.7 and real NTCore; 96 pass with one NT-gated module skipped on Python 3.14/OpenCV 5. Coverage is 76.92% and 76.60%, respectively. The 0.3.0 wheel and source archive pass metadata checks and fresh-install command smoke tests.</p>
+  <p><strong>Issue checkpoint:</strong> #1, #4, and #6 are closed against the hardening series ending at <code>39f04c9</code>. #2, #3, #5, #7, and #8 remain open for measured production artifacts, captured pose validation, Raspberry Pi corpus/soak evidence, release ownership, and live robot/radio timing.</p>
 
   <h2>Target operating flow</h2>
   <figure>
@@ -215,7 +233,7 @@
 
   <h2>Open owner decisions</h2>
   <ul>
-    <li>License, author/maintainer metadata, Git remote, and whether 0.2.0 is private alpha or a public release.</li>
+    <li>License, author/maintainer metadata, and whether 0.3.0 remains private alpha or becomes a public release.</li>
     <li>Raspberry Pi model, 64-bit OS image, camera/lens, V4L2 pixel format, exposure strategy, and exact mount.</li>
     <li>Competition field/layout source and the acceptable surveyed pose-error percentiles.</li>
     <li>Whether the robot needs every NT observation or always prefers the newest bounded-latency pose.</li>
