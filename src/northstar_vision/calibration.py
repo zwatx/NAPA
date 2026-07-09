@@ -147,22 +147,159 @@ def _positive_integer(value: object, name: str) -> int:
     return value
 
 
+def load_calibration_data(path: str | Path) -> CameraCalibration:
+    """Load and validate a versioned or legacy Northstar calibration file."""
+
+    source = Path(path).expanduser()
+    try:
+        with source.open("r", encoding="utf-8") as file:
+            data = json.load(file)
+    except FileNotFoundError as exc:
+        raise CalibrationError(f"calibration file not found: {source}") from exc
+    except json.JSONDecodeError as exc:
+        raise CalibrationError(f"invalid calibration JSON at line {exc.lineno}: {exc.msg}") from exc
+    except OSError as exc:
+        raise CalibrationError(f"could not read calibration {source}: {exc}") from exc
+    if not isinstance(data, dict):
+        raise CalibrationError("calibration must be a JSON object")
+    allowed = {
+        "schema_version",
+        "camera_matrix",
+        "distortion_coefficients",
+        "image_size",
+        "rms_reprojection_error_px",
+        "mean_reprojection_error_px",
+        "views_used",
+        "checkerboard",
+        "provenance",
+        "rejected_images",
+    }
+    unknown = set(data) - allowed
+    if unknown:
+        raise CalibrationError(f"unknown calibration field(s): {', '.join(sorted(unknown))}")
+    schema_version = data.get("schema_version", 1)
+    if isinstance(schema_version, bool) or not isinstance(schema_version, int) or schema_version != 1:
+        raise CalibrationError(f"unsupported calibration schema_version {schema_version!r}; expected 1")
+    if "camera_matrix" not in data:
+        raise CalibrationError("calibration is missing camera_matrix")
+
+    image_size_data = data.get("image_size")
+    image_size: tuple[int, int] | None = None
+    if image_size_data is not None:
+        if not isinstance(image_size_data, dict):
+            raise CalibrationError("image_size must be a JSON object")
+        unknown = set(image_size_data) - {"width", "height"}
+        if unknown:
+            raise CalibrationError(f"unknown image_size field(s): {', '.join(sorted(unknown))}")
+        image_size = (
+            _positive_integer(image_size_data.get("width"), "image_size.width"),
+            _positive_integer(image_size_data.get("height"), "image_size.height"),
+        )
+
+    checkerboard_data = data.get("checkerboard")
+    checkerboard = None
+    if checkerboard_data is not None:
+        if not isinstance(checkerboard_data, dict):
+            raise CalibrationError("checkerboard must be a JSON object")
+        unknown = set(checkerboard_data) - {"columns", "rows", "square_size_m"}
+        if unknown:
+            raise CalibrationError(f"unknown checkerboard field(s): {', '.join(sorted(unknown))}")
+        checkerboard = CheckerboardSpec(
+            columns=_positive_integer(checkerboard_data.get("columns"), "checkerboard.columns"),
+            rows=_positive_integer(checkerboard_data.get("rows"), "checkerboard.rows"),
+            square_size_m=_number(checkerboard_data.get("square_size_m"), "checkerboard.square_size_m", minimum=0.0),
+        )
+
+    rejected = data.get("rejected_images", [])
+    if not isinstance(rejected, list) or not all(isinstance(value, str) for value in rejected):
+        raise CalibrationError("rejected_images must be an array of strings")
+    try:
+        provenance = ArtifactProvenance.from_dict(data.get("provenance"), default_source=str(source))
+        return CameraCalibration(
+            camera_matrix=np.asarray(data["camera_matrix"], dtype=np.float64),
+            distortion_coefficients=np.asarray(
+                data.get("distortion_coefficients", [0.0, 0.0, 0.0, 0.0, 0.0]), dtype=np.float64
+            ),
+            image_size=image_size,
+            provenance=provenance,
+            rms_reprojection_error_px=(
+                None
+                if data.get("rms_reprojection_error_px") is None
+                else _number(data["rms_reprojection_error_px"], "rms_reprojection_error_px", minimum=0.0)
+            ),
+            mean_reprojection_error_px=(
+                None
+                if data.get("mean_reprojection_error_px") is None
+                else _number(data["mean_reprojection_error_px"], "mean_reprojection_error_px", minimum=0.0)
+            ),
+            views_used=(
+                None if data.get("views_used") is None else _positive_integer(data["views_used"], "views_used")
+            ),
+            checkerboard=checkerboard,
+            rejected_images=tuple(rejected),
+        )
+    except (TypeError, ValueError) as exc:
+        if isinstance(exc, (CalibrationError, ProvenanceError)):
+            raise
+        raise CalibrationError("calibration arrays must contain finite numbers") from exc
+
+
+def save_calibration_data(path: str | Path, calibration: CameraCalibration) -> None:
+    """Write a validated, self-describing calibration artifact."""
+
+    payload: dict[str, object] = {
+        "schema_version": 1,
+        "camera_matrix": calibration.camera_matrix.tolist(),
+        "distortion_coefficients": calibration.distortion_coefficients.tolist(),
+        "image_size": (
+            None
+            if calibration.image_size is None
+            else {"width": calibration.image_size[0], "height": calibration.image_size[1]}
+        ),
+        "rms_reprojection_error_px": calibration.rms_reprojection_error_px,
+        "mean_reprojection_error_px": calibration.mean_reprojection_error_px,
+        "views_used": calibration.views_used,
+        "provenance": calibration.provenance.to_dict(),
+        "rejected_images": list(calibration.rejected_images),
+    }
+    if calibration.checkerboard is not None:
+        payload["checkerboard"] = {
+            "columns": calibration.checkerboard.columns,
+            "rows": calibration.checkerboard.rows,
+            "square_size_m": calibration.checkerboard.square_size_m,
+        }
+    destination = Path(path).expanduser()
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with destination.open("w", encoding="utf-8") as file:
+            json.dump(payload, file, indent=2, allow_nan=False)
+            file.write("\n")
+    except OSError as exc:
+        raise CalibrationError(f"could not write calibration {destination}: {exc}") from exc
+
+
 def load_calibration(path: str | Path) -> tuple[np.ndarray, np.ndarray]:
-    with Path(path).open("r", encoding="utf-8") as f:
-        data = json.load(f)
-    return (
-        np.asarray(data["camera_matrix"], dtype=np.float64),
-        np.asarray(data.get("distortion_coefficients", [0, 0, 0, 0, 0]), dtype=np.float64),
-    )
+    """Load camera arrays from a legacy or versioned calibration file."""
+
+    calibration = load_calibration_data(path)
+    return calibration.camera_matrix.copy(), calibration.distortion_coefficients.copy()
 
 
 def save_calibration(path: str | Path, camera_matrix: np.ndarray, distortion_coefficients: np.ndarray) -> None:
-    payload = {
-        "camera_matrix": np.asarray(camera_matrix, dtype=float).tolist(),
-        "distortion_coefficients": np.asarray(distortion_coefficients, dtype=float).reshape(-1).tolist(),
-    }
-    with Path(path).open("w", encoding="utf-8") as f:
-        json.dump(payload, f, indent=2)
+    """Save camera arrays as an explicitly non-production example artifact."""
+
+    save_calibration_data(
+        path,
+        CameraCalibration(
+            camera_matrix=camera_matrix,
+            distortion_coefficients=distortion_coefficients,
+            image_size=None,
+            provenance=ArtifactProvenance(
+                ProvenanceKind.EXAMPLE,
+                "legacy save_calibration call without measurement metadata",
+            ),
+        ),
+    )
 
 
 def undistorted_corner_angles(
