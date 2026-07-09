@@ -109,3 +109,86 @@ def test_real_ntcore_default_yaw_publisher_duplicate_suppression_ages_out(tmp_pa
         ntcore.NetworkTableInstance.destroy(server)
 
 
+def test_real_ntcore_observation_timestamp_and_delivery_policy(tmp_path: Path) -> None:
+    port = _unused_tcp_port()
+    server = ntcore.NetworkTableInstance.create()
+    subscriber = None
+    publisher = None
+    try:
+        server.startServer(str(tmp_path / "observations-networktables.json"), "127.0.0.1", 0, port)
+        subscriber = server.getDoubleArrayTopic("/integration/output/observations").subscribe(
+            [], ntcore.PubSubOptions(pollStorage=8, keepDuplicates=True)
+        )
+        publisher = NTOutputPublisher(
+            "integration",
+            "127.0.0.1",
+            server_port=port,
+            send_all=False,
+        )
+        assert _wait_until(publisher.instance.isConnected)
+
+        capture_monotonic_s = time.perf_counter() - 0.05
+        publisher.publish(FrameResult(timestamp=time.time(), capture_monotonic_s=capture_monotonic_s))
+        publisher.instance.flush()
+
+        samples: list[object] = []
+
+        def received() -> bool:
+            samples.extend(subscriber.readQueue())
+            return bool(samples)
+
+        assert _wait_until(received)
+        sample = samples[-1]
+        assert sample.value == [0.0]  # type: ignore[attr-defined]
+        observed_age_ms = (int(ntcore._now()) - int(sample.time)) / 1000.0  # type: ignore[attr-defined]
+        assert 35.0 <= observed_age_ms <= 500.0
+        assert publisher.telemetry()["delivery_policy"] == "latest_value"
+
+        samples.clear()
+        publisher.publish(FrameResult(timestamp=time.time(), capture_monotonic_s=time.perf_counter() - 0.02))
+        publisher.instance.flush()
+        assert _wait_until(received)
+        second_sample = samples[-1]
+        assert second_sample.value == [0.0]  # type: ignore[attr-defined]
+        assert int(second_sample.time) > int(sample.time)  # type: ignore[attr-defined]
+    finally:
+        if publisher is not None:
+            publisher.close()
+        if subscriber is not None:
+            subscriber.close()
+        server.stopServer()
+        ntcore.NetworkTableInstance.destroy(server)
+
+
+def test_real_ntcore_close_flushes_pending_observation(tmp_path: Path) -> None:
+    port = _unused_tcp_port()
+    server = ntcore.NetworkTableInstance.create()
+    subscriber = None
+    publisher = None
+    try:
+        server.startServer(str(tmp_path / "close-networktables.json"), "127.0.0.1", 0, port)
+        subscriber = server.getDoubleArrayTopic("/close-test/output/observations").subscribe(
+            [], ntcore.PubSubOptions(pollStorage=8, keepDuplicates=True)
+        )
+        publisher = NTOutputPublisher("close-test", "127.0.0.1", server_port=port, send_all=False)
+        assert _wait_until(publisher.instance.isConnected)
+
+        publisher.publish(FrameResult(timestamp=time.time(), capture_monotonic_s=time.perf_counter()))
+        publisher.close()
+        publisher = None
+
+        samples: list[object] = []
+
+        def received() -> bool:
+            samples.extend(subscriber.readQueue())
+            return bool(samples)
+
+        assert _wait_until(received)
+        assert samples[-1].value == [0.0]  # type: ignore[attr-defined]
+    finally:
+        if publisher is not None:
+            publisher.close()
+        if subscriber is not None:
+            subscriber.close()
+        server.stopServer()
+        ntcore.NetworkTableInstance.destroy(server)
