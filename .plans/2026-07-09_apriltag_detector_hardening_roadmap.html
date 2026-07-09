@@ -14,8 +14,8 @@
 <meta name="thelab:tags" content="roadmap,performance,reliability">
 <!-- Optional: issue numbers this plan closes on ship, e.g. content="3,7". They
      auto-close when the plan is marked done (`lab done … --commit`). -->
-<meta name="thelab:addresses" content="1,2,3,4,5,6,7,8">
-<meta name="thelab:version" content="5">
+<meta name="thelab:addresses" content="1,2,3,4,5,6,7,8,9">
+<meta name="thelab:version" content="6">
 <meta name="thelab:hosted-url" content="https://thelab.wilsonzach.com/project/apriltagdetector/plan/apriltag-detector-hardening-roadmap">
 <title>AprilTag Detector Hardening Roadmap</title>
 <style>
@@ -82,32 +82,34 @@
   <section class="plan-links">
     <div class="tbl-scroll"><table class="data">
       <tr><td>Project</td><td>AprilTagDetector</td></tr>
-      <tr><td>Version</td><td id="thelab-version">v5</td></tr>
+      <tr><td>Version</td><td id="thelab-version">v6</td></tr>
       <tr><td>Status</td><td><span class="status st-active">active</span> · 2026-07-09</td></tr>
     </table></div>
   </section>
 
-  <p class="lede">The bounded runtime and measurement tooling are implemented through <code>39f04c9</code>; the active roadmap now tracks production inputs, Raspberry Pi evidence, robot-side timing, and release ownership.</p>
+  <p class="lede">The bounded runtime and hardware-free validation lane are implemented through <code>d146bc9</code>; the active roadmap now separates reproducible software evidence from production camera, Raspberry Pi, robot-side timing, and release gates.</p>
 
-  <div class="callout"><strong>Plan boundary.</strong> The repository refactor and package repair are complete. This roadmap begins where hardware-specific evidence is required. It addresses review issues #1–#8 and deliberately blocks release until calibration, licensing, live NetworkTables timing, and target-device soak tests pass.</div>
+  <div class="callout"><strong>Plan boundary.</strong> Synthetic scenes can now validate detector IDs, ordered corners, pose math, outlier rejection, replay packaging, and optimization parity without a camera. They cannot validate the physical lens/calibration, rolling shutter/exposure, USB behavior, Pi thermals, radio timing, or surveyed field accuracy. Those gates remain open by design.</div>
 
   <h2>Implementation checkpoint — 2026-07-09</h2>
-  <p>The commit series ending at <code>39f04c9</code> implements the locally actionable architecture and was reviewed with independent packaging, concurrency, pose, and NetworkTables audits. The plan remains active because code cannot substitute for the exact camera, Raspberry Pi, robot radio, surveyed field inputs, or owner-selected license.</p>
+  <p>The commit series ending at <code>d146bc9</code> implements the locally actionable architecture, deterministic simulator, and measured CPU cleanups. The plan remains active because generated images cannot substitute for the exact camera, Raspberry Pi, robot radio, surveyed field inputs, or owner-selected license.</p>
   <div class="tbl-scroll"><table class="data">
     <thead><tr><th>Issue</th><th>Implemented evidence</th><th>Remaining gate</th></tr></thead>
     <tbody>
       <tr><td>#1</td><td>Single-owner capture worker, size-one latest slot, overwrite/reconnect/property/backend/FourCC telemetry, bounded idempotent shutdown, and fault-injection tests.</td><td>Physical backend reconnect and native-read behavior move to the soak gate.</td></tr>
       <tr><td>#2</td><td>Checkerboard command, versioned calibration artifacts, strict WPILib import, relative artifact references, and production provenance rejection.</td><td>Measure the actual camera/mount and choose the official season layout.</td></tr>
-      <tr><td>#3</td><td>RANSAC, iterative tag-level rejection, duplicate handling, residual telemetry, physical bounds, raw-observation preservation, and rejection reasons.</td><td>Captured difficult frames and surveyed pose-error percentiles.</td></tr>
+      <tr><td>#3</td><td>RANSAC, iterative tag-level rejection, residual telemetry, physical bounds, plus a ground-truth standard suite and 31-pose sweep. The synthetic outlier is rejected and all expected poses solve.</td><td>Captured difficult frames, measured calibration, and surveyed physical pose-error percentiles.</td></tr>
       <tr><td>#4</td><td>Bounded async writer with drop-old/drop-new policy, size/time rotation, retention, flush/fsync policy, bounded close, and queue/write/error telemetry.</td><td>Slow/full SD-card fault injection on the target Pi remains part of soak testing.</td></tr>
-      <tr><td>#5</td><td>Integrity-checked corpus manifest and one-command recall, precision, false-positive, percentile, memory, and pass/fail benchmark report.</td><td>Capture and run the representative Raspberry Pi corpus.</td></tr>
+      <tr><td>#5</td><td>Integrity-checked replay benchmark plus generated PNG corpus, strict hashes, separate pose truth, replay profile, quality gates, and optimization A/B report.</td><td>Capture and run the representative Raspberry Pi/camera corpus.</td></tr>
       <tr><td>#6</td><td>Timestamped NT yaw queue, wrap-safe interpolation at capture time, staleness health, and trig-pose suppression. Producer duplicate/heartbeat requirements are documented and tested.</td><td>Robot code must publish the agreed duplicate/heartbeat contract.</td></tr>
-      <tr><td>#7</td><td>Reviewed Git baseline, GitHub remote, changelog, 0.3.0 version boundary, clean wheel/sdist, and four packaged commands.</td><td>License, authors/URLs, and release policy remain owner decisions.</td></tr>
+      <tr><td>#7</td><td>Reviewed Git baseline, GitHub remote, changelog, 0.3.0 version boundary, clean wheel/sdist, and five packaged commands.</td><td>License, authors/URLs, and release policy remain owner decisions.</td></tr>
       <tr><td>#8</td><td>Real local server/client tests cover capture timestamps, identical latest-value updates, yaw delivery, duplicate suppression, explicit delivery modes, and final-update drain.</td><td>Measure roboRIO/radio loss, stalls, reconnect, and select the deployment policy.</td></tr>
+      <tr><td>#9</td><td>Seeded clean/degraded/occluded/outlier/negative scenes, camera sweep, actual-service scoring, replay artifacts, packaged CLI, and explicit synthetic-evidence labels.</td><td>Closed in <code>d146bc9</code>; promising detector settings route to #5 for Pi/camera validation.</td></tr>
     </tbody>
   </table></div>
-  <p><strong>Verification checkpoint:</strong> 100 tests pass on Python 3.11 with OpenCV 4.7 and real NTCore; 96 pass with one NT-gated module skipped on Python 3.14/OpenCV 5. Coverage is 76.92% and 76.60%, respectively. The 0.3.0 wheel and source archive pass metadata checks and fresh-install command smoke tests.</p>
-  <p><strong>Issue checkpoint:</strong> #1, #4, and #6 are closed against the hardening series ending at <code>39f04c9</code>. #2, #3, #5, #7, and #8 remain open for measured production artifacts, captured pose validation, Raspberry Pi corpus/soak evidence, release ownership, and live robot/radio timing.</p>
+  <p><strong>Verification checkpoint:</strong> 104 tests pass on Python 3.11/OpenCV 4.7 and Python 3.14/OpenCV 5; one optional NT-gated module is skipped in each environment. Coverage is 78.05%. The 9-scene suite passes 100% ID recall/precision and pose solves with 6.64 cm / 1.09° worst-case error; the 31-frame sweep solves 31/31 within 3.98 cm / 0.66°.</p>
+  <p><strong>Optimization checkpoint:</strong> cached field geometry and removal of a duplicate two-tag SQPnP call reduced the local two-tag microbenchmark median from 0.1718 ms to 0.0944 ms (45%). OpenCV statistics reduced the skip prefilter's sampled standard-deviation median from 86.6 µs to 15.3 µs. In the final synthetic A/B, skip-scan kept accuracy parity and improved processing p50 by 6% and p95 by 3.0×; it remains opt-in pending #5.</p>
+  <p><strong>Issue checkpoint:</strong> #1, #4, #6, and #9 are closed. #2, #3, #5, #7, and #8 remain open for measured production artifacts, captured pose validation, Raspberry Pi corpus/soak evidence, release ownership, and live robot/radio timing.</p>
 
   <h2>Target operating flow</h2>
   <figure>
@@ -127,6 +129,27 @@
       </svg>
     </div>
     <figcaption>all potentially blocking I/O moves behind a bounded ownership boundary</figcaption>
+  </figure>
+
+  <h2>Hardware-free evidence flow</h2>
+  <figure>
+    <div class="fig-scroll">
+      <svg viewBox="0 0 780 260" role="img" aria-labelledby="sim-title sim-desc" xmlns="http://www.w3.org/2000/svg">
+        <title id="sim-title">Synthetic validation and hardware handoff flow</title>
+        <desc id="sim-desc">Seeded scenarios render frames into the normal service. Ground truth scores detections and poses, exports replay artifacts, and promotes only parity-preserving candidates to later camera and Raspberry Pi validation.</desc>
+        <defs><marker id="sima" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8 Z" fill="#4e9bfa"/></marker></defs>
+        <rect x="18" y="76" width="126" height="74" rx="8" fill="#111" stroke="#333"/><text x="81" y="103" text-anchor="middle" fill="#ededed" font-size="13">Seeded scenarios</text><text x="81" y="125" text-anchor="middle" fill="#777" font-size="11">clean · stress · sweep</text>
+        <rect x="174" y="76" width="126" height="74" rx="8" fill="#111" stroke="#4e9bfa"/><text x="237" y="103" text-anchor="middle" fill="#ededed" font-size="13">Tag renderer</text><text x="237" y="125" text-anchor="middle" fill="#777" font-size="11">truth + BGR frames</text>
+        <rect x="330" y="76" width="126" height="74" rx="8" fill="#111" stroke="#333"/><text x="393" y="103" text-anchor="middle" fill="#ededed" font-size="13">Normal service</text><text x="393" y="125" text-anchor="middle" fill="#777" font-size="11">detect · solve · health</text>
+        <rect x="486" y="22" width="126" height="74" rx="8" fill="#111" stroke="#333"/><text x="549" y="49" text-anchor="middle" fill="#ededed" font-size="13">Ground-truth gate</text><text x="549" y="71" text-anchor="middle" fill="#777" font-size="11">IDs · corners · pose</text>
+        <rect x="486" y="130" width="126" height="74" rx="8" fill="#111" stroke="#333"/><text x="549" y="157" text-anchor="middle" fill="#ededed" font-size="13">Replay artifacts</text><text x="549" y="179" text-anchor="middle" fill="#777" font-size="11">PNG · hashes · profile</text>
+        <rect x="642" y="22" width="120" height="74" rx="8" fill="#111" stroke="#4e9bfa"/><text x="702" y="49" text-anchor="middle" fill="#ededed" font-size="13">Candidate list</text><text x="702" y="71" text-anchor="middle" fill="#777" font-size="11">parity + percentiles</text>
+        <rect x="642" y="130" width="120" height="74" rx="8" fill="#111" stroke="#333"/><text x="702" y="157" text-anchor="middle" fill="#ededed" font-size="13">#3 / #5 hardware</text><text x="702" y="179" text-anchor="middle" fill="#777" font-size="11">camera · Pi · survey</text>
+        <path d="M144 113 H170" stroke="#4e9bfa" stroke-width="2" marker-end="url(#sima)"/><path d="M300 113 H326" stroke="#4e9bfa" stroke-width="2" marker-end="url(#sima)"/><path d="M456 98 C470 98 470 59 482 59" fill="none" stroke="#4e9bfa" stroke-width="2" marker-end="url(#sima)"/><path d="M300 130 C396 218 430 167 482 167" fill="none" stroke="#4e9bfa" stroke-width="2" marker-end="url(#sima)"/><path d="M612 59 H638" stroke="#4e9bfa" stroke-width="2" marker-end="url(#sima)"/><path d="M702 96 V126" stroke="#4e9bfa" stroke-width="2" marker-end="url(#sima)"/>
+        <text x="390" y="239" text-anchor="middle" fill="#6b6b6b" font-size="11">synthetic pass narrows risk; only physical evidence can clear deployment gates</text>
+      </svg>
+    </div>
+    <figcaption>software regressions are reproducible now; hardware claims remain downstream and explicit</figcaption>
   </figure>
 
   <h2>Working priority model</h2>
@@ -162,11 +185,12 @@
 
   <h3>Phase 1 — evidence before concurrency</h3>
   <ol>
+    <li><strong>#9 complete:</strong> use <code>northstar-simulate</code> for deterministic software regression on every supported OpenCV/Python lane. Keep generated truth separate from the strict replay manifest and label every report as synthetic evidence.</li>
     <li><strong>#5:</strong> capture a versioned corpus spanning tag distances, angles, motion blur, partial occlusion, glare, dim scenes, duplicate/unknown tags, blank frames, camera interruptions, and multi-tag views.</li>
     <li>Add a replay benchmark that records detection recall, false positives, p50/p95/p99 processing time, end-to-end frame age, pose residuals, and memory growth. Store summarized fixtures or download instructions rather than large raw logs in the package.</li>
     <li><strong>#8:</strong> run a local NT server/robot-side subscriber harness and record publisher-to-consumer timestamp error, disconnect behavior, backlog depth, and recovery under induced packet loss.</li>
   </ol>
-  <p><strong>Gate:</strong> a repeatable baseline report runs in one command on laptop and Pi; it makes no claim from a single average latency.</p>
+  <p><strong>Gate:</strong> the synthetic report must pass before hardware work, then a separate captured baseline must run in one command on laptop and Pi. Neither lane makes a claim from a single average latency.</p>
 
   <h3>Phase 2 — bounded real-time boundaries</h3>
   <ol>
@@ -202,6 +226,7 @@
       <tr><td>Reconnect</td><td>Resume valid frames within 2 s after camera return</td><td>Physical disconnect/reconnect test.</td></tr>
       <tr><td>Memory</td><td>No monotonic growth; every queue has a configured maximum</td><td>Eight-hour RSS and queue high-water marks.</td></tr>
       <tr><td>Detection</td><td>No recall regression versus full-frame baseline</td><td>Versioned Pi corpus by scenario bucket.</td></tr>
+      <tr><td>Synthetic pose</td><td>100% expected solves; max ≤ 8 cm and ≤ 1.5°</td><td>Seeded standard suite and 31-frame camera sweep.</td></tr>
       <tr><td>Disk</td><td>Retention cap respected; capture thread never waits on storage</td><td>Forced slow/full filesystem test.</td></tr>
       <tr><td>Time sync</td><td>Robot receives capture timestamps within the agreed error budget</td><td>Live server/subscriber harness under network impairment.</td></tr>
     </tbody>
@@ -214,6 +239,7 @@
     <tbody>
       <tr><td>Threaded capture introduces shutdown races</td><td>medium</td><td>Single camera owner, explicit state machine, fault-injection tests, idempotent close, bounded joins.</td></tr>
       <tr><td>Optimization improves laptop numbers but harms Pi recall</td><td>high</td><td>Full-frame remains reference; require per-bucket replay parity and Pi percentile evidence.</td></tr>
+      <tr><td>Renderer and solver share a convention bug</td><td>medium</td><td>Hard-coded ordered-corner golden test, actual OpenCV detector, explicit 180° mapping rule, then physical artwork validation.</td></tr>
       <tr><td>Outlier rejection hides layout/calibration errors</td><td>medium</td><td>Publish rejection reasons and residuals; validate surveyed ground truth before tuning thresholds.</td></tr>
       <tr><td>Dropping NT updates violates robot consumer assumptions</td><td>medium</td><td>Decide from a live consumer test and version the wire behavior; do not change silently.</td></tr>
       <tr><td>Recorder queue protects latency but loses diagnostics</td><td>medium</td><td>Document drop policy, expose counters, preserve a bounded pre/post-fault window where feasible.</td></tr>
@@ -226,6 +252,7 @@
     <li>Issues #1–#8 are closed with evidence, not just code presence; this plan is marked done against the release commit.</li>
     <li>The target architecture has no unbounded queue, no cross-thread camera ownership, and no output I/O on the capture/processing critical path.</li>
     <li>A checked-in benchmark definition and reproducible corpus manifest show detection, pose, timing, and resource percentiles on the chosen Raspberry Pi.</li>
+    <li>The simulator remains deterministic across supported OpenCV floors, exports replayable evidence, and never labels synthetic results as hardware validation.</li>
     <li>Robot-side live testing proves timestamp interpretation, disconnect recovery, and chosen queue semantics.</li>
     <li>Production calibration/layout/profile provenance is documented and examples cannot be mistaken for competition measurements.</li>
     <li>The tagged wheel and sdist are built by CI from a licensed, committed tree and install cleanly in fresh environments.</li>
