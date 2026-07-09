@@ -157,13 +157,67 @@ def main(argv: Sequence[str] | None = None) -> int:
         elif args.disable_skip_scan:
             profile.skip_scan.enabled = False
         output_mode = args.output or profile.output_mode
-        output = make_output_publisher(
-            output_mode,
-            profile.device_id,
-            profile.nt_server,
-            output_path=args.output_path or profile.output_path,
+        nt_server = args.nt_server or profile.nt_server
+        nt_server_port = profile.nt_server_port if args.nt_server_port is None else args.nt_server_port
+        nt_send_all = profile.nt_send_all if args.nt_delivery is None else args.nt_delivery == "upstream"
+        nt_close_drain_s = profile.nt_close_drain_s if args.nt_close_drain is None else args.nt_close_drain
+        jsonl_config = replace(
+            profile.jsonl_recorder,
+            queue_size=(profile.jsonl_recorder.queue_size if args.jsonl_queue_size is None else args.jsonl_queue_size),
+            drop_policy=(
+                profile.jsonl_recorder.drop_policy if args.jsonl_drop_policy is None else args.jsonl_drop_policy
+            ),
+            flush_interval_s=(
+                profile.jsonl_recorder.flush_interval_s
+                if args.jsonl_flush_interval is None
+                else args.jsonl_flush_interval
+            ),
+            fsync_interval_s=(
+                profile.jsonl_recorder.fsync_interval_s
+                if args.jsonl_fsync_interval is None
+                else (None if args.jsonl_fsync_interval == 0 else args.jsonl_fsync_interval)
+            ),
+            max_file_size_bytes=(
+                profile.jsonl_recorder.max_file_size_bytes
+                if args.jsonl_max_size_mib is None
+                else (None if args.jsonl_max_size_mib == 0 else int(args.jsonl_max_size_mib * 1024 * 1024))
+            ),
+            rotation_interval_s=(
+                profile.jsonl_recorder.rotation_interval_s
+                if args.jsonl_rotate_seconds is None
+                else (None if args.jsonl_rotate_seconds == 0 else args.jsonl_rotate_seconds)
+            ),
+            retention_files=(
+                profile.jsonl_recorder.retention_files
+                if args.jsonl_retention_files is None
+                else args.jsonl_retention_files
+            ),
         )
+        yaw_topic = None if args.robot_yaw is not None else (args.robot_yaw_topic or profile.robot_yaw_topic)
+        yaw_max_age_s = profile.yaw_max_age_s if args.yaw_max_age is None else args.yaw_max_age
+        yaw_queue_size = profile.yaw_queue_size if args.yaw_queue_size is None else args.yaw_queue_size
+        output = None
+        yaw_source = None
         try:
+            output = make_output_publisher(
+                output_mode,
+                profile.device_id,
+                nt_server,
+                output_path=args.output_path or profile.output_path,
+                nt_server_port=nt_server_port,
+                nt_send_all=nt_send_all,
+                nt_close_drain_s=nt_close_drain_s,
+                jsonl_config=jsonl_config,
+            )
+            if yaw_topic:
+                yaw_source = NetworkTablesRobotYawSource(
+                    profile.device_id,
+                    nt_server,
+                    topic=yaw_topic,
+                    max_age_s=yaw_max_age_s,
+                    queue_size=yaw_queue_size,
+                    server_port=nt_server_port,
+                )
             service = NorthstarVisionService(
                 profile,
                 output,
@@ -171,9 +225,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                 loop_replay=args.loop_replay,
                 show=args.show,
                 robot_yaw_rad=args.robot_yaw,
+                yaw_source=yaw_source,
             )
         except BaseException:
-            output.close()
+            if yaw_source is not None:
+                yaw_source.close()
+            if output is not None:
+                output.close()
             raise
         service.run(max_frames=args.max_frames)
     except ProfileError as exc:
