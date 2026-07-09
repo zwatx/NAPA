@@ -9,8 +9,13 @@ from typing import Any
 
 import numpy as np
 
+from .calibration import CalibrationError, load_calibration_data
+from .field_layout import FieldLayoutError, load_wpilib_apriltag_layout
 from .geometry import transform_matrix
 from .prefilter import SkipScanConfig
+from .provenance import ArtifactProvenance, ProvenanceError, ProvenanceKind
+from .recording import JsonlRecorderConfig
+from .types import CameraPoseBounds
 
 
 class ProfileError(ValueError):
@@ -30,6 +35,13 @@ class CameraConfig:
     calibration_matrix: np.ndarray
     distortion_coefficients: np.ndarray
     robot_to_camera: np.ndarray
+    calibration_provenance: ArtifactProvenance
+    calibration_rms_reprojection_error_px: float | None
+    calibration_views_used: int | None
+    reconnect_initial_s: float
+    reconnect_max_s: float
+    read_timeout_s: float | None
+    shutdown_timeout_s: float
 
 
 @dataclass
@@ -41,11 +53,26 @@ class PlatformProfile:
     camera: CameraConfig
     tag_size_m: float
     tag_layout: dict[int, np.ndarray]
+    tag_layout_provenance: ArtifactProvenance
+    field_length_m: float | None
+    field_width_m: float | None
+    production: bool
     skip_scan: SkipScanConfig
     max_reprojection_error_px: float
+    max_tag_reprojection_error_px: float
+    max_outlier_iterations: int
+    ransac_iterations: int
+    camera_pose_bounds: CameraPoseBounds | None
     output_mode: str
     output_path: str
     nt_server: str
+    nt_server_port: int
+    nt_send_all: bool
+    nt_close_drain_s: float
+    jsonl_recorder: JsonlRecorderConfig
+    robot_yaw_topic: str | None
+    yaw_max_age_s: float
+    yaw_queue_size: int
 
 
 def available_profiles() -> tuple[str, ...]:
@@ -103,6 +130,10 @@ def _optional_number(value: Any, context: str) -> float | None:
     return None if value is None else _number(value, context)
 
 
+def _optional_positive_number(value: Any, context: str) -> float | None:
+    return None if value is None else _positive_number(value, context)
+
+
 def _string(value: Any, context: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ProfileError(f"{context} must be a non-empty string")
@@ -121,6 +152,24 @@ def _boolean(value: Any, context: str) -> bool:
     if not isinstance(value, bool):
         raise ProfileError(f"{context} must be true or false")
     return value
+
+
+def _provenance(value: Any, context: str, source: Any) -> ArtifactProvenance:
+    if value is None:
+        return ArtifactProvenance(ProvenanceKind.EXAMPLE, f"inline values in {source}")
+    try:
+        return ArtifactProvenance.from_dict(value, default_source=str(source))
+    except ProvenanceError as exc:
+        raise ProfileError(f"Invalid {context}: {exc}") from exc
+
+
+def _artifact_path(source: Any, value: Any, context: str) -> Path:
+    raw = Path(_string(value, context)).expanduser()
+    if raw.is_absolute():
+        return raw
+    if not isinstance(source, Path):
+        raise ProfileError(f"{context} must be absolute when used by a bundled profile")
+    return source.parent / raw
 
 
 def _vector(value: Any, length: int, context: str) -> list[float]:
@@ -166,6 +215,7 @@ def load_profile(profile: str | Path) -> PlatformProfile:
             "device_id",
             "platform",
             "replay_path",
+            "production",
             "camera",
             "tag_size_m",
             "tag_layout",
@@ -192,6 +242,7 @@ def load_profile(profile: str | Path) -> PlatformProfile:
             "gain",
             "calibration",
             "robot_to_camera",
+            "runtime",
         },
         "camera",
     )
@@ -202,34 +253,98 @@ def load_profile(profile: str | Path) -> PlatformProfile:
     buffer_value = camera_data.get("buffer_size")
     buffer_size = None if buffer_value is None else _integer(buffer_value, "camera.buffer_size", minimum=1)
 
+    runtime = _mapping(camera_data.get("runtime", {}), "camera.runtime")
+    _reject_unknown(
+        runtime,
+        {"reconnect_initial_s", "reconnect_max_s", "read_timeout_s", "shutdown_timeout_s"},
+        "camera.runtime",
+    )
+    reconnect_initial_s = _positive_number(
+        runtime.get("reconnect_initial_s", 0.1), "camera.runtime.reconnect_initial_s"
+    )
+    reconnect_max_s = _positive_number(runtime.get("reconnect_max_s", 2.0), "camera.runtime.reconnect_max_s")
+    if reconnect_max_s < reconnect_initial_s:
+        raise ProfileError("camera.runtime.reconnect_max_s must be at least reconnect_initial_s")
+    read_timeout_s = _optional_positive_number(runtime.get("read_timeout_s"), "camera.runtime.read_timeout_s")
+    shutdown_timeout_s = _number(runtime.get("shutdown_timeout_s", 2.0), "camera.runtime.shutdown_timeout_s")
+    if shutdown_timeout_s < 0:
+        raise ProfileError("camera.runtime.shutdown_timeout_s must not be negative")
+
     calibration = _mapping(camera_data.get("calibration", {}), "camera.calibration")
-    _reject_unknown(calibration, {"camera_matrix", "distortion_coefficients"}, "camera.calibration")
-    try:
-        camera_matrix = np.asarray(
-            calibration.get(
-                "camera_matrix",
-                [[width, 0.0, width / 2.0], [0.0, width, height / 2.0], [0.0, 0.0, 1.0]],
-            ),
-            dtype=np.float64,
+    _reject_unknown(
+        calibration,
+        {
+            "file",
+            "camera_matrix",
+            "distortion_coefficients",
+            "provenance",
+            "rms_reprojection_error_px",
+            "views_used",
+        },
+        "camera.calibration",
+    )
+    calibration_file = calibration.get("file")
+    if calibration_file is not None:
+        conflicting = set(calibration) & {
+            "camera_matrix",
+            "distortion_coefficients",
+            "provenance",
+            "rms_reprojection_error_px",
+            "views_used",
+        }
+        if conflicting:
+            raise ProfileError("camera.calibration.file cannot be combined with inline calibration fields")
+        path = _artifact_path(source, calibration_file, "camera.calibration.file")
+        try:
+            calibration_artifact = load_calibration_data(path)
+            calibration_artifact.validate_for_image_size(width, height)
+        except (CalibrationError, OSError) as exc:
+            raise ProfileError(f"Invalid camera calibration artifact: {exc}") from exc
+        camera_matrix = calibration_artifact.camera_matrix.copy()
+        distortion = calibration_artifact.distortion_coefficients.copy()
+        calibration_provenance = calibration_artifact.provenance
+        calibration_rms = calibration_artifact.rms_reprojection_error_px
+        calibration_views = calibration_artifact.views_used
+    else:
+        calibration_provenance = _provenance(calibration.get("provenance"), "camera.calibration.provenance", source)
+        calibration_rms = _optional_number(
+            calibration.get("rms_reprojection_error_px"), "camera.calibration.rms_reprojection_error_px"
         )
-    except (TypeError, ValueError) as exc:
-        raise ProfileError("camera.calibration.camera_matrix must be a finite 3x3 matrix") from exc
-    if camera_matrix.shape != (3, 3) or not np.all(np.isfinite(camera_matrix)):
-        raise ProfileError("camera.calibration.camera_matrix must be a finite 3x3 matrix")
-    if camera_matrix[0, 0] <= 0 or camera_matrix[1, 1] <= 0 or abs(float(np.linalg.det(camera_matrix))) < 1e-12:
-        raise ProfileError("camera.calibration.camera_matrix must have positive focal lengths and be invertible")
-    if not np.allclose(camera_matrix[2], [0.0, 0.0, 1.0], atol=1e-12) or abs(camera_matrix[1, 0]) > 1e-12:
-        raise ProfileError("camera.calibration.camera_matrix must use the canonical pinhole form")
-    try:
-        distortion = np.asarray(calibration.get("distortion_coefficients", [0, 0, 0, 0, 0]), dtype=np.float64).reshape(
-            -1
+        if calibration_rms is not None and calibration_rms < 0:
+            raise ProfileError("camera.calibration.rms_reprojection_error_px must not be negative")
+        calibration_views = (
+            None
+            if calibration.get("views_used") is None
+            else _integer(calibration.get("views_used"), "camera.calibration.views_used", minimum=1)
         )
-    except (TypeError, ValueError) as exc:
-        raise ProfileError(
-            "camera.calibration.distortion_coefficients must contain 4, 5, 8, 12, or 14 finite values"
-        ) from exc
-    if len(distortion) not in {4, 5, 8, 12, 14} or not np.all(np.isfinite(distortion)):
-        raise ProfileError("camera.calibration.distortion_coefficients must contain 4, 5, 8, 12, or 14 finite values")
+        try:
+            camera_matrix = np.asarray(
+                calibration.get(
+                    "camera_matrix",
+                    [[width, 0.0, width / 2.0], [0.0, width, height / 2.0], [0.0, 0.0, 1.0]],
+                ),
+                dtype=np.float64,
+            )
+        except (TypeError, ValueError) as exc:
+            raise ProfileError("camera.calibration.camera_matrix must be a finite 3x3 matrix") from exc
+        if camera_matrix.shape != (3, 3) or not np.all(np.isfinite(camera_matrix)):
+            raise ProfileError("camera.calibration.camera_matrix must be a finite 3x3 matrix")
+        if camera_matrix[0, 0] <= 0 or camera_matrix[1, 1] <= 0 or abs(float(np.linalg.det(camera_matrix))) < 1e-12:
+            raise ProfileError("camera.calibration.camera_matrix must have positive focal lengths and be invertible")
+        if not np.allclose(camera_matrix[2], [0.0, 0.0, 1.0], atol=1e-12) or abs(camera_matrix[1, 0]) > 1e-12:
+            raise ProfileError("camera.calibration.camera_matrix must use the canonical pinhole form")
+        try:
+            distortion = np.asarray(
+                calibration.get("distortion_coefficients", [0, 0, 0, 0, 0]), dtype=np.float64
+            ).reshape(-1)
+        except (TypeError, ValueError) as exc:
+            raise ProfileError(
+                "camera.calibration.distortion_coefficients must contain 4, 5, 8, 12, or 14 finite values"
+            ) from exc
+        if len(distortion) not in {4, 5, 8, 12, 14} or not np.all(np.isfinite(distortion)):
+            raise ProfileError(
+                "camera.calibration.distortion_coefficients must contain 4, 5, 8, 12, or 14 finite values"
+            )
 
     mounting = _mapping(camera_data.get("robot_to_camera", {}), "camera.robot_to_camera")
     _reject_unknown(mounting, {"translation_m", "rotation_rpy_rad"}, "camera.robot_to_camera")
