@@ -195,3 +195,129 @@ def load_corpus_manifest(path: str | Path) -> CorpusManifest:
     )
 
 
+def run_replay_benchmark(
+    manifest: CorpusManifest | str | Path,
+    *,
+    detector: FiducialDetector | None = None,
+    options: BenchmarkOptions | None = None,
+) -> dict[str, Any]:
+    """Stream an annotated replay corpus and return a compact JSON summary."""
+
+    if not isinstance(manifest, CorpusManifest):
+        manifest = load_corpus_manifest(manifest)
+    options = options or BenchmarkOptions()
+    detector = detector or OpenCVArucoFiducialDetector()
+    corpus_sha256 = _verify_corpus(manifest) if options.verify_integrity else None
+
+    for _ in range(options.warmup_passes):
+        for frame in manifest.frames:
+            detector.detect(_decode_image(frame))
+
+    stages: dict[str, list[float]] = {"load_ms": [], "detect_ms": [], "score_ms": [], "total_ms": []}
+    true_positives = 0
+    false_positives = 0
+    false_negatives = 0
+    false_positive_frames = 0
+    expected_instances = 0
+    detected_instances = 0
+    peak_decoded_image_bytes = 0
+    failure_count = 0
+    failure_samples: list[dict[str, Any]] = []
+
+    for repetition in range(options.repetitions):
+        for frame in manifest.frames:
+            total_start = perf_counter()
+            load_start = perf_counter()
+            image = _decode_image(frame)
+            load_end = perf_counter()
+            peak_decoded_image_bytes = max(peak_decoded_image_bytes, image.nbytes)
+
+            detect_start = perf_counter()
+            observations = detector.detect(image)
+            detect_end = perf_counter()
+            detected_ids = [observation.tag_id for observation in observations]
+
+            score_start = perf_counter()
+            expected = Counter(frame.expected_tag_ids)
+            detected = Counter(detected_ids)
+            frame_true_positives = sum(min(count, detected[tag_id]) for tag_id, count in expected.items())
+            frame_false_negatives = sum(max(0, count - detected[tag_id]) for tag_id, count in expected.items())
+            frame_false_positives = sum(max(0, count - expected[tag_id]) for tag_id, count in detected.items())
+            score_end = perf_counter()
+
+            true_positives += frame_true_positives
+            false_negatives += frame_false_negatives
+            false_positives += frame_false_positives
+            expected_instances += len(frame.expected_tag_ids)
+            detected_instances += len(detected_ids)
+            if frame_false_positives:
+                false_positive_frames += 1
+            if frame_false_positives or frame_false_negatives:
+                failure_count += 1
+                if len(failure_samples) < options.max_failure_samples:
+                    failure_samples.append(
+                        {
+                            "repetition": repetition,
+                            "path": frame.relative_path,
+                            "expected_tag_ids": list(frame.expected_tag_ids),
+                            "detected_tag_ids": sorted(detected_ids),
+                            "missing_tag_ids": sorted((expected - detected).elements()),
+                            "unexpected_tag_ids": sorted((detected - expected).elements()),
+                        }
+                    )
+
+            stages["load_ms"].append((load_end - load_start) * 1000.0)
+            stages["detect_ms"].append((detect_end - detect_start) * 1000.0)
+            stages["score_ms"].append((score_end - score_start) * 1000.0)
+            stages["total_ms"].append((perf_counter() - total_start) * 1000.0)
+
+    evaluated_frames = len(manifest.frames) * options.repetitions
+    precision_denominator = true_positives + false_positives
+    return {
+        "schema_version": BENCHMARK_SCHEMA_VERSION,
+        "generated_at": datetime.now(UTC).isoformat(),
+        "corpus": {
+            "name": manifest.name,
+            "description": manifest.description,
+            "manifest_path": str(manifest.path),
+            "manifest_sha256": manifest.manifest_sha256,
+            "corpus_sha256": corpus_sha256,
+            "frames": len(manifest.frames),
+            "positive_frames": sum(bool(frame.expected_tag_ids) for frame in manifest.frames),
+            "negative_frames": sum(not frame.expected_tag_ids for frame in manifest.frames),
+        },
+        "run": {
+            "repetitions": options.repetitions,
+            "warmup_passes": options.warmup_passes,
+            "evaluated_frames": evaluated_frames,
+            "integrity_verified": options.verify_integrity,
+            "python": platform.python_version(),
+            "opencv": cv2.__version__,
+            "platform": platform.platform(),
+        },
+        "accuracy": {
+            "expected_instances": expected_instances,
+            "detected_instances": detected_instances,
+            "true_positives": true_positives,
+            "false_positives": false_positives,
+            "false_negatives": false_negatives,
+            "recall": None if expected_instances == 0 else true_positives / expected_instances,
+            "precision": None if precision_denominator == 0 else true_positives / precision_denominator,
+            "false_positive_frames": false_positive_frames,
+            "false_positives_per_frame": false_positives / evaluated_frames,
+        },
+        "timing": {stage: _timing_summary(samples) for stage, samples in stages.items()},
+        "memory": {
+            "peak_decoded_image_bytes": peak_decoded_image_bytes,
+            "per_frame_results_retained": False,
+            "failure_sample_limit": options.max_failure_samples,
+        },
+        "failures": {
+            "count": failure_count,
+            "sampled": len(failure_samples),
+            "omitted": failure_count - len(failure_samples),
+            "samples": failure_samples,
+        },
+    }
+
+
