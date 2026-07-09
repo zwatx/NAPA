@@ -588,6 +588,13 @@ def load_profile(profile: str | Path) -> PlatformProfile:
         calibration_matrix=camera_matrix,
         distortion_coefficients=distortion,
         robot_to_camera=robot_to_camera,
+        calibration_provenance=calibration_provenance,
+        calibration_rms_reprojection_error_px=calibration_rms,
+        calibration_views_used=calibration_views,
+        reconnect_initial_s=reconnect_initial_s,
+        reconnect_max_s=reconnect_max_s,
+        read_timeout_s=read_timeout_s,
+        shutdown_timeout_s=shutdown_timeout_s,
     )
     name = _string(data.get("name", getattr(source, "stem", "profile")), "name")
     device_id = _string(data.get("device_id", "northstar_0"), "device_id")
@@ -604,11 +611,24 @@ def load_profile(profile: str | Path) -> PlatformProfile:
         camera=camera,
         tag_size_m=_positive_number(data.get("tag_size_m", 0.1651), "tag_size_m"),
         tag_layout=layout,
+        tag_layout_provenance=layout_provenance,
+        field_length_m=field_length_m,
+        field_width_m=field_width_m,
+        production=production,
         skip_scan=skip_scan,
-        max_reprojection_error_px=_positive_number(
-            detection.get("max_reprojection_error_px", 5.0), "detection.max_reprojection_error_px"
-        ),
+        max_reprojection_error_px=max_reprojection_error_px,
+        max_tag_reprojection_error_px=max_tag_reprojection_error_px,
+        max_outlier_iterations=max_outlier_iterations,
+        ransac_iterations=ransac_iterations,
+        camera_pose_bounds=camera_pose_bounds,
         output_mode=output_mode,
         output_path=output_path,
         nt_server=nt_server,
+        nt_server_port=nt_server_port,
+        nt_send_all=nt_delivery == "upstream",
+        nt_close_drain_s=nt_close_drain_s,
+        jsonl_recorder=jsonl_recorder,
+        robot_yaw_topic=robot_yaw_topic,
+        yaw_max_age_s=yaw_max_age_s,
+        yaw_queue_size=yaw_queue_size,
     )
