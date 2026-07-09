@@ -13,13 +13,14 @@ class OpenCVArucoFiducialDetector:
         dictionary_id: int | None = None,
         *,
         prefilter: BlockSkipPrefilter | None = None,
+        parameters: cv2.aruco.DetectorParameters | None = None,
     ) -> None:
         if not hasattr(cv2, "aruco") or not hasattr(cv2.aruco, "ArucoDetector"):
             raise RuntimeError("OpenCV >= 4.7 with ArucoDetector support is required")
         dictionary_id = dictionary_id if dictionary_id is not None else cv2.aruco.DICT_APRILTAG_36h11
         self.dictionary = cv2.aruco.getPredefinedDictionary(dictionary_id)
         self.prefilter = prefilter
-        self.params = cv2.aruco.DetectorParameters()
+        self.params = parameters if parameters is not None else cv2.aruco.DetectorParameters()
         self.detector = cv2.aruco.ArucoDetector(self.dictionary, self.params)
 
     def detect(self, image: np.ndarray) -> list[FiducialImageObservation]:

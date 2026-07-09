@@ -48,6 +48,7 @@ northstar-vision = "northstar_vision.cli:main"
 northstar-benchmark = "northstar_vision.benchmark:main"
 northstar-calibrate = "northstar_vision.workflows:calibration_main"
 northstar-layout = "northstar_vision.workflows:layout_main"
+northstar-simulate = "northstar_vision.simulation_cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
