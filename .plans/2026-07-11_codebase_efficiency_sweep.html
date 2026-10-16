@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- TheLab metadata (read by the `lab` CLI on publish; do not remove).
+     thelab:plan is the STABLE plan id — re-publishing this file updates the same
+     plan (bumping its version) even if the title changes. -->
+<meta name="thelab:project" content="AprilTagDetector">
+<meta name="thelab:title" content="AprilTagDetector Codebase Efficiency Sweep">
+<meta name="thelab:plan" content="apriltagdetector-codebase-efficiency-sweep">
+<meta name="thelab:kind" content="review">
+<meta name="thelab:status" content="done">
+<meta name="thelab:tags" content="performance,audit,python">
+<!-- Optional: issue numbers this plan closes on ship, e.g. content="3,7". They
+     auto-close when the plan is marked done (`lab done … --commit`). -->
+<meta name="thelab:addresses" content="">
+<meta name="thelab:version" content="2">
+<meta name="thelab:hosted-url" content="https://thelab.wilsonzach.com/project/apriltagdetector/review/apriltagdetector-codebase-efficiency-sweep">
+<script type="application/json" id="thelab-findings">[
+  {"key":"exp-near-code-lookup","title":"Experimental detector eagerly builds a 260 MB near-code lookup","type":"bug","severity":"high","body":"experiments/occlusion_detector/robust_apriltag/family.py:63-90 and detector.py:67-71 build 1,566,116 Python-dict entries on first detector construction. Measured with tracemalloc: 2.19 s, about 234 MB current and 260 MB peak. Replace with a compact representation or direct bit_count scan, and do not eagerly initialize it."},
+  {"key":"exp-edge-refinement-batching","title":"Batch experimental edge-refinement projections and samples","type":"chore","severity":"high","body":"experiments/occlusion_detector/robust_apriltag/detector.py:370-421 performs up to roughly 12,800 tiny perspectiveTransform calls and 6,400 bilinear searches per frame at 80 candidates. Batch-project anchors/inward points and reuse precomputed search offsets."},
+  {"key":"prod-nt-instance-sharing","title":"Share one NetworkTables instance between yaw input and NT output","type":"chore","severity":"high","body":"src/northstar_vision/cli.py:202-220 constructs NTOutputPublisher and NetworkTablesRobotYawSource independently; output.py:215 and orientation.py:169-180 therefore create two clients, sockets, connection state machines, and background resources to the same server. Inject the output instance into the yaw source when both features are enabled and define ownership explicitly."},
+  {"key":"prod-pose-fast-path","title":"Avoid unconditional RANSAC plus generic solve on clean multi-tag frames","type":"chore","severity":"high","body":"src/northstar_vision/solvers.py:376-403 always runs RANSAC for 3+ tags and then runs a generic solve plus a second residual pass when the robust candidate is clean. Benchmark a generic-first clean fast path with RANSAC fallback; preserve corrupted-tag regression coverage."},
+  {"key":"prod-health-cadence","title":"Stop rebuilding and transmitting detailed health every frame","type":"chore","severity":"high","body":"src/northstar_vision/service.py:108-140, capture.py:166-188, and output.py:240-253 rebuild nested mostly-static dictionaries, copy them, query connection state twice, serialize JSON, and transmit it at camera FPS. Cache static metadata and publish detailed health around 1 Hz while retaining observations/FPS/latency per frame."},
+  {"key":"prod-batch-undistort","title":"Batch tag-corner undistortion once per frame","type":"chore","severity":"medium","body":"src/northstar_vision/service.py:81-87 and solvers.py:457-476 dispatch cv2.undistortPoints once per visible tag. Concatenate N×4 corners, call OpenCV once, reshape, and build observations from slices."},
+  {"key":"prod-jsonl-telemetry-duplication","title":"Store one canonical JSONL telemetry snapshot per record","type":"bug","severity":"medium","body":"src/northstar_vision/service.py:110,136 already stores output telemetry, then recording.py:309-314 takes another lock/snapshot and writes nearly the same 20+ fields under health.jsonl_writer. Reuse health.output for service-produced records and add writer telemetry only for direct callers that lack it."},
+  {"key":"cli-lazy-imports","title":"Make package and informational CLI imports lazy","type":"chore","severity":"medium","body":"src/northstar_vision/__init__.py:4-28 imports most of the NumPy/OpenCV stack before any command parses --help, --version, --list-profiles, or --check-config. Warm import measured about 0.10-0.13 s on Apple Silicon and will be more visible on Raspberry Pi. Keep version eager, lazy-load exports and runtime-only CLI modules."},
+  {"key":"sim-reuse-rendered-corpus","title":"Reuse rendered frames across optimization comparisons","type":"chore","severity":"medium","body":"src/northstar_vision/simulation_cli.py:123-151 invokes run_simulation for baseline and two candidates; simulation_benchmark.py:43-58 rebuilds and rerenders the identical corpus each time. Render once and pass frames/layout into each measured pipeline."},
+  {"key":"sim-identity-effects-fast-path","title":"Skip full-frame float effects pipeline for identity frames","type":"chore","severity":"medium","body":"src/northstar_vision/simulation_renderer.py:164-177 converts every image to float32 and clips twice even when contrast=1, brightness=0, and all effects are disabled. Return the uint8 image immediately for the identity case."},
+  {"key":"benchmark-contiguous-timing","title":"Use contiguous timing storage in large replay benchmarks","type":"chore","severity":"medium","body":"src/northstar_vision/benchmark.py:216,269-272 retains four boxed Python floats per evaluated frame. At one million frames this is roughly 100+ MB; preallocate a 4-column float64 array from frames×repetitions."},
+  {"key":"simulation-deduplicate-samples","title":"Do not retain global and per-scenario copies of simulation samples","type":"chore","severity":"medium","body":"src/northstar_vision/simulation_scoring.py:45-49,78-94,100-106 appends most measurements to both global and scenario lists. Retain per-scenario samples and derive global distributions during summary; keep only metrics without scenario storage globally."},
+  {"key":"ci-deduplicate-work","title":"Deduplicate CI triggers, lint, coverage, and unused dev dependencies","type":"chore","severity":"medium","body":".github/workflows/ci.yml:3-34 can run push and PR jobs for the same commit, lacks concurrency cancellation, repeats Ruff and coverage in four Python cells, and installs build/twine through .[dev,nt] in every cell. Restrict push branches, add cancel-in-progress, split one lint/coverage job, run plain compatibility tests elsewhere, and use .[test,nt]."},
+  {"key":"nt-test-port-race","title":"Remove released-port race from NetworkTables integration tests","type":"bug","severity":"medium","body":"tests/test_nt_integration.py:18-30 releases an ephemeral port before ntcore binds it. Parallel/shared CI can steal the port and convert a collision into repeated two-second timeouts. Prefer dynamic port discovery or a retrying fixture that verifies bind/connect."},
+  {"key":"headless-opencv-footprint","title":"Evaluate a headless OpenCV install path for coprocessors","type":"chore","severity":"medium","body":"pyproject.toml:22-25 unconditionally installs GUI-enabled opencv-python even when --show is unused; the local cv2 package is about 119 MB. Measure deployment needs and consider a headless base with an explicit GUI extra, preserving documented debug-window behavior."},
+  {"key":"exp-reject-erased-before-decode","title":"Reject excessive erased bits before exhaustive experimental decode","type":"chore","severity":"medium","body":"experiments/occlusion_detector/robust_apriltag/family.py:134-149 scans 4×587 codes for uncertain observations, while detector.py:199-217 checks default max_erased_bits=0 only afterward. Check the erasure limit before decoding and use int.bit_count for remaining scans."},
+  {"key":"artifact-fsync-batching","title":"Avoid one fsync barrier per simulation artifact","type":"chore","severity":"low","body":"src/northstar_vision/simulation_artifacts.py:43-54,151-159 and benchmark.py:324-344 fsync every PNG and JSON artifact. On SD cards this can dominate output. Stage a complete corpus directory and atomically rename it, or make crash-level per-file durability explicit."},
+  {"key":"jsonl-byte-count-copy","title":"Avoid re-encoding every JSONL record solely to count bytes","type":"chore","severity":"low","body":"src/northstar_vision/recording.py:257-264 encodes the completed JSON string to bytes for len, then the text stream encodes again. Production json.dumps uses ensure_ascii=True, so len(line) is the UTF-8 byte count; retain a Unicode-safe fallback only for custom encoders."},
+  {"key":"yaw-bisect-allocation","title":"Remove per-operation timestamp-list allocations in YawBuffer","type":"chore","severity":"low","body":"src/northstar_vision/orientation.py:52-74 rebuilds a timestamp list on every insertion and frame estimate. Use keyed bisect plus an append fast path for normally ordered NT samples. Impact is bounded by 64 samples."},
+  {"key":"trig-yaw-once","title":"Compute yaw rotation once per frame","type":"chore","severity":"low","body":"src/northstar_vision/service.py:88-96 passes one yaw to every tag, while solvers.py:491-498 repeats sin, cos, and a 3×3 allocation per tag. Compute the rotation once and reuse it."},
+  {"key":"prefilter-invariants","title":"Cache skip-scan morphology kernel and reduce temporaries","type":"chore","severity":"low","body":"src/northstar_vision/prefilter.py:59-70,95-100 rebuilds an invariant structuring element and allocates several sampled-gradient temporaries each enabled frame. Cache the kernel; introduce reusable buffers only after target-device profiling."},
+  {"key":"roi-dedup-centers","title":"Cache centers during ROI duplicate suppression","type":"chore","severity":"low","body":"src/northstar_vision/fiducials.py:59-87 compares every ROI detection with accumulated detections and recomputes means. Track centers by tag ID while collecting. This is bounded by eight ROIs and only applies when skip-scan is enabled."},
+  {"key":"geometry-static-basis","title":"Reuse the constant 4×4 OpenCV/WPILib basis","type":"chore","severity":"low","body":"src/northstar_vision/geometry.py:55-61 rebuilds the same identity/basis matrix and performs two full 4×4 products for each pose conversion. Define the basis once or transform blocks directly."},
+  {"key":"fiducial-id-iteration","title":"Avoid flatten-copy and list allocation for detected IDs","type":"chore","severity":"low","body":"src/northstar_vision/fiducials.py:55-56 uses ids.flatten().tolist() before iteration. Iterate ids.reshape(-1) and cast scalars directly."},
+  {"key":"renderer-static-allocations","title":"Cache static renderer geometry and warp arrays","type":"chore","severity":"low","body":"src/northstar_vision/simulation_renderer.py:50-53,98-102,125-144 regenerates tag field corners, source corners, and an opaque mask and performs duplicate marker-cache lookups. Cache layout-derived geometry and constant warp inputs."},
+  {"key":"report-single-serialization","title":"Reuse serialized benchmark and simulation report output","type":"chore","severity":"low","body":"src/northstar_vision/benchmark.py:450-452 and simulation_cli.py:158-164 serialize the same summary once for disk and again for stdout. Encode once and reuse the text when both destinations are requested."},
+  {"key":"workflow-local-imports","title":"Load only workflow-specific dependencies","type":"chore","severity":"low","body":"src/northstar_vision/workflows.py:9-17 imports calibration and field-layout dependencies for both entry points. After package imports are made lazy, move workflow-specific imports into calibration_main and layout_main."},
+  {"key":"exp-dedup-and-cache-nits","title":"Remove quadratic and repeated allocations in experimental candidate handling","type":"chore","severity":"low","body":"experiments/occlusion_detector/robust_apriltag/detector.py:140-167,518-540 repeatedly reorders quads and recomputes centers/scales in quadratic dedupe; family.py:22-24 rebuilds bit centers per candidate; detector.py:116-132 creates avoidable inversion temporaries. Cache ordered geometry/bit centers and use bitwise_not."},
+  {"key":"test-fixture-costs","title":"Trim redundant simulation runs and oversized fake frames in tests","type":"chore","severity":"low","body":"tests/test_simulation.py:69-120 runs the full nine-frame simulation three times, while tests/test_capture_runtime.py:81-82 and test_service_orientation.py:23 allocate full-size frames for assertions needing tiny images. Reuse one immutable simulation run where isolation permits and shrink fake frames. Current suite is only 1.12 s, so keep this low priority."},
+  {"key":"package-smoke-dependency-reuse","title":"Avoid resolving the heavy runtime stack twice in package smoke","type":"chore","severity":"low","body":".github/workflows/ci.yml:47-58 creates wheel and sdist venvs and installs the heavy runtime stack twice. Preserve both artifact checks, but consider shared dependency caching or a no-deps sdist build/install validation if CI minutes become material."}
+]</script>
+<title>AprilTagDetector Codebase Efficiency Sweep</title>
+<style>
+  /* Self-contained. Mirrors The Lab reader so the local file looks like the hosted
+     one. This block is NOT published: the hosted view uses The Lab's own reader
+     stylesheet, and only the article content below is published. */
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    background: #0a0a0a; color: #a1a1a1;
+    font-size: 15px; line-height: 1.7; letter-spacing: -0.006em;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 820px; margin: 0 auto; padding: 40px 24px 96px; }
+  a { color: #4e9bfa; text-decoration: none; } a:hover { text-decoration: underline; }
+  img { max-width: 100%; height: auto; }
+  h1 { font-size: 30px; font-weight: 600; letter-spacing: -0.025em; line-height: 1.2; color: #ededed; margin-bottom: 8px; }
+  h2 { font-size: 17px; font-weight: 600; letter-spacing: -0.015em; color: #ededed; margin: 56px 0 16px; padding-top: 24px; border-top: 1px solid #222; }
+  h3 { font-size: 14px; font-weight: 600; color: #ededed; margin: 32px 0 12px; }
+  p { margin: 0 0 12px; } strong { color: #ededed; font-weight: 600; }
+  ul, ol { margin: 0 0 12px 22px; } li { margin: 4px 0; }
+  .lede { color: #ededed; font-size: 16px; margin: 4px 0 8px; }
+  code { font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace; }
+  pre.code { background: #0d0d0d; border: 1px solid #222; border-radius: 6px; padding: 16px 20px; overflow-x: auto; font-size: 12.5px; line-height: 1.65; color: #a1a1a1; tab-size: 2; margin: 16px 0; }
+  .callout { border: 1px solid #222; border-left: 2px solid #4e9bfa; border-radius: 0 6px 6px 0; padding: 14px 20px; margin: 20px 0; font-size: 13.5px; color: #a1a1a1; }
+  .callout strong { color: #ededed; }
+  figure { margin: 16px 0; } figcaption { font-size: 12px; color: #6b6b6b; padding-top: 8px; font-family: ui-monospace, Menlo, monospace; }
+  .fig-scroll { overflow-x: auto; border: 1px solid #222; border-radius: 6px; }
+  .fig-scroll svg { display: block; width: 100%; height: auto; }
+  .tbl-scroll { overflow-x: auto; }
+  table.data { width: 100%; border-collapse: collapse; font-size: 13.5px; margin: 12px 0; }
+  table.data th { text-align: left; font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.07em; color: #6b6b6b; padding: 10px 14px; border-bottom: 1px solid #222; }
+  table.data td { padding: 10px 14px; border-bottom: 1px solid #222; color: #a1a1a1; vertical-align: top; }
+  table.data tr:last-child td { border-bottom: 0; }
+  table.data td:first-child { color: #ededed; white-space: nowrap; }
+  .plan-links { margin: 16px 0 8px; }
+  .plan-links table.data td:first-child { font-size: 11px; text-transform: uppercase; letter-spacing: 0.07em; color: #6b6b6b; width: 90px; }
+  .plan-links table.data td:nth-child(2) { color: #ededed; font-family: ui-monospace, Menlo, monospace; font-size: 12.5px; word-break: break-all; }
+  .status { display: inline-flex; align-items: center; gap: 7px; }
+  .status::before { content: ""; width: 7px; height: 7px; border-radius: 50%; }
+  .st-draft::before { border: 1px solid #6b6b6b; }
+  .st-active::before { background: #4e9bfa; }
+  .st-done::before { background: #ededed; }
+  .st-archived::before { background: #333; }
+</style>
+</head>
+<body>
+<main class="wrap">
+<article>
+  <h1>AprilTagDetector Codebase Efficiency Sweep</h1>
+
+  <!-- Plan meta: local-file chrome only — `lab publish` strips this whole section
+       from the published body (The Lab renders its own header + metadata rail). The
+       CLI fills the Version cell on publish (v1, v2, …). -->
+  <section class="plan-links">
+    <div class="tbl-scroll"><table class="data">
+      <tr><td>Project</td><td>AprilTagDetector</td></tr>
+      <tr><td>Version</td><td id="thelab-version">v2</td></tr>
+      <tr><td>Status</td><td><span class="status st-done">done</span> · 2026-07-11</td></tr>
+    </table></div>
+  </section>
+
+  <p class="lede">A full static and measured sweep found one severe experiment-only memory/startup problem, four high-value production optimizations, and a long tail of bounded tooling and allocation costs; no critical production leak or unbounded runtime queue was found.</p>
+
+  <div class="callout"><strong>Remediated.</strong> All 30 findings were implemented and verified on 2026-07-11. See the <a href="https://thelab.wilsonzach.com/project/apriltagdetector/review/apriltagdetector-efficiency-remediation-final-review">final remediation review</a>.</div>
+
+  <div class="callout"><strong>Verdict.</strong> Production architecture is fundamentally sound: capture is latest-frame, recording is bounded and asynchronous, benchmark decoding streams, and core geometry already caches important invariants. Fix the experimental lookup before treating that detector as usable, then address production NetworkTables/pose/telemetry costs in measured order.</div>
+
+  <h2>Scope and method</h2>
+  <p>The sweep covered all Python source under <code>src/northstar_vision</code>, the archived occlusion experiment, tests, packaging, CI, bundled profiles, and command workflows. Findings were accepted only when a concrete repeated operation, allocation, resource duplication, complexity problem, or measured workflow cost could be tied to exact code.</p>
+  <ul>
+    <li>Static inspection of 9,707 source/test/config lines.</li>
+    <li>Three independent read-only sweeps: runtime, simulation/tooling, and tests/experiments.</li>
+    <li>Representative 198-frame cProfile simulation run.</li>
+    <li>Targeted tracemalloc/RSS measurement of the experimental decoder lookup.</li>
+    <li>Full tests, Ruff, coverage, import timing, CI/package review, and clean-diff checks.</li>
+  </ul>
+  <p>“Every” here means every evidence-backed inefficiency found by those passes. Tiny unavoidable interpreter overhead and speculative micro-optimizations without a credible hot path were intentionally excluded.</p>
+
+  <h2>Measured baseline</h2>
+  <div class="tbl-scroll"><table class="data">
+    <thead><tr><th>Measurement</th><th>Result</th><th>Interpretation</th></tr></thead>
+    <tbody>
+      <tr><td>Tests</td><td>104 passed, 1 skipped in 1.12 s</td><td>The suite itself is fast; CI runner/install duplication matters more than test CPU.</td></tr>
+      <tr><td>Lint</td><td>Ruff: all checks passed</td><td>No lint-driven cleanup is needed.</td></tr>
+      <tr><td>Coverage</td><td>78.05%, 104 passed / 1 skipped</td><td>Coverage execution was about 1.77 s in the independent pass.</td></tr>
+      <tr><td>Simulation profile</td><td>0.858 s for 199 service iterations</td><td><code>detectMarkers</code> consumed 0.684 s; pose solve 0.071 s. Optimize detection-adjacent work first.</td></tr>
+      <tr><td>Flat-frame guard</td><td><code>minMaxLoc</code> 0.017 s / 198 calls</td><td>About 0.086 ms/frame; it is justified because it makes blank detection about 0.17 ms.</td></tr>
+      <tr><td>Experiment lookup</td><td>1,566,116 entries; 2.19 s; ~260 MB traced peak</td><td>Dominant, severe, and paid at first detector construction.</td></tr>
+      <tr><td>Package import</td><td>~0.10–0.13 s warm on Apple Silicon</td><td>Noticeable for informational CLI calls; likely worse on Raspberry Pi.</td></tr>
+    </tbody>
+  </table></div>
+
+  <h2>Priority findings</h2>
+  <div class="tbl-scroll"><table class="data">
+    <thead><tr><th>Priority</th><th>Finding</th><th>Evidence</th><th>Smallest safe change</th></tr></thead>
+    <tbody>
+      <tr><td>H1 · experiment</td><td>Near-code lookup consumes ~260 MB and 2.19 s</td><td><code>family.py:63-90</code>; eager call at <code>detector.py:71</code></td><td>Remove eager initialization; benchmark compact arrays or direct <code>int.bit_count()</code> scan.</td></tr>
+      <tr><td>H2 · experiment</td><td>Edge refinement dispatches thousands of tiny OpenCV/NumPy operations</td><td><code>detector.py:370-421</code>; up to ~12,800 projections/frame</td><td>Batch-project anchors and reuse search offsets.</td></tr>
+      <tr><td>H3 · production</td><td>Yaw input plus NT output creates two clients to one server</td><td><code>cli.py:202-220</code>, <code>output.py:215</code>, <code>orientation.py:169</code></td><td>Inject/share one instance with explicit ownership.</td></tr>
+      <tr><td>H4 · production</td><td>Clean 3+ tag frames run RANSAC and then generic PnP</td><td><code>solvers.py:376-403</code></td><td>Benchmark generic-first acceptance with RANSAC fallback; preserve outlier tests.</td></tr>
+      <tr><td>H5 · production</td><td>Detailed health is rebuilt, copied, JSON-encoded, and sent every frame</td><td><code>service.py:108-140</code>, <code>capture.py:166-188</code>, <code>output.py:240-253</code></td><td>Cache static fields and publish detailed health at ~1 Hz.</td></tr>
+    </tbody>
+  </table></div>
+
+  <h2>Production/runtime remainder</h2>
+  <ol>
+    <li><strong>Batch corner undistortion:</strong> <code>service.py:81-87</code> and <code>solvers.py:457-476</code> make one OpenCV call per tag; one N×4 call removes transitions and small allocations.</li>
+    <li><strong>JSONL telemetry duplication:</strong> <code>service.py:110,136</code> and <code>recording.py:309-314</code> store the writer snapshot twice.</li>
+    <li><strong>JSONL byte counting:</strong> <code>recording.py:257-264</code> encodes every record a second time only to measure it.</li>
+    <li><strong>Yaw buffer lists:</strong> <code>orientation.py:52-74</code> rebuilds timestamps for insertion and estimation despite Python 3.11 keyed bisect support.</li>
+    <li><strong>Per-tag yaw matrix:</strong> <code>solvers.py:491-498</code> repeats sin/cos and a matrix allocation for the same frame yaw.</li>
+    <li><strong>ROI dedupe:</strong> <code>fiducials.py:59-87</code> is quadratic and recomputes centers; bounded by eight ROIs.</li>
+    <li><strong>Skip-scan invariants:</strong> <code>prefilter.py:59-70</code> rebuilds its morphology kernel; gradient construction also creates several temporaries.</li>
+    <li><strong>Basis reconstruction:</strong> <code>geometry.py:55-61</code> recreates a constant 4×4 transform for each pose.</li>
+    <li><strong>ID extraction:</strong> <code>fiducials.py:55-56</code> creates a flatten copy and Python list before a tiny loop.</li>
+    <li><strong>Eager public imports:</strong> <code>__init__.py:4-28</code> loads most of the vision stack for every command and import.</li>
+  </ol>
+
+  <h2>Simulation, benchmark, and artifact remainder</h2>
+  <ol>
+    <li><strong>Comparison rerender:</strong> <code>simulation_cli.py:123-151</code> renders the same corpus three times.</li>
+    <li><strong>Identity effects:</strong> <code>simulation_renderer.py:164-177</code> does two full-frame clips and a float32 conversion for clean images.</li>
+    <li><strong>Timing storage:</strong> <code>benchmark.py:216,269-272</code> retains four boxed floats per evaluated frame; use a contiguous array for large runs.</li>
+    <li><strong>Duplicate sample storage:</strong> <code>simulation_scoring.py:45-106</code> retains most metrics globally and per scenario.</li>
+    <li><strong>Durability barriers:</strong> <code>simulation_artifacts.py:151-159</code> fsyncs each file; expensive on SD cards.</li>
+    <li><strong>Static renderer work:</strong> <code>simulation_renderer.py:50-53,98-144</code> recomputes layout geometry, source corners, and marker masks.</li>
+    <li><strong>Double serialization:</strong> <code>benchmark.py:450-452</code> and <code>simulation_cli.py:158-164</code> encode file/stdout reports separately.</li>
+    <li><strong>Combined workflow imports:</strong> <code>workflows.py:9-17</code> loads calibration and layout dependencies for either single-purpose command.</li>
+  </ol>
+
+  <h2>Experiment remainder</h2>
+  <ol>
+    <li><strong>Late erasure rejection:</strong> <code>family.py:134-149</code> performs 2,348 allocating popcount comparisons before <code>detector.py:199-217</code> rejects erased bits under the default policy.</li>
+    <li><strong>Quadratic dedupe:</strong> <code>detector.py:140-167,518-540</code> repeatedly orders old quads and recomputes scale/centers.</li>
+    <li><strong>Repeated bit centers:</strong> <code>family.py:22-24</code> rebuilds an invariant stacked array per candidate.</li>
+    <li><strong>Preprocess temporaries:</strong> <code>detector.py:116-132</code> creates boolean, uint8, and multiply arrays where <code>bitwise_not</code> suffices; it also returns an unused binary image.</li>
+  </ol>
+
+  <h2>CI, packaging, and tests</h2>
+  <ol>
+    <li><strong>Duplicate CI:</strong> <code>ci.yml:3-34</code> can run push and PR workflows for one commit, does not cancel stale runs, and repeats lint/coverage across four Pythons.</li>
+    <li><strong>Unused install surface:</strong> each compatibility cell installs <code>.[dev,nt]</code>, pulling build/twine that only package-smoke uses.</li>
+    <li><strong>Port TOCTOU:</strong> <code>test_nt_integration.py:18-30</code> releases a selected port before ntcore binds it.</li>
+    <li><strong>GUI OpenCV footprint:</strong> <code>pyproject.toml:22-25</code> installs the roughly 119 MB GUI package on headless coprocessors; validate a headless/base split before changing it.</li>
+    <li><strong>Redundant simulation tests:</strong> <code>test_simulation.py:69-120</code> runs the nine-frame suite three times; absolute cost remains small.</li>
+    <li><strong>Oversized fake frames:</strong> capture/orientation tests allocate 1280×720×3 arrays when assertions need tiny frames.</li>
+    <li><strong>Package-smoke dependency duplication:</strong> <code>ci.yml:47-58</code> resolves/installs the heavy stack in separate wheel and sdist venvs; assurance value is real, so optimize only if CI minutes matter.</li>
+  </ol>
+
+  <h2>Efficient patterns to preserve</h2>
+  <ul>
+    <li>Latest-frame capture slot bounds latency and memory without copying frames.</li>
+    <li>Capture reconnect uses event waits and exponential backoff, not polling.</li>
+    <li>JSONL recording is off-thread, bounded, has explicit drop policy, timed waits, rotation, and bounded close.</li>
+    <li>Tag object points and marker images are cached; field-corner cache safely detects in-place layout mutation.</li>
+    <li>Replay benchmarks stream one decoded frame at a time, cap failure details, and stream integrity hashing in 1 MiB chunks.</li>
+    <li>The flat-frame <code>minMaxLoc</code> guard is a measured net win for blank frames and should stay.</li>
+    <li><code>SyntheticFrameSource</code> repeats references rather than copying image buffers.</li>
+    <li>Profile parsing and strict validation are startup-only, not per-frame.</li>
+  </ul>
+
+  <h2>Recommended execution order</h2>
+  <ol>
+    <li>Fix the experiment lookup and edge batching before further work on that detector.</li>
+    <li>On production hardware, benchmark shared NT instance, generic-first pose fast path, and 1 Hz detailed health independently.</li>
+    <li>Land the JSONL duplication and simulation identity/reuse changes; they are small and behavior-preserving with focused tests.</li>
+    <li>Split CI lint/coverage and add cancellation.</li>
+    <li>Address low-priority allocations only when target-device profiles show they matter.</li>
+  </ol>
+
+  <h2>Verification completed</h2>
+  <pre class="code">.venv/bin/python -m pytest -q --durations=20
+# 104 passed, 1 skipped in 1.12s
+
+.venv/bin/python -m ruff check .
+# All checks passed!
+
+.venv/bin/python -m cProfile -s cumulative -m northstar_vision.simulation_cli \
+  --profile laptop --suite standard --repetitions 20 --warmup-passes 2 \
+  --output-dir /tmp/northstar-efficiency-audit
+# 448,987 calls; 1.416s total; detectMarkers 0.684s; solvers 0.071s</pre>
+  <p>The requested Claude Opus review could not run because this organization has disabled Claude subscription access in Claude Code. The three independent Codex sub-reviews and local measurements completed successfully.</p>
+
+  <h2>Change boundary</h2>
+  <p>No product source, tests, dependencies, or configuration were changed. This review artifact and its linked issues are the only repository additions.</p>
+</article>
+</main>
+</body>
+</html>
