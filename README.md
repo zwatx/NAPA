@@ -285,10 +285,24 @@ northstar-benchmark benchmarks/pi-corpus.json \
 An input/configuration error exits `2`; a failed performance/accuracy gate exits `1`. Keep skip-scan disabled unless a
 representative Raspberry Pi corpus shows recall parity and a useful percentile improvement over full-frame detection.
 
+Use the opt-in replay comparison to evaluate ArUco3 or a field-layout-only dictionary on the same decoded images:
+
+```bash
+northstar-benchmark benchmarks/corpus.json \
+  --compare-detectors aruco3 layout-restricted \
+  --layout-tag-ids 1,2,3,4 --max-decoded-cache-mib 256 \
+  --repetitions 5 --warmup-passes 1 --output reports/detector-comparison.json
+```
+
+The restricted candidate remaps compact dictionary rows back to the supplied original tag IDs and intentionally ignores
+all other tags. Comparison mode reports detection-only speedups, its fixed execution order, and retained decoded-cache
+bytes. The cache has a 256 MiB default ceiling; split a larger corpus into representative shards or raise the limit
+explicitly. Both candidates remain hardware-validation inputs and never alter the production detector default.
+
 ## Development and packaging
 
 ```bash
-python -m pip install -e '.[dev,nt]'
+python -m pip install -e '.[headless,dev,nt]'
 ruff format --check .
 ruff check .
 pytest --cov=northstar_vision
