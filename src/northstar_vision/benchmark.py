@@ -19,11 +19,12 @@ from typing import Any, Protocol
 import cv2
 import numpy as np
 
-from .fiducials import OpenCVArucoFiducialDetector
+from .fiducials import OpenCVArucoFiducialDetector, make_apriltag_detector
 from .types import FiducialImageObservation
 
 CORPUS_SCHEMA_VERSION = 1
 BENCHMARK_SCHEMA_VERSION = 1
+DEFAULT_COMPARISON_CACHE_BYTES = 256 * 1024 * 1024
 
 
 class CorpusManifestError(ValueError):
@@ -208,12 +209,107 @@ def run_replay_benchmark(
     options = options or BenchmarkOptions()
     detector = detector or OpenCVArucoFiducialDetector()
     corpus_sha256 = _verify_corpus(manifest) if options.verify_integrity else None
+    return _run_replay_benchmark(manifest, detector, options, corpus_sha256=corpus_sha256)
+
+
+def run_replay_detector_comparison(
+    manifest: CorpusManifest | str | Path,
+    *,
+    candidates: Sequence[str] = ("aruco3",),
+    layout_tag_ids: Sequence[int] | None = None,
+    options: BenchmarkOptions | None = None,
+    max_decoded_cache_bytes: int = DEFAULT_COMPARISON_CACHE_BYTES,
+) -> dict[str, Any]:
+    """Compare opt-in detector candidates on one size-limited decoded-frame cache."""
+
+    if not isinstance(manifest, CorpusManifest):
+        manifest = load_corpus_manifest(manifest)
+    options = options or BenchmarkOptions()
+    candidate_names = tuple(candidates)
+    if not candidate_names:
+        raise ValueError("at least one detector comparison candidate is required")
+    if len(candidate_names) != len(set(candidate_names)):
+        raise ValueError("detector comparison candidates must not contain duplicates")
+    if "baseline" in candidate_names:
+        raise ValueError("baseline is always included and must not be listed as a candidate")
+    if (
+        isinstance(max_decoded_cache_bytes, bool)
+        or not isinstance(max_decoded_cache_bytes, int)
+        or max_decoded_cache_bytes < 1
+    ):
+        raise ValueError("max_decoded_cache_bytes must be a positive integer")
+
+    corpus_sha256 = _verify_corpus(manifest) if options.verify_integrity else None
+    decoded_images = _decode_comparison_cache(manifest, max_decoded_cache_bytes)
+    baseline = _run_replay_benchmark(
+        manifest,
+        make_apriltag_detector("baseline"),
+        options,
+        corpus_sha256=corpus_sha256,
+        decoded_images=decoded_images,
+    )
+    comparisons: dict[str, Any] = {}
+    for candidate_name in candidate_names:
+        candidate = _run_replay_benchmark(
+            manifest,
+            make_apriltag_detector(candidate_name, layout_tag_ids=layout_tag_ids),
+            options,
+            corpus_sha256=corpus_sha256,
+            decoded_images=decoded_images,
+        )
+        comparisons[candidate_name] = {
+            "assessment": _detector_comparison(baseline, candidate),
+            "results": candidate,
+        }
+    baseline["detector_comparisons"] = comparisons
+    baseline["comparison_run"] = {
+        "execution_order": ["baseline", *candidate_names],
+        "shared_decoded_frames": True,
+        "max_decoded_cache_bytes": max_decoded_cache_bytes,
+        "production_default_changed": False,
+        "requires_physical_hardware_validation": True,
+    }
+    return baseline
+
+
+def _decode_comparison_cache(
+    manifest: CorpusManifest,
+    max_decoded_cache_bytes: int,
+) -> tuple[np.ndarray, ...]:
+    decoded_images: list[np.ndarray] = []
+    cached_bytes = 0
+    for frame in manifest.frames:
+        image = _decode_image(frame)
+        cached_bytes += image.nbytes
+        if cached_bytes > max_decoded_cache_bytes:
+            raise ValueError(
+                "decoded comparison cache exceeds "
+                f"{max_decoded_cache_bytes} bytes; split the corpus or increase --max-decoded-cache-mib"
+            )
+        decoded_images.append(image)
+    return tuple(decoded_images)
+
+
+def _run_replay_benchmark(
+    manifest: CorpusManifest,
+    detector: FiducialDetector,
+    options: BenchmarkOptions,
+    *,
+    corpus_sha256: str | None,
+    decoded_images: Sequence[np.ndarray] | None = None,
+) -> dict[str, Any]:
+    if decoded_images is not None and len(decoded_images) != len(manifest.frames):
+        raise ValueError("decoded image cache must contain one image per manifest frame")
 
     for _ in range(options.warmup_passes):
-        for frame in manifest.frames:
-            detector.detect(_decode_image(frame))
+        for frame_index, frame in enumerate(manifest.frames):
+            image = _decode_image(frame) if decoded_images is None else decoded_images[frame_index]
+            detector.detect(image)
 
-    stages: dict[str, list[float]] = {"load_ms": [], "detect_ms": [], "score_ms": [], "total_ms": []}
+    stage_names = ("load_ms", "detect_ms", "score_ms", "total_ms")
+    evaluated_frames = len(manifest.frames) * options.repetitions
+    timings = np.empty((evaluated_frames, len(stage_names)), dtype=np.float64)
+    timing_index = 0
     true_positives = 0
     false_positives = 0
     false_negatives = 0
@@ -225,10 +321,10 @@ def run_replay_benchmark(
     failure_samples: list[dict[str, Any]] = []
 
     for repetition in range(options.repetitions):
-        for frame in manifest.frames:
+        for frame_index, frame in enumerate(manifest.frames):
             total_start = perf_counter()
             load_start = perf_counter()
-            image = _decode_image(frame)
+            image = _decode_image(frame) if decoded_images is None else decoded_images[frame_index]
             load_end = perf_counter()
             peak_decoded_image_bytes = max(peak_decoded_image_bytes, image.nbytes)
 
@@ -266,12 +362,14 @@ def run_replay_benchmark(
                         }
                     )
 
-            stages["load_ms"].append((load_end - load_start) * 1000.0)
-            stages["detect_ms"].append((detect_end - detect_start) * 1000.0)
-            stages["score_ms"].append((score_end - score_start) * 1000.0)
-            stages["total_ms"].append((perf_counter() - total_start) * 1000.0)
+            timings[timing_index] = (
+                (load_end - load_start) * 1000.0,
+                (detect_end - detect_start) * 1000.0,
+                (score_end - score_start) * 1000.0,
+                (perf_counter() - total_start) * 1000.0,
+            )
+            timing_index += 1
 
-    evaluated_frames = len(manifest.frames) * options.repetitions
     precision_denominator = true_positives + false_positives
     return {
         "schema_version": BENCHMARK_SCHEMA_VERSION,
@@ -294,6 +392,7 @@ def run_replay_benchmark(
             "python": platform.python_version(),
             "opencv": cv2.__version__,
             "platform": platform.platform(),
+            "frame_source": "streamed-files" if decoded_images is None else "decoded-cache",
         },
         "accuracy": {
             "expected_instances": expected_instances,
@@ -306,9 +405,12 @@ def run_replay_benchmark(
             "false_positive_frames": false_positive_frames,
             "false_positives_per_frame": false_positives / evaluated_frames,
         },
-        "timing": {stage: _timing_summary(samples) for stage, samples in stages.items()},
+        "timing": {stage: _timing_summary(timings[:, column]) for column, stage in enumerate(stage_names)},
         "memory": {
             "peak_decoded_image_bytes": peak_decoded_image_bytes,
+            "cached_decoded_image_bytes": (
+                0 if decoded_images is None else sum(image.nbytes for image in decoded_images)
+            ),
             "per_frame_results_retained": False,
             "failure_sample_limit": options.max_failure_samples,
         },
@@ -319,6 +421,29 @@ def run_replay_benchmark(
             "samples": failure_samples,
         },
     }
+
+
+def _detector_comparison(baseline: Mapping[str, Any], candidate: Mapping[str, Any]) -> dict[str, Any]:
+    baseline_timing = baseline["timing"]["detect_ms"]
+    candidate_timing = candidate["timing"]["detect_ms"]
+    p50_speedup = _safe_ratio(baseline_timing["p50_ms"], candidate_timing["p50_ms"])
+    p95_speedup = _safe_ratio(baseline_timing["p95_ms"], candidate_timing["p95_ms"])
+    accuracy_equal = baseline["accuracy"] == candidate["accuracy"]
+    useful_latency_gain = (
+        (p50_speedup is not None and p50_speedup >= 1.10)
+        or (p95_speedup is not None and p95_speedup >= 1.15)
+    )
+    return {
+        "accuracy_equal": accuracy_equal,
+        "detect_p50_speedup": p50_speedup,
+        "detect_p95_speedup": p95_speedup,
+        "eligible_for_physical_validation": accuracy_equal and useful_latency_gain,
+        "production_default_eligible": False,
+    }
+
+
+def _safe_ratio(numerator: float, denominator: float) -> float | None:
+    return None if denominator == 0.0 else numerator / denominator
 
 
 def serialize_benchmark_summary(summary: Mapping[str, Any], *, pretty: bool = False) -> str:
@@ -437,6 +562,23 @@ def build_parser() -> argparse.ArgumentParser:
         help="Maximum mismatch examples retained in the JSON summary",
     )
     parser.add_argument("--no-verify-integrity", action="store_true", help="Skip file hashing and declared SHA checks")
+    parser.add_argument(
+        "--compare-detectors",
+        nargs="+",
+        choices=("aruco3", "layout-restricted"),
+        help="Compare opt-in candidates against baseline on the same decoded frames",
+    )
+    parser.add_argument(
+        "--layout-tag-ids",
+        type=_tag_id_list,
+        help="Comma-separated original tag IDs for the layout-restricted comparison candidate",
+    )
+    parser.add_argument(
+        "--max-decoded-cache-mib",
+        type=_positive_float,
+        default=DEFAULT_COMPARISON_CACHE_BYTES / (1024 * 1024),
+        help="Maximum decoded-image cache for detector comparisons (default: 256 MiB)",
+    )
     parser.add_argument("--output", help="Atomically write the JSON summary to this path")
     parser.add_argument("--pretty", action="store_true", help="Pretty-print JSON instead of compact output")
     parser.add_argument("--min-recall", type=_ratio, help="Fail when measured recall is below this 0–1 value")
@@ -452,15 +594,24 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
-        summary = run_replay_benchmark(
-            args.manifest,
-            options=BenchmarkOptions(
-                repetitions=args.repetitions,
-                warmup_passes=args.warmup_passes,
-                max_failure_samples=args.max_failure_samples,
-                verify_integrity=not args.no_verify_integrity,
-            ),
+        options = BenchmarkOptions(
+            repetitions=args.repetitions,
+            warmup_passes=args.warmup_passes,
+            max_failure_samples=args.max_failure_samples,
+            verify_integrity=not args.no_verify_integrity,
         )
+        if args.compare_detectors:
+            if "layout-restricted" in args.compare_detectors and args.layout_tag_ids is None:
+                raise ValueError("--layout-tag-ids is required when comparing layout-restricted")
+            summary = run_replay_detector_comparison(
+                args.manifest,
+                candidates=args.compare_detectors,
+                layout_tag_ids=args.layout_tag_ids,
+                options=options,
+                max_decoded_cache_bytes=int(args.max_decoded_cache_mib * 1024 * 1024),
+            )
+        else:
+            summary = run_replay_benchmark(args.manifest, options=options)
         thresholds = BenchmarkThresholds(
             min_recall=args.min_recall,
             min_precision=args.min_precision,
@@ -468,9 +619,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         gate = evaluate_benchmark_gate(summary, thresholds)
         summary["gate"] = gate
+        for comparison in summary.get("detector_comparisons", {}).values():
+            candidate_gate = evaluate_benchmark_gate(comparison["results"], thresholds)
+            comparison["results"]["gate"] = candidate_gate
+            comparison["assessment"]["candidate_gate_passed"] = candidate_gate["passed"]
+            comparison["assessment"]["eligible_for_physical_validation"] &= candidate_gate["passed"]
+        serialized = serialize_benchmark_summary(summary, pretty=args.pretty)
         if args.output:
-            write_benchmark_summary(summary, args.output, pretty=args.pretty)
-        print(json.dumps(summary, indent=2 if args.pretty else None, separators=None if args.pretty else (",", ":")))
+            write_benchmark_summary_text(serialized, args.output)
+        print(serialized)
     except (CorpusManifestError, OSError, RuntimeError, ValueError) as exc:
         print(f"northstar-benchmark: error: {exc}", file=sys.stderr)
         return 2
@@ -503,6 +660,16 @@ def _positive_float(value: str) -> float:
     if not math.isfinite(parsed) or parsed <= 0.0:
         raise argparse.ArgumentTypeError("must be greater than zero")
     return parsed
+
+
+def _tag_id_list(value: str) -> tuple[int, ...]:
+    try:
+        tag_ids = tuple(int(part.strip()) for part in value.split(","))
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must be comma-separated non-negative integers") from exc
+    if not tag_ids or any(tag_id < 0 for tag_id in tag_ids) or len(tag_ids) != len(set(tag_ids)):
+        raise argparse.ArgumentTypeError("must be unique comma-separated non-negative integers")
+    return tag_ids
 
 
 if __name__ == "__main__":
