@@ -14,13 +14,22 @@ Python 3.11 or newer and OpenCV 4.7 or newer are required.
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install .
+python -m pip install '.[gui]'
 ```
+
+For a coprocessor or CI host without a display server, install the mutually exclusive headless backend instead:
+
+```bash
+python -m pip install '.[headless]'
+```
+
+Choose exactly one OpenCV extra. The headless build supports detection, replay, calibration, and simulation, but not
+`northstar-vision --show`; use the `gui` extra anywhere the debug window is required.
 
 Install RobotPy NetworkTables support on a coprocessor with:
 
 ```bash
-python -m pip install '.[nt]'
+python -m pip install '.[gui,nt]'
 ```
 
 The package provides five commands:
