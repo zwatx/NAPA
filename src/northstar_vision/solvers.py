@@ -373,34 +373,29 @@ class CameraPoseSolver:
                 diagnostics.rejection_reason = "one or more tag corners are non-finite"
                 return None
 
-            candidate = self._ransac_candidate(active, object_points, image_points, camera)
-            used_ransac_candidate = candidate is not None
-            if used_ransac_candidate:
-                diagnostics.used_ransac = True
-            else:
-                candidate = self._generic_candidate(object_points, image_points, camera)
+            candidate = self._generic_candidate(object_points, image_points, camera)
+            used_ransac_candidate = False
             if candidate is None:
-                diagnostics.rejection_reason = "OpenCV could not produce a physically valid multi-tag pose"
-                return None
+                candidate = self._ransac_candidate(active, object_points, image_points, camera)
+                if candidate is None:
+                    diagnostics.rejection_reason = "OpenCV could not produce a physically valid multi-tag pose"
+                    return None
+                diagnostics.used_ransac = True
+                used_ransac_candidate = True
             rvec, tvec = candidate
             per_tag, error = self._residuals(active, object_points, image_points, rvec, tvec, camera)
 
-            # Once every tag agrees with the robust estimate, refine using all
-            # accepted corners and keep the lower-error physically valid pose.
-            if used_ransac_candidate and max(per_tag.values()) <= self.max_tag_reprojection_error_px:
-                refined = self._generic_candidate(object_points, image_points, camera)
-                if refined is not None:
-                    refined_per_tag, refined_error = self._residuals(
-                        active,
-                        object_points,
-                        image_points,
-                        refined[0],
-                        refined[1],
-                        camera,
-                    )
-                    if max(refined_per_tag.values()) <= self.max_tag_reprojection_error_px and refined_error <= error:
-                        rvec, tvec = refined
-                        per_tag, error = refined_per_tag, refined_error
+            # Clean frames need only the all-corner generic solve. If it does
+            # not meet the acceptance thresholds, use RANSAC to identify a
+            # coherent subset before choosing which tag to remove.
+            if not used_ransac_candidate and (
+                max(per_tag.values()) > self.max_tag_reprojection_error_px or error > self.max_reprojection_error_px
+            ):
+                robust = self._ransac_candidate(active, object_points, image_points, camera)
+                if robust is not None:
+                    diagnostics.used_ransac = True
+                    rvec, tvec = robust
+                    per_tag, error = self._residuals(active, object_points, image_points, rvec, tvec, camera)
 
             diagnostics.per_tag_rms_reprojection_error_px.update(per_tag)
             diagnostics.overall_rms_reprojection_error_px = error

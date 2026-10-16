@@ -141,6 +141,21 @@ def test_two_tag_solver_does_not_repeat_identical_generic_solve(monkeypatch: pyt
     assert calls == 1
 
 
+def test_clean_multi_tag_solver_skips_ransac(monkeypatch: pytest.MonkeyPatch) -> None:
+    profile, _, layout, observations = _scene()
+    solver = CameraPoseSolver(max_reprojection_error_px=2.0, max_tag_reprojection_error_px=3.0)
+
+    def unexpected_ransac(*_args: object, **_kwargs: object) -> None:
+        pytest.fail("clean generic pose should not invoke RANSAC")
+
+    monkeypatch.setattr(solver, "_ransac_candidate", unexpected_ransac)
+
+    result = solver.solve(observations, [], profile.camera, profile.tag_size_m, layout)
+
+    assert result is not None
+    assert not solver.last_diagnostics.used_ransac
+
+
 def test_field_corner_cache_refreshes_after_layout_mutation() -> None:
     profile, _, layout, observations = _scene()
     solver = CameraPoseSolver()
