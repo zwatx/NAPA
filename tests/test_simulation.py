@@ -6,6 +6,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+import northstar_vision.simulation_artifacts as simulation_artifacts_module
 from northstar_vision.benchmark import load_corpus_manifest
 from northstar_vision.config import load_profile
 from northstar_vision.fiducials import OpenCVArucoFiducialDetector
@@ -136,6 +137,19 @@ def test_simulation_corpus_is_replay_compatible(tmp_path: Path, standard_run: Si
     assert set(replay_profile.tag_layout) == {1, 2, 3, 4}
     truth = json.loads(artifacts["truth"].read_text(encoding="utf-8"))
     assert truth["evidence_kind"] == "synthetic"
+
+
+def test_simulation_artifact_bytes_are_durable_by_default_with_explicit_opt_out(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fsync_calls: list[int] = []
+    monkeypatch.setattr(simulation_artifacts_module.os, "fsync", fsync_calls.append)
+
+    simulation_artifacts_module._atomic_write_bytes(tmp_path / "durable.bin", b"durable")
+    assert len(fsync_calls) == 1
+
+    simulation_artifacts_module._atomic_write_bytes(tmp_path / "atomic-only.bin", b"atomic", durable=False)
+    assert len(fsync_calls) == 1
 
 
 def test_simulation_cli_writes_report_and_returns_failed_gate(

@@ -30,8 +30,9 @@ def write_simulation_corpus(
     tag_layout: dict[int, np.ndarray],
     *,
     suite: str,
+    durable: bool = True,
 ) -> dict[str, Path]:
-    """Write replay images, strict corpus metadata, truth, and a replay profile."""
+    """Write replay artifacts, syncing each file unless durability is explicitly disabled."""
 
     if not frames:
         raise ValueError("simulation corpus requires at least one frame")
@@ -43,7 +44,7 @@ def write_simulation_corpus(
     for frame in frames:
         filename = f"{frame.truth.index:03d}-{frame.truth.name}.png"
         encoded = _encode_png(frame.image)
-        _atomic_write_bytes(image_dir / filename, encoded)
+        _atomic_write_bytes(image_dir / filename, encoded, durable=durable)
         manifest_frames.append(
             {
                 "path": f"frames/{filename}",
@@ -62,6 +63,7 @@ def write_simulation_corpus(
         },
         root / "corpus.json",
         pretty=True,
+        durable=durable,
     )
     truth_path = write_benchmark_summary(
         {
@@ -73,11 +75,13 @@ def write_simulation_corpus(
         },
         root / "ground-truth.json",
         pretty=True,
+        durable=durable,
     )
     profile_path = write_benchmark_summary(
         _simulation_profile(profile, tag_layout),
         root / "simulation-profile.json",
         pretty=True,
+        durable=durable,
     )
     return {"manifest": manifest_path, "truth": truth_path, "profile": profile_path, "frames": image_dir}
 
@@ -148,14 +152,15 @@ def _encode_png(image: np.ndarray) -> bytes:
     return encoded.tobytes()
 
 
-def _atomic_write_bytes(path: Path, data: bytes) -> None:
+def _atomic_write_bytes(path: Path, data: bytes, *, durable: bool = True) -> None:
     temporary_name: str | None = None
     try:
         with tempfile.NamedTemporaryFile(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp", delete=False) as file:
             temporary_name = file.name
             file.write(data)
             file.flush()
-            os.fsync(file.fileno())
+            if durable:
+                os.fsync(file.fileno())
         os.replace(temporary_name, path)
     except BaseException:
         if temporary_name is not None:
