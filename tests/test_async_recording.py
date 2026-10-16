@@ -68,6 +68,22 @@ def test_async_recorder_writes_complete_json_and_reports_health(tmp_path: Path) 
     assert publisher.telemetry()["fsyncs"] >= 1
 
 
+def test_async_recorder_does_not_duplicate_its_telemetry(tmp_path: Path) -> None:
+    path = tmp_path / "frames.jsonl"
+    publisher = AsyncJsonlOutputPublisher(
+        path,
+        config=JsonlRecorderConfig(flush_interval_s=0, max_file_size_bytes=None, rotation_interval_s=None),
+    )
+    output_health = publisher.telemetry()
+    publisher.publish(FrameResult(timestamp=1.0, health={"output": output_health}))
+    assert publisher.wait_until_idle()
+    publisher.close()
+
+    health = json.loads(path.read_text(encoding="utf-8"))["health"]
+    assert health["output"] == output_health
+    assert "jsonl_writer" not in health
+
+
 @pytest.mark.parametrize(
     ("drop_policy", "expected_timestamps", "drop_counter"),
     [

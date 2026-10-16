@@ -94,6 +94,7 @@ class AsyncJsonlOutputPublisher(OutputPublisher):
         self.config = config or JsonlRecorderConfig()
         self.clock = clock
         self._line_encoder = _line_encoder or self._encode_line
+        self._line_encoder_is_ascii = _line_encoder is None
         self._condition = threading.Condition()
         self._close_lock = threading.Lock()
         self._queue: deque[FrameResult] = deque()
@@ -175,6 +176,7 @@ class AsyncJsonlOutputPublisher(OutputPublisher):
                 self._dropped_oldest + self._dropped_newest + self._dropped_writer_error + self._dropped_on_close
             )
             return {
+                "type": "jsonl",
                 "state": self._state,
                 "queue_capacity": self.config.queue_size,
                 "queue_depth": len(self._queue),
@@ -265,7 +267,9 @@ class AsyncJsonlOutputPublisher(OutputPublisher):
                     line = self._line_encoder(result)
                     if not line.endswith("\n"):
                         line += "\n"
-                    encoded_size = len(line.encode("utf-8"))
+                    encoded_size = (
+                        len(line) if self._line_encoder_is_ascii or line.isascii() else len(line.encode("utf-8"))
+                    )
                     if self._should_rotate(encoded_size):
                         self._rotate()
                     self._file.write(line)
@@ -318,7 +322,9 @@ class AsyncJsonlOutputPublisher(OutputPublisher):
         payload = frame_result_to_dict(result)
         if self.config.include_writer_telemetry:
             payload["health"] = dict(payload["health"])
-            payload["health"]["jsonl_writer"] = self.telemetry()
+            output_health = payload["health"].get("output")
+            if not (isinstance(output_health, dict) and output_health.get("type") == "jsonl"):
+                payload["health"]["jsonl_writer"] = self.telemetry()
         return json.dumps(payload, separators=(",", ":"))
 
     def _should_rotate(self, next_record_size: int) -> bool:
