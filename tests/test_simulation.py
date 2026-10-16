@@ -12,11 +12,18 @@ from northstar_vision.fiducials import OpenCVArucoFiducialDetector
 from northstar_vision.geometry import transform_matrix
 from northstar_vision.simulation import SimulationFrameSpec
 from northstar_vision.simulation_artifacts import write_simulation_corpus
-from northstar_vision.simulation_benchmark import run_simulation
+from northstar_vision.simulation_benchmark import SimulationRun, run_simulation
 from northstar_vision.simulation_cli import main
 from northstar_vision.simulation_metrics import SimulationThresholds, evaluate_simulation_gate
 from northstar_vision.simulation_renderer import SyntheticAprilTagRenderer
 from northstar_vision.simulation_scenarios import standard_simulation_frames, synthetic_wall_layout
+
+
+@pytest.fixture(scope="module")
+def standard_run() -> SimulationRun:
+    """Shared test-only result; every consumer below intentionally treats it as read-only."""
+
+    return run_simulation(load_profile("laptop"), repetitions=1, warmup_passes=0)
 
 
 def test_renderer_is_deterministic_and_changes_with_seed() -> None:
@@ -80,26 +87,46 @@ def test_renderer_culls_back_facing_tag() -> None:
     assert OpenCVArucoFiducialDetector().detect(frame.image) == []
 
 
-def test_standard_simulation_exercises_detection_pose_and_outlier_rejection() -> None:
-    run = run_simulation(load_profile("laptop"), repetitions=1, warmup_passes=0)
-    gate = evaluate_simulation_gate(run.summary, SimulationThresholds())
-    scenarios = {scenario["name"]: scenario for scenario in run.summary["scenarios"]}
+def test_standard_simulation_exercises_detection_pose_and_outlier_rejection(standard_run: SimulationRun) -> None:
+    gate = evaluate_simulation_gate(standard_run.summary, SimulationThresholds())
+    scenarios = {scenario["name"]: scenario for scenario in standard_run.summary["scenarios"]}
 
     assert gate["passed"] is True
-    assert run.summary["accuracy"]["recall"] == 1.0
-    assert run.summary["accuracy"]["precision"] == 1.0
-    assert run.summary["pose"]["solve_rate"] == 1.0
+    assert standard_run.summary["accuracy"]["recall"] == 1.0
+    assert standard_run.summary["accuracy"]["precision"] == 1.0
+    assert standard_run.summary["pose"]["solve_rate"] == 1.0
     assert scenarios["layout-outlier"]["expected_rejection_failures"] == 0
     assert scenarios["single-tag"]["pose_solve_rate"] is None
-    assert run.summary["evidence_kind"] == "synthetic"
-    assert run.summary["limitations"]
+    assert standard_run.summary["evidence_kind"] == "synthetic"
+    assert standard_run.summary["limitations"]
 
 
-def test_simulation_corpus_is_replay_compatible(tmp_path: Path) -> None:
+def test_simulation_run_constructor_remains_backward_compatible_and_corpus_reuse_is_validated(
+    standard_run: SimulationRun,
+) -> None:
+    legacy_run = SimulationRun(standard_run.frames, standard_run.tag_layout, standard_run.summary)
+    assert legacy_run.corpus is None
+
+    with pytest.raises(ValueError, match="reused simulation corpus does not match"):
+        run_simulation(
+            load_profile("laptop"),
+            seed=2027,
+            repetitions=1,
+            warmup_passes=0,
+            corpus=standard_run.corpus,
+        )
+
+
+def test_simulation_corpus_is_replay_compatible(tmp_path: Path, standard_run: SimulationRun) -> None:
     profile = load_profile("laptop")
-    run = run_simulation(profile, repetitions=1, warmup_passes=0)
 
-    artifacts = write_simulation_corpus(run.frames, tmp_path, profile, run.tag_layout, suite="standard")
+    artifacts = write_simulation_corpus(
+        standard_run.frames,
+        tmp_path,
+        profile,
+        standard_run.tag_layout,
+        suite="standard",
+    )
     manifest = load_corpus_manifest(artifacts["manifest"])
     replay_profile = load_profile(artifacts["profile"])
 
