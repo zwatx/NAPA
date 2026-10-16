@@ -429,9 +429,8 @@ def _detector_comparison(baseline: Mapping[str, Any], candidate: Mapping[str, An
     p50_speedup = _safe_ratio(baseline_timing["p50_ms"], candidate_timing["p50_ms"])
     p95_speedup = _safe_ratio(baseline_timing["p95_ms"], candidate_timing["p95_ms"])
     accuracy_equal = baseline["accuracy"] == candidate["accuracy"]
-    useful_latency_gain = (
-        (p50_speedup is not None and p50_speedup >= 1.10)
-        or (p95_speedup is not None and p95_speedup >= 1.15)
+    useful_latency_gain = (p50_speedup is not None and p50_speedup >= 1.10) or (
+        p95_speedup is not None and p95_speedup >= 1.15
     )
     return {
         "accuracy_equal": accuracy_equal,

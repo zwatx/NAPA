@@ -93,8 +93,10 @@ def _comparison(baseline: Mapping[str, Any], candidate: Mapping[str, Any]) -> di
     candidate_gate_passed = bool(candidate["gate"]["passed"])
     p50_speedup = _safe_ratio(base_timing["p50"], candidate_timing["p50"])
     p95_speedup = _safe_ratio(base_timing["p95"], candidate_timing["p95"])
-    useful_latency_gain = p50_speedup is not None and p95_speedup is not None and (
-        p50_speedup >= 1.05 or (p95_speedup >= 1.20 and p50_speedup >= 0.90)
+    useful_latency_gain = (
+        p50_speedup is not None
+        and p95_speedup is not None
+        and (p50_speedup >= 1.05 or (p95_speedup >= 1.20 and p50_speedup >= 0.90))
     )
     baseline_pose = baseline["pose"]
     candidate_pose = candidate["pose"]
