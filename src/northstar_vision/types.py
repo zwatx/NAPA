@@ -1,9 +1,20 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
+
+
+def health_state_fields(health: Mapping[str, Any]) -> dict[str, Any]:
+    """Return top-level health fields that represent immediate state transitions."""
+
+    return {
+        key: value
+        for key, value in health.items()
+        if key in {"connected", "state"} or key.endswith(("_available", "_connected", "_error", "_timed_out"))
+    }
 
 
 @dataclass(slots=True)

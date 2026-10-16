@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from time import perf_counter
 from typing import Any
 
+from .types import health_state_fields
+
 
 def normalize_angle_radians(value: float) -> float:
     """Normalize an angle to the half-open interval [-pi, pi)."""
@@ -105,6 +107,11 @@ class RobotYawSource(ABC):
     def health(self) -> dict[str, Any]:
         """Return source telemetry suitable for FrameResult.health."""
 
+    def health_state(self) -> dict[str, Any]:
+        """Return lightweight state fields sampled every frame."""
+
+        return health_state_fields(self.health())
+
     @abstractmethod
     def close(self) -> None:
         """Release source resources."""
@@ -123,6 +130,9 @@ class StaticRobotYawSource(RobotYawSource):
 
     def health(self) -> dict[str, Any]:
         return {"yaw_source": "static", "yaw_samples": 1, "yaw_connected": True}
+
+    def health_state(self) -> dict[str, Any]:
+        return {"yaw_connected": True}
 
     def close(self) -> None:
         return None
@@ -217,6 +227,9 @@ class NetworkTablesRobotYawSource(RobotYawSource):
             "yaw_latest_age_ms": latest_age_ms,
             "yaw_connected": bool(self.instance.isConnected()),
         }
+
+    def health_state(self) -> dict[str, Any]:
+        return {"yaw_connected": bool(self.instance.isConnected())}
 
     def close(self) -> None:
         if self.closed:

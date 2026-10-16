@@ -13,7 +13,7 @@ from .output import OutputPublisher
 from .overlay import draw_overlay
 from .prefilter import BlockSkipPrefilter
 from .solvers import CameraPoseSolver, SingleTagPoseSolver, TagAngleSolver, TrigDistanceSolver
-from .types import FrameResult
+from .types import FrameResult, health_state_fields
 
 
 class NorthstarVisionService:
@@ -53,6 +53,9 @@ class NorthstarVisionService:
         self.frame_source = frame_source or make_frame_source(profile, replay_path, loop_replay=loop_replay)
         self.frame_times: deque[float] = deque(maxlen=60)
         self.previous_publish_ms = 0.0
+        self._static_health = {"profile": self.profile.name, "platform": self.profile.platform}
+        self._detailed_health: dict[str, object] = {}
+        self._next_health_refresh_s = 0.0
         self.closed = False
 
     def process_next(self) -> bool:
@@ -108,10 +111,19 @@ class NorthstarVisionService:
         self.frame_times.append(solve_end)
         processing_ms = (solve_end - capture_end) * 1000.0
         frame_age_ms = max(0.0, (solve_end - capture_monotonic_s) * 1000.0)
-        source_health = self._source_health()
-        yaw_health = {} if self.yaw_source is None else self.yaw_source.health()
-        output_health = self.output.telemetry()
-        pose_health = self._pose_health()
+        if solve_end >= self._next_health_refresh_s:
+            self._detailed_health = {
+                "output": self.output.telemetry(),
+                **self._source_health(),
+                **({} if self.yaw_source is None else self.yaw_source.health()),
+            }
+            self._next_health_refresh_s = solve_end + 1.0
+        output_health = dict(self._detailed_health.get("output", {}))
+        output_health.update(self.output.health_state())
+        current_state = {
+            **self._component_state(self.frame_source),
+            **({} if self.yaw_source is None else self._component_state(self.yaw_source)),
+        }
         result = FrameResult(
             timestamp=timestamp,
             capture_monotonic_s=capture_monotonic_s,
@@ -131,15 +143,14 @@ class NorthstarVisionService:
                 "solve_ms": (solve_end - detection_end) * 1000.0,
                 "previous_publish_ms": self.previous_publish_ms,
                 "source_connected": True,
-                "profile": self.profile.name,
-                "platform": self.profile.platform,
                 "yaw_available": yaw_estimate is not None,
                 "yaw_sample_age_ms": None if yaw_estimate is None else yaw_estimate.sample_age_s * 1000.0,
                 "yaw_interpolated": False if yaw_estimate is None else yaw_estimate.interpolated,
+                **self._static_health,
+                **self._detailed_health,
+                **current_state,
                 "output": output_health,
-                "pose_solver": pose_health,
-                **source_health,
-                **yaw_health,
+                "pose_solver": self._pose_health(),
             },
         )
         publish_start = perf_counter()
@@ -189,6 +200,16 @@ class NorthstarVisionService:
     def _source_health(self) -> dict[str, object]:
         health = getattr(self.frame_source, "health", None)
         return {} if health is None else dict(health())
+
+    @staticmethod
+    def _component_state(component: object) -> dict[str, object]:
+        state = getattr(component, "health_state", None)
+        if state is not None:
+            return dict(state())
+        health = getattr(component, "health", None)
+        if health is None:
+            return {}
+        return health_state_fields(health())
 
     def _pose_health(self) -> dict[str, object]:
         diagnostics = self.camera_solver.last_diagnostics

@@ -3,6 +3,7 @@ from __future__ import annotations
 import numpy as np
 
 from northstar_vision import load_profile
+from northstar_vision.capture import FrameSource
 from northstar_vision.orientation import RobotYawSource, YawEstimate
 from northstar_vision.output import OutputPublisher
 from northstar_vision.service import NorthstarVisionService
@@ -20,7 +21,7 @@ class FrameSourceStub:
         if self.used:
             return False, 0.0, 0.0, None
         self.used = True
-        return True, 1000.0, 10.0, np.full((720, 1280, 3), 255, dtype=np.uint8)
+        return True, 1000.0, 10.0, np.full((1, 1, 3), 255, dtype=np.uint8)
 
     def health(self) -> dict[str, object]:
         return {"source_connected": True, "capture_overwritten_frames": 3}
@@ -59,6 +60,7 @@ class YawSourceStub(RobotYawSource):
 
 def test_service_aligns_yaw_and_merges_source_health() -> None:
     profile = load_profile("laptop")
+    profile.camera.width = profile.camera.height = 1
     source = FrameSourceStub()
     output = OutputStub()
     yaw = YawSourceStub()
@@ -71,3 +73,73 @@ def test_service_aligns_yaw_and_merges_source_health() -> None:
     assert output.results[0].health["yaw_interpolated"] is True
     assert output.results[0].health["capture_overwritten_frames"] == 3
     assert source.released and yaw.closed and output.closed
+
+
+def test_service_reports_state_transition_before_detailed_health_refresh() -> None:
+    class TransitionSource:
+        is_live = False
+
+        def __init__(self) -> None:
+            self.reads = 0
+            self.health_calls = 0
+
+        def read(self) -> tuple[bool, float, float, np.ndarray | None]:
+            self.reads += 1
+            if self.reads > 2:
+                return False, 0.0, 0.0, None
+            return True, float(self.reads), 10.0, np.full((1, 1, 3), 255, dtype=np.uint8)
+
+        def health(self) -> dict[str, object]:
+            self.health_calls += 1
+            return {"source_connected": True, "capture_backend": "test"}
+
+        def health_state(self) -> dict[str, object]:
+            return {"source_connected": self.reads == 1}
+
+        def release(self) -> None:
+            return None
+
+    profile = load_profile("laptop")
+    profile.camera.width = profile.camera.height = 1
+    source = TransitionSource()
+    output = OutputStub()
+    service = NorthstarVisionService(profile, output, frame_source=source)
+
+    service.run(max_frames=2)
+
+    assert [result.health["source_connected"] for result in output.results] == [True, False]
+    assert source.health_calls == 1
+    assert all(result.health["capture_backend"] == "test" for result in output.results)
+
+
+def test_legacy_frame_source_health_transition_remains_immediate() -> None:
+    class LegacySource(FrameSource):
+        def __init__(self) -> None:
+            self.reads = 0
+            self.health_calls = 0
+
+        def read(self) -> tuple[bool, float, float, np.ndarray | None]:
+            self.reads += 1
+            return True, float(self.reads), 10.0, np.full((1, 1, 3), 255, dtype=np.uint8)
+
+        def health(self) -> dict[str, object]:
+            self.health_calls += 1
+            return {"source_connected": self.reads == 1, "detail_generation": self.reads}
+
+        def release(self) -> None:
+            return None
+
+    profile = load_profile("laptop")
+    profile.camera.width = profile.camera.height = 1
+    source = LegacySource()
+    output = OutputStub()
+    service = NorthstarVisionService(profile, output, frame_source=source)
+
+    assert service.process_next()
+    service._next_health_refresh_s = float("inf")
+    assert service.process_next()
+    service.close()
+
+    assert [result.health["source_connected"] for result in output.results] == [True, False]
+    assert [result.health["detail_generation"] for result in output.results] == [1, 1]
+    assert source.health_calls == 3

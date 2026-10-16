@@ -202,6 +202,14 @@ class AsyncJsonlOutputPublisher(OutputPublisher):
                 "max_write_duration_ms": None if self._written == 0 else self._max_write_duration_ms,
             }
 
+    def health_state(self) -> dict[str, Any]:
+        with self._condition:
+            return {
+                "state": self._state,
+                "writer_error": self._writer_error,
+                "writer_thread_alive": self._thread.is_alive(),
+            }
+
     def wait_until_idle(self, timeout_s: float = 5.0) -> bool:
         """Wait until all currently queued records finish, primarily for tests/tools."""
 

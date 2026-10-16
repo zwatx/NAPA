@@ -13,6 +13,7 @@ import cv2
 import numpy as np
 
 from .config import PlatformProfile
+from .types import health_state_fields
 
 LOGGER = logging.getLogger(__name__)
 
@@ -32,6 +33,11 @@ class FrameSource(ABC):
         """Return JSON-compatible source health data."""
 
         return {"source_connected": True}
+
+    def health_state(self) -> dict[str, Any]:
+        """Return lightweight state fields sampled every frame."""
+
+        return health_state_fields(self.health())
 
 
 class VideoCaptureLike(Protocol):
@@ -183,6 +189,15 @@ class OpenCVCameraSource(FrameSource):
                 "capture_negotiated": dict(self._negotiated_properties),
                 "capture_backend": self._negotiated_backend,
                 "capture_fourcc": self._negotiated_fourcc,
+                "capture_worker_alive": self._thread.is_alive(),
+                "capture_shutdown_timed_out": self._shutdown_timed_out,
+            }
+
+    def health_state(self) -> dict[str, Any]:
+        with self._condition:
+            return {
+                "source_connected": self._connected,
+                "capture_last_error": self._last_error,
                 "capture_worker_alive": self._thread.is_alive(),
                 "capture_shutdown_timed_out": self._shutdown_timed_out,
             }

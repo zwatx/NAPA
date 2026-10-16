@@ -11,7 +11,13 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from .geometry import rotation_matrix_to_quaternion_wxyz
-from .types import CameraPoseObservation, FrameResult, PoseSolveDiagnostics, SingleTagPoseObservation
+from .types import (
+    CameraPoseObservation,
+    FrameResult,
+    PoseSolveDiagnostics,
+    SingleTagPoseObservation,
+    health_state_fields,
+)
 
 if TYPE_CHECKING:
     from .recording import JsonlRecorderConfig
@@ -178,6 +184,11 @@ class OutputPublisher(ABC):
         """Return JSON-compatible output health data."""
 
         return {}
+
+    def health_state(self) -> dict[str, Any]:
+        """Return lightweight state fields sampled every frame."""
+
+        return health_state_fields(self.telemetry())
 
 
 class NullOutputPublisher(OutputPublisher):

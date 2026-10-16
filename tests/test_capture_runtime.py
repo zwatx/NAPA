@@ -79,7 +79,7 @@ class _FakeCapture:
 
 
 def _frame(value: int) -> np.ndarray:
-    return np.full((720, 1280, 3), value, dtype=np.uint8)
+    return np.full((1, 1, 3), value, dtype=np.uint8)
 
 
 def _wait_until(predicate: Callable[[], bool], timeout_s: float = 1.0) -> None:
