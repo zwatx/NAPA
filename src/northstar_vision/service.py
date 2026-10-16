@@ -76,21 +76,24 @@ class NorthstarVisionService:
         detection_end = perf_counter()
         yaw_estimate = None if self.yaw_source is None else self.yaw_source.yaw_at(capture_monotonic_s)
         single_poses = []
-        tag_angles = []
-        trig_poses = []
+        solved_observations = []
         for observation in observations:
             single = self.single_solver.solve(observation, self.profile.camera, self.profile.tag_size_m)
             if single is None:
                 continue
             single_poses.append(single)
-            tag_angle = self.angle_solver.solve(observation, self.profile.camera, single)
-            tag_angles.append(tag_angle)
-            if yaw_estimate is not None:
+            solved_observations.append(observation)
+        tag_angles = self.angle_solver.solve_many(solved_observations, self.profile.camera, single_poses)
+        trig_poses = []
+        if yaw_estimate is not None:
+            field_rotation = self.trig_solver.yaw_rotation(yaw_estimate.yaw_rad)
+            for tag_angle in tag_angles:
                 trig = self.trig_solver.solve(
                     tag_angle,
                     self.profile.camera,
                     self.profile.tag_layout,
                     yaw_estimate.yaw_rad,
+                    field_rotation=field_rotation,
                 )
                 if trig is not None:
                     trig_poses.append(trig)

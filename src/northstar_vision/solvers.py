@@ -470,6 +470,43 @@ class TagAngleSolver:
             camera_to_tag_translation=opencv_translation_to_wpilib(single_tag_pose.pose_0_tvec),
         )
 
+    def solve_many(
+        self,
+        observations: Sequence[FiducialImageObservation],
+        camera: CameraConfig,
+        single_tag_poses: Sequence[SingleTagPoseObservation],
+    ) -> list[TagAngleObservation]:
+        """Build tag-angle observations with one undistortion call."""
+
+        if len(observations) != len(single_tag_poses):
+            raise ValueError("observations and single_tag_poses must have the same length")
+        if any(
+            observation.tag_id != single.tag_id
+            for observation, single in zip(observations, single_tag_poses, strict=True)
+        ):
+            raise ValueError("each observation must match the paired single_tag_pose tag_id")
+        if not observations:
+            return []
+        all_corners = np.concatenate(
+            [np.asarray(observation.corners, dtype=np.float64).reshape(4, 2) for observation in observations]
+        )
+        all_angles = undistorted_corner_angles(
+            all_corners,
+            camera.calibration_matrix,
+            camera.distortion_coefficients,
+        ).reshape(len(observations), 4, 2)
+        return [
+            TagAngleObservation(
+                tag_id=observation.tag_id,
+                corner_angles=corner_angles,
+                center_tx=float(np.mean(corner_angles[:, 0])),
+                center_ty=float(np.mean(corner_angles[:, 1])),
+                distance=single.distance,
+                camera_to_tag_translation=opencv_translation_to_wpilib(single.pose_0_tvec),
+            )
+            for observation, single, corner_angles in zip(observations, single_tag_poses, all_angles, strict=True)
+        ]
+
 
 class TrigDistanceSolver:
     def solve(
@@ -478,6 +515,8 @@ class TrigDistanceSolver:
         camera: CameraConfig,
         tag_layout: dict[int, np.ndarray],
         robot_yaw_rad: float,
+        *,
+        field_rotation: np.ndarray | None = None,
     ) -> TrigPoseObservation | None:
         field_to_tag = tag_layout.get(tag_angle.tag_id)
         if field_to_tag is None:
@@ -485,11 +524,8 @@ class TrigDistanceSolver:
 
         camera_to_tag = np.asarray(tag_angle.camera_to_tag_translation, dtype=np.float64).reshape(3)
         robot_to_tag = camera.robot_to_camera[:3, 3] + camera.robot_to_camera[:3, :3] @ camera_to_tag
-        cosine, sine = math.cos(robot_yaw_rad), math.sin(robot_yaw_rad)
-        field_rotation = np.array(
-            [[cosine, -sine, 0.0], [sine, cosine, 0.0], [0.0, 0.0, 1.0]],
-            dtype=np.float64,
-        )
+        if field_rotation is None:
+            field_rotation = self.yaw_rotation(robot_yaw_rad)
         field_to_robot_translation = field_to_tag[:3, 3] - field_rotation @ robot_to_tag
         robot_pose = np.array(
             [field_to_robot_translation[0], field_to_robot_translation[1], robot_yaw_rad],
@@ -500,4 +536,12 @@ class TrigDistanceSolver:
             robot_pose=robot_pose,
             camera_to_tag_translation=camera_to_tag.copy(),
             distance=tag_angle.distance,
+        )
+
+    @staticmethod
+    def yaw_rotation(robot_yaw_rad: float) -> np.ndarray:
+        cosine, sine = math.cos(robot_yaw_rad), math.sin(robot_yaw_rad)
+        return np.array(
+            [[cosine, -sine, 0.0], [sine, cosine, 0.0], [0.0, 0.0, 1.0]],
+            dtype=np.float64,
         )

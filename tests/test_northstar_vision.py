@@ -245,6 +245,54 @@ def test_tag_angle_solver_uses_normalized_coordinates_and_wpilib_translation() -
     assert angles.camera_to_tag_translation == pytest.approx([1.0, -1.0, 0.0], abs=0.02)
 
 
+def test_tag_angle_solver_batches_corner_undistortion(monkeypatch: pytest.MonkeyPatch) -> None:
+    profile = load_profile("laptop")
+    corners, _ = cv2.projectPoints(
+        tag_object_points(profile.tag_size_m),
+        np.zeros((3, 1), dtype=np.float64),
+        np.array([[0.0], [0.0], [2.0]], dtype=np.float64),
+        profile.camera.calibration_matrix,
+        profile.camera.distortion_coefficients,
+    )
+    observations = [FiducialImageObservation(tag_id, corners.reshape(4, 2)) for tag_id in (1, 2)]
+    singles = [
+        SingleTagPoseSolver().solve(observation, profile.camera, profile.tag_size_m) for observation in observations
+    ]
+    assert all(single is not None for single in singles)
+    calls = 0
+    original = undistorted_corner_angles
+
+    def counted(*args: object, **kwargs: object) -> np.ndarray:
+        nonlocal calls
+        calls += 1
+        return original(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr("northstar_vision.solvers.undistorted_corner_angles", counted)
+
+    results = TagAngleSolver().solve_many(observations, profile.camera, singles)  # type: ignore[arg-type]
+
+    assert [result.tag_id for result in results] == [1, 2]
+    assert calls == 1
+
+
+def test_tag_angle_solver_rejects_mismatched_pose_pair() -> None:
+    profile = load_profile("laptop")
+    corners, _ = cv2.projectPoints(
+        tag_object_points(profile.tag_size_m),
+        np.zeros((3, 1), dtype=np.float64),
+        np.array([[0.0], [0.0], [2.0]], dtype=np.float64),
+        profile.camera.calibration_matrix,
+        profile.camera.distortion_coefficients,
+    )
+    observation = FiducialImageObservation(1, corners.reshape(4, 2))
+    single = SingleTagPoseSolver().solve(observation, profile.camera, profile.tag_size_m)
+    assert single is not None
+    single.tag_id = 2
+
+    with pytest.raises(ValueError, match="paired single_tag_pose tag_id"):
+        TagAngleSolver().solve_many([observation], profile.camera, [single])
+
+
 def test_calibration_angle_helper_matches_centered_tag() -> None:
     profile = load_profile("laptop")
     corners = np.array([[600.0, 320.0], [680.0, 320.0], [680.0, 400.0], [600.0, 400.0]])
