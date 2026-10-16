@@ -110,6 +110,58 @@ def test_cli_lists_and_validates_bundled_profiles(capsys: pytest.CaptureFixture[
     assert "is valid" in capsys.readouterr().out
 
 
+def test_cli_lists_profiles_without_loading_opencv_config(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from northstar_vision import cli
+
+    original_import = cli.import_module
+
+    def guarded_import(name: str, *args: object, **kwargs: object) -> object:
+        if name == "cv2":
+            raise ModuleNotFoundError("No module named 'cv2'", name="cv2")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(cli, "import_module", guarded_import)
+    assert main(["--list-profiles"]) == 0
+    assert capsys.readouterr().out.splitlines() == ["laptop", "raspi"]
+    assert main(["--check-config"]) == 0
+    assert "is valid" in capsys.readouterr().out
+    assert not caplog.text
+
+
+def test_cli_constructor_rollback_closes_output_when_yaw_close_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    from northstar_vision import orientation, output, service
+
+    class FailingYaw:
+        def close(self) -> None:
+            raise RuntimeError("yaw close failed")
+
+    class TrackingOutput(OutputPublisher):
+        def __init__(self) -> None:
+            self.closed = False
+
+        def publish(self, result: FrameResult) -> None:
+            del result
+
+        def close(self) -> None:
+            self.closed = True
+
+    tracking_output = TrackingOutput()
+    monkeypatch.setattr(output, "make_output_publisher", lambda *_args, **_kwargs: tracking_output)
+    monkeypatch.setattr(orientation, "NetworkTablesRobotYawSource", lambda *_args, **_kwargs: FailingYaw())
+
+    def fail_service(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("service setup failed")
+
+    monkeypatch.setattr(service, "NorthstarVisionService", fail_service)
+
+    assert main(["--output", "none", "--robot-yaw-topic", "/RobotState/yaw"]) == 1
+    assert tracking_output.closed
+
+
 def test_profile_validation_rejects_unknown_output_mode(tmp_path: Path) -> None:
     source = resources.files("northstar_vision.profiles").joinpath("laptop.json")
     data = json.loads(source.read_text(encoding="utf-8"))

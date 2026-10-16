@@ -4,15 +4,28 @@ import argparse
 import logging
 import math
 from collections.abc import Sequence
-from dataclasses import replace
+from importlib import import_module, resources
 
-from . import __version__
-from .config import ProfileError, available_profiles, load_profile
-from .orientation import NetworkTablesRobotYawSource
-from .output import make_output_publisher
-from .service import NorthstarVisionService
+from . import _OPENCV_INSTALL_HINT
+from ._version import __version__
 
 LOGGER = logging.getLogger(__name__)
+
+
+def _available_profiles() -> tuple[str, ...]:
+    profile_root = resources.files("northstar_vision.profiles")
+    return tuple(
+        sorted(item.name.removesuffix(".json") for item in profile_root.iterdir() if item.name.endswith(".json"))
+    )
+
+
+def _load_config_module() -> object:
+    try:
+        return import_module(".config", __package__)
+    except ModuleNotFoundError as exc:
+        if exc.name == "cv2":
+            raise RuntimeError(_OPENCV_INSTALL_HINT) from exc
+        raise
 
 
 def _positive_int(value: str) -> int:
@@ -145,13 +158,32 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     logging.basicConfig(level=getattr(logging, args.log_level), format="%(levelname)s %(name)s: %(message)s")
     if args.list_profiles:
-        print("\n".join(available_profiles()))
+        print("\n".join(_available_profiles()))
         return 0
+    try:
+        config = _load_config_module()
+    except RuntimeError as exc:
+        LOGGER.error("%s", exc)
+        return 1
+    ProfileError = config.ProfileError  # type: ignore[attr-defined]
+    load_profile = config.load_profile  # type: ignore[attr-defined]
+
     try:
         profile = load_profile(args.profile)
         if args.check_config:
             print(f"Profile {profile.name!r} is valid ({profile.camera.width}x{profile.camera.height})")
             return 0
+        from dataclasses import replace
+
+        try:
+            from .orientation import NetworkTablesRobotYawSource
+            from .output import NTOutputPublisher, make_output_publisher
+            from .service import NorthstarVisionService
+        except ModuleNotFoundError as exc:
+            if exc.name == "cv2":
+                raise RuntimeError(_OPENCV_INSTALL_HINT) from exc
+            raise
+
         if args.enable_skip_scan:
             profile.skip_scan.enabled = True
         elif args.disable_skip_scan:
@@ -210,6 +242,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 jsonl_config=jsonl_config,
             )
             if yaw_topic:
+                shared_nt = output if isinstance(output, NTOutputPublisher) else None
                 yaw_source = NetworkTablesRobotYawSource(
                     profile.device_id,
                     nt_server,
@@ -217,6 +250,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                     max_age_s=yaw_max_age_s,
                     queue_size=yaw_queue_size,
                     server_port=nt_server_port,
+                    ntcore_module=None if shared_nt is None else shared_nt.ntcore,
+                    instance=None if shared_nt is None else shared_nt.instance,
                 )
             service = NorthstarVisionService(
                 profile,
@@ -228,10 +263,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                 yaw_source=yaw_source,
             )
         except BaseException:
-            if yaw_source is not None:
-                yaw_source.close()
-            if output is not None:
-                output.close()
+            try:
+                if yaw_source is not None:
+                    yaw_source.close()
+            finally:
+                if output is not None:
+                    output.close()
             raise
         service.run(max_frames=args.max_frames)
     except ProfileError as exc:
