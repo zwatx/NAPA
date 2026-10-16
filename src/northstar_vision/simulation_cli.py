@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import math
 import sys
 from collections.abc import Mapping, Sequence
@@ -11,9 +10,9 @@ from typing import Any
 
 import cv2
 
-from .benchmark import write_benchmark_summary
+from .benchmark import serialize_benchmark_summary, write_benchmark_summary_text
 from .config import PlatformProfile, ProfileError, load_profile
-from .fiducials import OpenCVArucoFiducialDetector
+from .fiducials import OpenCVArucoFiducialDetector, make_apriltag_detector
 from .prefilter import BlockSkipPrefilter
 from .simulation_artifacts import write_simulation_corpus
 from .simulation_benchmark import run_simulation
@@ -68,7 +67,14 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _candidate_detector(profile: PlatformProfile, candidate: str) -> OpenCVArucoFiducialDetector:
+def _candidate_detector(
+    profile: PlatformProfile,
+    candidate: str,
+    *,
+    layout_tag_ids: Sequence[int] | None = None,
+) -> OpenCVArucoFiducialDetector:
+    if candidate in {"aruco3", "layout-restricted"}:
+        return make_apriltag_detector(candidate, layout_tag_ids=layout_tag_ids)
     if candidate == "subpixel-corners":
         parameters = cv2.aruco.DetectorParameters()
         parameters.cornerRefinementMethod = cv2.aruco.CORNER_REFINE_SUBPIX
@@ -85,9 +91,11 @@ def _comparison(baseline: Mapping[str, Any], candidate: Mapping[str, Any]) -> di
     accuracy_equal = baseline["accuracy"] == candidate["accuracy"]
     pose_equal = baseline["pose"]["solved"] == candidate["pose"]["solved"]
     candidate_gate_passed = bool(candidate["gate"]["passed"])
-    p50_speedup = base_timing["p50"] / candidate_timing["p50"]
-    p95_speedup = base_timing["p95"] / candidate_timing["p95"]
-    useful_latency_gain = p50_speedup >= 1.05 or (p95_speedup >= 1.20 and p50_speedup >= 0.90)
+    p50_speedup = _safe_ratio(base_timing["p50"], candidate_timing["p50"])
+    p95_speedup = _safe_ratio(base_timing["p95"], candidate_timing["p95"])
+    useful_latency_gain = p50_speedup is not None and p95_speedup is not None and (
+        p50_speedup >= 1.05 or (p95_speedup >= 1.20 and p50_speedup >= 0.90)
+    )
     baseline_pose = baseline["pose"]
     candidate_pose = candidate["pose"]
     return {
@@ -96,16 +104,22 @@ def _comparison(baseline: Mapping[str, Any], candidate: Mapping[str, Any]) -> di
         "candidate_gate_passed": candidate_gate_passed,
         "processing_p50_speedup": p50_speedup,
         "processing_p95_speedup": p95_speedup,
-        "max_translation_error_improvement": (
-            baseline_pose["translation_error_m"]["max"] / candidate_pose["translation_error_m"]["max"]
+        "max_translation_error_improvement": _safe_ratio(
+            baseline_pose["translation_error_m"]["max"],
+            candidate_pose["translation_error_m"]["max"],
         ),
-        "max_rotation_error_improvement": (
-            baseline_pose["rotation_error_deg"]["max"] / candidate_pose["rotation_error_deg"]["max"]
+        "max_rotation_error_improvement": _safe_ratio(
+            baseline_pose["rotation_error_deg"]["max"],
+            candidate_pose["rotation_error_deg"]["max"],
         ),
         "eligible_for_hardware_validation": (
             accuracy_equal and pose_equal and candidate_gate_passed and useful_latency_gain
         ),
     }
+
+
+def _safe_ratio(numerator: float, denominator: float) -> float | None:
+    return None if denominator == 0.0 else numerator / denominator
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -129,17 +143,19 @@ def main(argv: Sequence[str] | None = None) -> int:
             warmup_passes=args.warmup_passes,
         )
         baseline.summary["gate"] = evaluate_simulation_gate(baseline.summary, thresholds)
+        # This corpus is a replaceable generated batch. Keep each publish atomic, but avoid an fsync barrier per file.
         artifacts = write_simulation_corpus(
             baseline.frames,
             args.output_dir,
             profile,
             baseline.tag_layout,
             suite=args.suite,
+            durable=False,
         )
         baseline.summary["artifacts"] = {name: str(path) for name, path in artifacts.items()}
         if args.compare_optimizations:
             comparisons: dict[str, object] = {}
-            for candidate_name in ("subpixel-corners", "skip-scan"):
+            for candidate_name in ("aruco3", "layout-restricted", "subpixel-corners", "skip-scan"):
                 candidate = run_simulation(
                     profile,
                     suite=args.suite,
@@ -147,7 +163,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                     supersample=args.supersample,
                     repetitions=args.repetitions,
                     warmup_passes=args.warmup_passes,
-                    detector=_candidate_detector(profile, candidate_name),
+                    detector=_candidate_detector(
+                        profile,
+                        candidate_name,
+                        layout_tag_ids=tuple(baseline.tag_layout),
+                    ),
+                    corpus=baseline.corpus,
                 )
                 candidate.summary["gate"] = evaluate_simulation_gate(candidate.summary, thresholds)
                 comparisons[candidate_name] = {
@@ -157,12 +178,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             baseline.summary["optimization_comparisons"] = comparisons
         report_path = Path(args.output_dir).expanduser().resolve() / "simulation-report.json"
         baseline.summary["artifacts"]["report"] = str(report_path)
-        write_benchmark_summary(baseline.summary, report_path, pretty=True)
-        print(
-            json.dumps(
-                baseline.summary, indent=2 if args.pretty else None, separators=None if args.pretty else (",", ":")
-            )
-        )
+        report_text = serialize_benchmark_summary(baseline.summary, pretty=True)
+        # The report is regenerated with the corpus, so atomic replacement is sufficient here as well.
+        write_benchmark_summary_text(report_text, report_path, durable=False)
+        stdout_text = report_text if args.pretty else serialize_benchmark_summary(baseline.summary)
+        print(stdout_text)
     except (cv2.error, OSError, ProfileError, RuntimeError, ValueError) as exc:
         print(f"northstar-simulate: error: {exc}", file=sys.stderr)
         return 2

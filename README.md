@@ -238,10 +238,11 @@ northstar-vision --profile reports/synthetic/simulation-profile.json \
 northstar-benchmark reports/synthetic/corpus.json --repetitions 5
 ```
 
-With `--compare-optimizations`, the report measures subpixel corner refinement and skip-scan against identical seeded
-frames. A candidate is only marked for hardware follow-up when its gates, accuracy, and pose solve counts match, plus
-it improves median processing by at least 5% or p95 by at least 20% without regressing median by more than 10%. This
-comparison does not silently change the production detector configuration.
+With `--compare-optimizations`, the report measures ArUco3, a dictionary restricted to the synthetic field layout,
+subpixel corner refinement, and skip-scan against identical seeded frames. A candidate is only marked for hardware
+follow-up when its gates, accuracy, and pose solve counts match, plus it improves median processing by at least 5% or
+p95 by at least 20% without regressing median by more than 10%. This comparison does not change the production detector
+configuration, and synthetic results do not qualify a candidate for deployment without physical-camera validation.
 
 ```mermaid
 flowchart LR

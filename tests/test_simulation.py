@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 
 import northstar_vision.simulation_artifacts as simulation_artifacts_module
+import northstar_vision.simulation_cli as simulation_cli_module
 from northstar_vision.benchmark import load_corpus_manifest
 from northstar_vision.config import load_profile
 from northstar_vision.fiducials import OpenCVArucoFiducialDetector
@@ -173,3 +174,56 @@ def test_simulation_cli_writes_report_and_returns_failed_gate(
     assert report["gate"]["passed"] is False
     assert str(tmp_path / "simulation-report.json") == report["artifacts"]["report"]
     assert json.loads(capsys.readouterr().out)["gate"]["passed"] is False
+
+
+def test_simulation_cli_compares_detector_candidates_without_changing_default(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    exit_code = main(
+        [
+            "--output-dir",
+            str(tmp_path),
+            "--repetitions",
+            "1",
+            "--warmup-passes",
+            "0",
+            "--compare-optimizations",
+        ]
+    )
+
+    assert exit_code == 0
+    report = json.loads(capsys.readouterr().out)
+    comparisons = report["optimization_comparisons"]
+    assert {"aruco3", "layout-restricted"} <= comparisons.keys()
+    assert comparisons["aruco3"]["assessment"]["accuracy_equal"] is True
+    assert comparisons["layout-restricted"]["assessment"]["accuracy_equal"] is True
+
+
+def test_simulation_comparison_handles_exact_zero_metrics() -> None:
+    baseline = {
+        "timing": {"processing_ms": {"p50": 1.0, "p95": 2.0}},
+        "accuracy": {"recall": 1.0},
+        "pose": {
+            "solved": 1,
+            "translation_error_m": {"max": 0.0},
+            "rotation_error_deg": {"max": 0.0},
+        },
+    }
+    candidate = {
+        "timing": {"processing_ms": {"p50": 0.0, "p95": 0.0}},
+        "accuracy": {"recall": 1.0},
+        "pose": {
+            "solved": 1,
+            "translation_error_m": {"max": 0.0},
+            "rotation_error_deg": {"max": 0.0},
+        },
+        "gate": {"passed": True},
+    }
+
+    assessment = simulation_cli_module._comparison(baseline, candidate)
+
+    assert assessment["processing_p50_speedup"] is None
+    assert assessment["processing_p95_speedup"] is None
+    assert assessment["max_translation_error_improvement"] is None
+    assert assessment["max_rotation_error_improvement"] is None
+    assert assessment["eligible_for_hardware_validation"] is False
