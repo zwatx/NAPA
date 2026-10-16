@@ -89,7 +89,7 @@ class Robust36h11Detector:
         start = perf_counter()
         gray = self._normalize_gray(gray_image)
         if candidate_corners is None:
-            _binary, dark_mask, edges = self._preprocess(gray)
+            dark_mask, edges = self._preprocess(gray)
             candidates = self._generate_candidates(dark_mask, edges, gray.shape)
         else:
             candidates = [
@@ -122,7 +122,7 @@ class Robust36h11Detector:
             arr = np.clip(arr, 0, 255).astype(np.uint8)
         return arr
 
-    def _preprocess(self, gray: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def _preprocess(self, gray: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         blurred = cv2.GaussianBlur(gray, (3, 3), 0)
         block_size = max(15, ((min(gray.shape) // 24) | 1))
         block_size = min(block_size, 61)
@@ -134,11 +134,10 @@ class Robust36h11Detector:
             block_size,
             5,
         )
-        dark = (binary == 0).astype(np.uint8) * 255
-        close_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-        dark = cv2.morphologyEx(dark, cv2.MORPH_CLOSE, close_kernel)
+        dark = cv2.bitwise_not(binary)
+        cv2.morphologyEx(dark, cv2.MORPH_CLOSE, self._close_kernel, dst=dark)
         edges = cv2.Canny(blurred, 40, 120)
-        return binary, dark, edges
+        return dark, edges
 
     def _generate_candidates(
         self,
@@ -161,16 +160,18 @@ class Robust36h11Detector:
                 rect = cv2.minAreaRect(hull)
                 box = cv2.boxPoints(rect).astype(np.float32)
                 if self._accept_quad(box, image_shape) and not self._near_duplicate(box, seen):
-                    seen.append(box)
-                    candidates.append(_Candidate(self._order_points(box), source, hull_area))
+                    ordered = self._order_points(box)
+                    seen.append(ordered)
+                    candidates.append(_Candidate(ordered, source, hull_area))
 
                 peri = cv2.arcLength(hull, True)
                 approx = cv2.approxPolyDP(hull, 0.035 * peri, True)
                 if len(approx) == 4:
                     quad = approx.reshape(4, 2).astype(np.float32)
                     if self._accept_quad(quad, image_shape) and not self._near_duplicate(quad, seen):
-                        seen.append(quad)
-                        candidates.append(_Candidate(self._order_points(quad), f"{source}-hull", hull_area))
+                        ordered = self._order_points(quad)
+                        seen.append(ordered)
+                        candidates.append(_Candidate(ordered, f"{source}-hull", hull_area))
 
         candidates.sort(key=lambda c: c.area, reverse=True)
         return candidates[: self.max_candidates]
@@ -207,7 +208,9 @@ class Robust36h11Detector:
 
         bit_margins = np.abs(bit_vals - threshold)
         bit_mask = bit_margins >= min_margin
-        if int(bit_mask.sum()) < TAG36H11.nbits - 10:
+        reliable_bits = int(bit_mask.sum())
+        erased_bits = TAG36H11.nbits - reliable_bits
+        if erased_bits > self.max_erased_bits or reliable_bits < TAG36H11.nbits - 10:
             return None
         bit_values = (bit_vals > threshold).astype(np.uint8)
         observed_code, observed_mask = make_code_from_bits(bit_values, bit_mask)
@@ -221,13 +224,10 @@ class Robust36h11Detector:
             return None
 
         tag_id, hamming, rotation, decision_margin = decoded
-        erased_bits = TAG36H11.nbits - int(bit_mask.sum())
-        if erased_bits > self.max_erased_bits:
-            return None
         occluded = border_erased + erased_bits + hamming
         total_anchors = border_total + TAG36H11.nbits
         occlusion_score = occluded / max(1, total_anchors)
-        used_anchor_count = border_used + int(bit_mask.sum())
+        used_anchor_count = border_used + reliable_bits
         if used_anchor_count < self.min_anchor_count:
             return None
         if occlusion_score > self.max_occlusion_ratio:
@@ -313,17 +313,9 @@ class Robust36h11Detector:
         side_lengths = np.linalg.norm(np.roll(projected_corners, -1, axis=0) - projected_corners, axis=1)
         cell_span = max(6.0, float(np.median(side_lengths)) / 8.0)
         edge_sets: list[list[np.ndarray]] = [[], [], [], []]
-        for edge_pt, inward, side in self._edge_points:
-            p0 = self._project_points(edge_pt.reshape(1, 2), h)[0]
-            p1 = self._project_points((edge_pt + inward * 0.35).reshape(1, 2), h)[0]
-            normal = p1 - p0
-            norm = float(np.linalg.norm(normal))
-            if norm < 1e-6:
-                continue
-            normal /= norm
-            found = self._search_edge(gray, p0, normal, cell_span=cell_span)
-            if found is not None:
-                edge_sets[side].append(found)
+        points, valid = self._search_edges(gray, h, cell_span=cell_span)
+        for found, side in zip(points[valid], self._edge_sides[valid]):
+            edge_sets[int(side)].append(found)
         return edge_sets
 
     def _fit_line(self, points: list[np.ndarray]) -> tuple[np.ndarray, np.ndarray] | None:
@@ -366,12 +358,12 @@ class Robust36h11Detector:
         return 0.65 <= area_ratio <= 1.45
 
     def _sample_all(self, gray: np.ndarray, h: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray] | None:
-        black_pts = self._project_points(self._black_border_points, h)
-        white_pts = self._project_points(self._white_border_points, h)
-        bit_pts = self._project_points(TAG36H11.bit_centers, h)
-        black_vals = self._bilinear(gray, black_pts)
-        white_vals = self._bilinear(gray, white_pts)
-        bit_vals = self._bilinear(gray, bit_pts)
+        values = self._bilinear(gray, self._project_points(self._sample_points, h), keep_nan=True)
+        black_vals = values[: self._black_sample_end]
+        white_vals = values[self._black_sample_end : self._white_sample_end]
+        bit_vals = values[self._white_sample_end :]
+        black_vals = black_vals[np.isfinite(black_vals)]
+        white_vals = white_vals[np.isfinite(white_vals)]
         if black_vals.size < 10 or white_vals.size < 10 or bit_vals.size < TAG36H11.nbits:
             return None
         return black_vals, white_vals, bit_vals
@@ -382,18 +374,9 @@ class Robust36h11Detector:
         projected_corners = self._project_points(self._canonical_corners, h)
         side_lengths = np.linalg.norm(np.roll(projected_corners, -1, axis=0) - projected_corners, axis=1)
         cell_span = max(6.0, float(np.median(side_lengths)) / 8.0)
-        for edge_pt, inward, _side in self._edge_points:
-            p0 = self._project_points(edge_pt.reshape(1, 2), h)[0]
-            p1 = self._project_points((edge_pt + inward * 0.35).reshape(1, 2), h)[0]
-            normal = p1 - p0
-            norm = float(np.linalg.norm(normal))
-            if norm < 1e-6:
-                continue
-            normal /= norm
-            found = self._search_edge(gray, p0, normal, cell_span=cell_span)
-            if found is not None:
-                canonical.append(edge_pt)
-                observed.append(found)
+        points, valid = self._search_edges(gray, h, cell_span=cell_span)
+        canonical.extend(self._edge_canonical[valid])
+        observed.extend(points[valid])
         if len(observed) < 8:
             return None, len(observed)
         h_refined, status = cv2.findHomography(
@@ -407,27 +390,29 @@ class Robust36h11Detector:
             return None, int(status.sum())
         return h_refined.astype(np.float64), len(observed)
 
-    def _search_edge(
-        self,
-        gray: np.ndarray,
-        point: np.ndarray,
-        inward_normal: np.ndarray,
-        *,
-        cell_span: float,
-    ) -> np.ndarray | None:
-        offsets = np.linspace(-0.9 * cell_span, 0.9 * cell_span, 31)
-        pts = point[None, :] + offsets[:, None] * inward_normal[None, :]
-        vals = self._bilinear(gray, pts, keep_nan=True)
-        if np.isnan(vals).sum() > len(vals) // 3:
-            return None
+    def _search_edges(self, gray: np.ndarray, h: np.ndarray, *, cell_span: float) -> tuple[np.ndarray, np.ndarray]:
+        projected = self._project_points(
+            np.concatenate((self._edge_canonical, self._edge_canonical + self._edge_inward * 0.35)), h
+        )
+        points = projected[: len(self._edge_canonical)]
+        normals = projected[len(self._edge_canonical) :] - points
+        norms = np.linalg.norm(normals, axis=1)
+        usable_normals = norms >= 1e-6
+        normals[usable_normals] /= norms[usable_normals, None]
+        search_points = points[:, None, :] + (self._edge_offsets * cell_span)[None, :, None] * normals[:, None, :]
+        vals = self._bilinear(gray, search_points.reshape(-1, 2), keep_nan=True).reshape(len(points), -1)
+        valid = usable_normals & (np.isnan(vals).sum(axis=1) <= vals.shape[1] // 3)
         # Moving along the inward normal, the correct outer edge should be a
         # white-to-black transition. This avoids snapping to internal payload
         # edges that happen to have a stronger opposite-polarity gradient.
-        diffs = vals[:-1] - vals[1:]
-        if diffs.size == 0 or float(np.nanmax(diffs)) < 10:
-            return None
-        idx = int(np.nanargmax(diffs))
-        return ((pts[idx] + pts[idx + 1]) * 0.5).astype(np.float32)
+        diffs = vals[:, :-1] - vals[:, 1:]
+        safe_diffs = np.where(np.isnan(diffs), -np.inf, diffs)
+        indices = np.argmax(safe_diffs, axis=1)
+        strengths = safe_diffs[np.arange(len(points)), indices]
+        valid &= strengths >= 10
+        rows = np.arange(len(points))
+        found = (search_points[rows, indices] + search_points[rows, indices + 1]) * 0.5
+        return found.astype(np.float32), valid
 
     def _estimate_pose(
         self,
@@ -526,26 +511,24 @@ class Robust36h11Detector:
 
     def _near_duplicate(self, quad: np.ndarray, seen: list[np.ndarray]) -> bool:
         ordered = self._order_points(quad)
+        scale = max(20.0, np.sqrt(abs(cv2.contourArea(ordered))))
         for other in seen:
-            dist = float(np.mean(np.linalg.norm(ordered - self._order_points(other), axis=1)))
-            scale = max(20.0, np.sqrt(abs(cv2.contourArea(ordered))))
+            dist = float(np.mean(np.linalg.norm(ordered - other, axis=1)))
             if dist < 0.08 * scale:
                 return True
         return False
 
     def _suppress_duplicates(self, detections: list[Detection]) -> list[Detection]:
         kept: list[Detection] = []
+        kept_centers: list[np.ndarray] = []
         for det in detections:
             center = det.corners.mean(axis=0)
             side = float(np.mean(np.linalg.norm(np.roll(det.corners, -1, axis=0) - det.corners, axis=1)))
-            duplicate = False
-            for existing in kept:
-                other_center = existing.corners.mean(axis=0)
-                if float(np.linalg.norm(center - other_center)) < 0.35 * side:
-                    duplicate = True
-                    break
-            if not duplicate:
+            if not any(
+                float(np.linalg.norm(center - other_center)) < 0.35 * side for other_center in kept_centers
+            ):
                 kept.append(det)
+                kept_centers.append(center)
         return kept
 
     def _project_points(self, pts: np.ndarray, h: np.ndarray) -> np.ndarray:
