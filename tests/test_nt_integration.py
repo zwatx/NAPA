@@ -15,10 +15,48 @@ from northstar_vision.types import FrameResult
 ntcore = pytest.importorskip("ntcore")
 
 
-def _unused_tcp_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.bind(("127.0.0.1", 0))
-        return int(sock.getsockname()[1])
+def _start_server(server: object, persistence_path: Path) -> int:
+    """Start on an ephemeral port and prove that endpoint belongs to this server."""
+
+    last_error: Exception | None = None
+    for attempt in range(20):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.bind(("127.0.0.1", 0))
+            port = int(sock.getsockname()[1])
+        try:
+            server.startServer(str(persistence_path), "127.0.0.1", 0, port)  # type: ignore[attr-defined]
+        except RuntimeError as exc:
+            last_error = exc
+            server.stopServer()  # type: ignore[attr-defined]
+            continue
+        nonce = f"{time.time_ns()}-{attempt}"
+        if _endpoint_matches_server(server, port, nonce):
+            return port
+        last_error = RuntimeError(f"NetworkTables server did not become reachable on port {port}")
+        server.stopServer()  # type: ignore[attr-defined]
+    raise RuntimeError("could not bind a local NetworkTables test server") from last_error
+
+
+def _endpoint_matches_server(server: object, port: int, nonce: str, timeout_s: float = 1.0) -> bool:
+    """Verify a port at the NT protocol level using a server-owned nonce topic."""
+
+    topic_name = f"/__northstar_test_probe/{nonce}"
+    publisher = server.getStringTopic(topic_name).publish()  # type: ignore[attr-defined]
+    probe = ntcore.NetworkTableInstance.create()
+    subscriber = None
+    try:
+        subscriber = probe.getStringTopic(topic_name).subscribe("")
+        probe.setServer("127.0.0.1", port)
+        probe.startClient4(f"northstar-port-probe-{nonce}")
+        publisher.set(nonce)
+        server.flush()  # type: ignore[attr-defined]
+        return _wait_until(lambda: probe.isConnected() and subscriber.get() == nonce, timeout_s=timeout_s)
+    finally:
+        if subscriber is not None:
+            subscriber.close()
+        publisher.close()
+        probe.stopClient()
+        ntcore.NetworkTableInstance.destroy(probe)
 
 
 def _wait_until(predicate: Callable[[], bool], timeout_s: float = 2.0) -> bool:
@@ -30,13 +68,33 @@ def _wait_until(predicate: Callable[[], bool], timeout_s: float = 2.0) -> bool:
     return False
 
 
+def test_start_server_retries_when_endpoint_verification_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeServer:
+        def __init__(self) -> None:
+            self.starts = 0
+            self.stops = 0
+
+        def startServer(self, _path: str, _address: str, _port3: int, _port4: int) -> None:
+            self.starts += 1
+
+        def stopServer(self) -> None:
+            self.stops += 1
+
+    outcomes = iter((False, True))
+    monkeypatch.setattr(f"{__name__}._endpoint_matches_server", lambda *_args: next(outcomes))
+    server = FakeServer()
+
+    assert _start_server(server, tmp_path / "retry-networktables.json") > 0
+    assert server.starts == 2
+    assert server.stops == 1
+
+
 def test_real_ntcore_yaw_timestamp_delivery(tmp_path: Path) -> None:
-    port = _unused_tcp_port()
     server = ntcore.NetworkTableInstance.create()
     publisher = None
     source = None
     try:
-        server.startServer(str(tmp_path / "networktables.json"), "127.0.0.1", 0, port)
+        port = _start_server(server, tmp_path / "networktables.json")
         publisher = server.getDoubleTopic("/RobotState/yaw").publish(
             ntcore.PubSubOptions(keepDuplicates=True, sendAll=True)
         )
@@ -74,12 +132,11 @@ def test_real_ntcore_yaw_timestamp_delivery(tmp_path: Path) -> None:
 
 
 def test_real_ntcore_default_yaw_publisher_duplicate_suppression_ages_out(tmp_path: Path) -> None:
-    port = _unused_tcp_port()
     server = ntcore.NetworkTableInstance.create()
     publisher = None
     source = None
     try:
-        server.startServer(str(tmp_path / "yaw-duplicate-networktables.json"), "127.0.0.1", 0, port)
+        port = _start_server(server, tmp_path / "yaw-duplicate-networktables.json")
         publisher = server.getDoubleTopic("/RobotState/yaw").publish()
         source = NetworkTablesRobotYawSource(
             "duplicate-test",
@@ -110,12 +167,11 @@ def test_real_ntcore_default_yaw_publisher_duplicate_suppression_ages_out(tmp_pa
 
 
 def test_real_ntcore_observation_timestamp_and_delivery_policy(tmp_path: Path) -> None:
-    port = _unused_tcp_port()
     server = ntcore.NetworkTableInstance.create()
     subscriber = None
     publisher = None
     try:
-        server.startServer(str(tmp_path / "observations-networktables.json"), "127.0.0.1", 0, port)
+        port = _start_server(server, tmp_path / "observations-networktables.json")
         subscriber = server.getDoubleArrayTopic("/integration/output/observations").subscribe(
             [], ntcore.PubSubOptions(pollStorage=8, keepDuplicates=True)
         )
@@ -161,12 +217,11 @@ def test_real_ntcore_observation_timestamp_and_delivery_policy(tmp_path: Path) -
 
 
 def test_real_ntcore_close_flushes_pending_observation(tmp_path: Path) -> None:
-    port = _unused_tcp_port()
     server = ntcore.NetworkTableInstance.create()
     subscriber = None
     publisher = None
     try:
-        server.startServer(str(tmp_path / "close-networktables.json"), "127.0.0.1", 0, port)
+        port = _start_server(server, tmp_path / "close-networktables.json")
         subscriber = server.getDoubleArrayTopic("/close-test/output/observations").subscribe(
             [], ntcore.PubSubOptions(pollStorage=8, keepDuplicates=True)
         )
