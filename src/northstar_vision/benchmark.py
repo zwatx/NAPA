@@ -321,8 +321,28 @@ def run_replay_benchmark(
     }
 
 
-def write_benchmark_summary(summary: Mapping[str, Any], path: str | Path, *, pretty: bool = False) -> Path:
+def serialize_benchmark_summary(summary: Mapping[str, Any], *, pretty: bool = False) -> str:
+    return json.dumps(summary, indent=2 if pretty else None, separators=None if pretty else (",", ":"))
+
+
+def write_benchmark_summary(
+    summary: Mapping[str, Any],
+    path: str | Path,
+    *,
+    pretty: bool = False,
+    durable: bool = True,
+) -> Path:
     """Atomically write a benchmark summary, returning the resolved path."""
+
+    return write_benchmark_summary_text(
+        serialize_benchmark_summary(summary, pretty=pretty),
+        path,
+        durable=durable,
+    )
+
+
+def write_benchmark_summary_text(serialized: str, path: str | Path, *, durable: bool = True) -> Path:
+    """Atomically write serialized output, syncing it to storage by default."""
 
     destination = Path(path).expanduser().resolve()
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -337,10 +357,11 @@ def write_benchmark_summary(summary: Mapping[str, Any], path: str | Path, *, pre
             delete=False,
         ) as temporary:
             temporary_name = temporary.name
-            json.dump(summary, temporary, indent=2 if pretty else None, separators=None if pretty else (",", ":"))
+            temporary.write(serialized)
             temporary.write("\n")
             temporary.flush()
-            os.fsync(temporary.fileno())
+            if durable:
+                os.fsync(temporary.fileno())
         os.replace(temporary_name, destination)
     except BaseException:
         if temporary_name is not None:

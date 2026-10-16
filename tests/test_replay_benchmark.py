@@ -8,6 +8,7 @@ import cv2
 import numpy as np
 import pytest
 
+import northstar_vision.benchmark as benchmark_module
 from northstar_vision.benchmark import (
     BenchmarkOptions,
     BenchmarkThresholds,
@@ -151,6 +152,19 @@ def test_benchmark_summary_writer_and_console_entrypoint(tmp_path: Path, capsys:
     replacement = {"schema_version": 1, "replacement": True}
     assert write_benchmark_summary(replacement, output_path) == output_path.resolve()
     assert json.loads(output_path.read_text(encoding="utf-8")) == replacement
+
+
+def test_benchmark_summary_writer_is_durable_by_default_with_explicit_opt_out(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fsync_calls: list[int] = []
+    monkeypatch.setattr(benchmark_module.os, "fsync", fsync_calls.append)
+
+    write_benchmark_summary({"schema_version": 1}, tmp_path / "durable.json")
+    assert len(fsync_calls) == 1
+
+    write_benchmark_summary({"schema_version": 1}, tmp_path / "atomic-only.json", durable=False)
+    assert len(fsync_calls) == 1
 
 
 def test_benchmark_options_reject_invalid_bounds() -> None:
