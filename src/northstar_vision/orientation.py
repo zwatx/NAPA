@@ -51,8 +51,12 @@ class YawBuffer:
 
     def add(self, monotonic_s: float, yaw_rad: float) -> None:
         sample = YawSample(float(monotonic_s), normalize_angle_radians(yaw_rad))
-        timestamps = [value.monotonic_s for value in self._samples]
-        index = bisect_left(timestamps, sample.monotonic_s)
+        if not self._samples or sample.monotonic_s > self._samples[-1].monotonic_s:
+            self._samples.append(sample)
+            if len(self._samples) > self.max_samples:
+                del self._samples[0]
+            return
+        index = bisect_left(self._samples, sample.monotonic_s, key=lambda value: value.monotonic_s)
         if index < len(self._samples) and self._samples[index].monotonic_s == sample.monotonic_s:
             self._samples[index] = sample
         else:
@@ -70,8 +74,7 @@ class YawBuffer:
             raise ValueError("max_age_s must not be negative")
         if not self._samples or not math.isfinite(monotonic_s):
             return None
-        timestamps = [value.monotonic_s for value in self._samples]
-        index = bisect_left(timestamps, monotonic_s)
+        index = bisect_left(self._samples, monotonic_s, key=lambda value: value.monotonic_s)
         if index == 0:
             sample = self._samples[0]
             age = abs(sample.monotonic_s - monotonic_s)
