@@ -29,6 +29,7 @@ from northstar_vision import (
 from northstar_vision.calibration import load_calibration, save_calibration, undistorted_corner_angles
 from northstar_vision.capture import ReplaySource
 from northstar_vision.cli import main
+from northstar_vision.fiducials import make_apriltag_detector
 from northstar_vision.geometry import (
     invert_transform,
     opencv_translation_to_wpilib,
@@ -218,6 +219,29 @@ def test_opencv_apriltag_detector_detects_36h11() -> None:
     assert len(observations) == 1
     assert observations[0].tag_id == 1
     assert observations[0].corners.shape == (4, 2)
+
+
+def test_detector_candidates_keep_baseline_default_and_enable_aruco3() -> None:
+    baseline = make_apriltag_detector()
+    aruco3 = make_apriltag_detector("aruco3")
+
+    assert baseline.params.useAruco3Detection is False
+    assert aruco3.params.useAruco3Detection is True
+    assert aruco3.params.minMarkerLengthRatioOriginalImg == 0.0
+    assert [observation.tag_id for observation in aruco3.detect(make_marker_scene(1))] == [1]
+
+
+def test_layout_restricted_detector_remaps_dictionary_rows_to_original_ids() -> None:
+    detector = make_apriltag_detector("layout-restricted", layout_tag_ids=[9, 2])
+
+    assert detector.tag_id_map == (2, 9)
+    assert [observation.tag_id for observation in detector.detect(make_marker_scene(9))] == [9]
+    assert detector.detect(make_marker_scene(1)) == []
+
+
+def test_layout_restricted_detector_rejects_ambiguous_layout_ids() -> None:
+    with pytest.raises(ValueError, match="must not contain duplicates"):
+        make_apriltag_detector("layout-restricted", layout_tag_ids=[1, 1])
 
 
 def test_detector_validates_image_type() -> None:
