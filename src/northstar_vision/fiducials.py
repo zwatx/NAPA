@@ -1,12 +1,19 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
+from typing import Protocol
 
 import cv2
 import numpy as np
 
 from .prefilter import BlockSkipPrefilter, Roi
 from .types import FiducialImageObservation
+
+
+class FiducialDetector(Protocol):
+    """Detect tags in uint8 grayscale, BGR, or BGRA images in caller pixel coordinates."""
+
+    def detect(self, image: np.ndarray) -> list[FiducialImageObservation]: ...
 
 
 class OpenCVArucoFiducialDetector:

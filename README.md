@@ -91,6 +91,55 @@ Some OpenCV camera backends can block inside their native `read()` implementatio
 caller's perspective and reports a timed-out worker, but Python cannot forcibly interrupt that native call; validate
 the chosen V4L2/backend behavior on the target camera.
 
+## Embedding in other systems
+
+`VisionProcessor` processes images supplied by your application, without opening cameras, reading a platform profile,
+publishing results, or starting threads. Use one instance per camera stream; the number of cameras is unrestricted.
+The existing camera service uses this same processor and owns capture, output, and device health separately.
+
+```python
+from northstar_vision import VisionProcessor
+
+processor = VisionProcessor()
+# image is a caller-supplied NumPy uint8 grayscale, BGR, or BGRA frame.
+result = processor.process(image, timestamp=frame_timestamp_s)
+for tag in result.image_observations:
+    print(tag.tag_id, tag.corners)
+```
+
+Detection alone needs neither calibration nor a field layout. To enable metric poses, supply an existing calibration
+artifact and the physical tag size:
+
+```python
+from northstar_vision import load_calibration_data
+
+processor = VisionProcessor(
+    calibration=load_calibration_data("camera-calibration.json"),
+    tag_size_m=0.1651,
+)
+```
+
+Calibrated frames must match the calibration resolution. Each result includes tag-relative IPPE candidates and angles;
+optional `tag_layout` enables the existing field pose. Robot mounting and yaw augmentation remain in the FRC service.
+Coordinate conventions remain those documented below: tag-relative IPPE vectors use OpenCV axes, while field and robot
+poses use WPILib axes. Applications must explicitly convert these to their own world coordinates.
+
+Pass a `detector=` object implementing `FiducialDetector.detect(image) -> list[FiducialImageObservation]` to replace
+the detection algorithm. Backends must preserve original tag IDs and return independent, finite `4x2` corner arrays
+in the input image's pixel coordinates and the existing OpenCV AprilTag corner order, including decoded rotation.
+They must not mutate or retain the input image. Optional prefiltering belongs in that backend. The archived custom
+detector needs a corner-order adapter and validation before it can be used for calibrated poses through this interface.
+
+Calls are synchronous and must not overlap on one processor. The application owns image buffers, camera permissions,
+RGB/YUV conversion, orientation, scheduling, and result delivery. Strided NumPy images are accepted. Frame timestamps
+and optional `capture_monotonic_s` are supplied in seconds by the caller; the processor never subtracts device clocks.
+Empty detections return a normal result, while invalid inputs and backend failures raise to the caller.
+
+This is device-independent **Python** integration. Running the same implementation locally from C#, C++, or an Android
+application requires a shared native library and language bindings; those are not implemented here yet. The
+[portability plan](.plans/2026-10-16_device_agnostic_vision.html) defines that next step without tying it to a particular
+headset or camera SDK. Recursive coarse-to-fine scanning also remains a benchmark candidate, rather than a default.
+
 ## Production calibration and field layout
 
 Capture checkerboard photographs at the exact deployed resolution, focus, and lens settings. Use varied positions and

@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
+from typing import Protocol
 
 import cv2
 import numpy as np
 
 from .calibration import undistorted_corner_angles
-from .config import CameraConfig
 from .geometry import (
     invert_transform,
     opencv_pose_to_wpilib_transform,
@@ -27,6 +27,21 @@ from .types import (
 )
 
 
+class CameraGeometry(Protocol):
+    """The image geometry solvers need, independent of capture configuration."""
+
+    @property
+    def calibration_matrix(self) -> np.ndarray: ...
+
+    @property
+    def distortion_coefficients(self) -> np.ndarray: ...
+
+
+class MountedCameraGeometry(CameraGeometry, Protocol):
+    @property
+    def robot_to_camera(self) -> np.ndarray: ...
+
+
 def _solution_error(
     errors: np.ndarray | None,
     index: int,
@@ -34,7 +49,7 @@ def _solution_error(
     image_points: np.ndarray,
     rvec: np.ndarray,
     tvec: np.ndarray,
-    camera: CameraConfig,
+    camera: CameraGeometry,
 ) -> float:
     if errors is not None and index < len(errors):
         value = float(np.asarray(errors[index]).reshape(-1)[0])
@@ -62,7 +77,7 @@ class SingleTagPoseSolver:
     def solve(
         self,
         observation: FiducialImageObservation,
-        camera: CameraConfig,
+        camera: CameraGeometry,
         tag_size_m: float,
     ) -> SingleTagPoseObservation | None:
         object_points = tag_object_points(tag_size_m)
@@ -144,7 +159,7 @@ class CameraPoseSolver:
         self,
         observations: Sequence[FiducialImageObservation],
         single_tag_poses: Sequence[SingleTagPoseObservation],
-        camera: CameraConfig,
+        camera: CameraGeometry,
         tag_size_m: float,
         tag_layout: dict[int, np.ndarray],
     ) -> CameraPoseObservation | None:
@@ -268,7 +283,7 @@ class CameraPoseSolver:
         image_points: np.ndarray,
         rvec: np.ndarray,
         tvec: np.ndarray,
-        camera: CameraConfig,
+        camera: CameraGeometry,
     ) -> tuple[dict[int, float], float]:
         projected, _ = cv2.projectPoints(
             object_points,
@@ -288,7 +303,7 @@ class CameraPoseSolver:
         self,
         object_points: np.ndarray,
         image_points: np.ndarray,
-        camera: CameraConfig,
+        camera: CameraGeometry,
     ) -> tuple[np.ndarray, np.ndarray] | None:
         flags = cv2.SOLVEPNP_SQPNP if hasattr(cv2, "SOLVEPNP_SQPNP") else cv2.SOLVEPNP_ITERATIVE
         try:
@@ -328,7 +343,7 @@ class CameraPoseSolver:
         observations: Sequence[FiducialImageObservation],
         object_points: np.ndarray,
         image_points: np.ndarray,
-        camera: CameraConfig,
+        camera: CameraGeometry,
     ) -> tuple[np.ndarray, np.ndarray] | None:
         if len(observations) < 3:
             return None
@@ -359,7 +374,7 @@ class CameraPoseSolver:
     def _solve_multi(
         self,
         observations: Sequence[FiducialImageObservation],
-        camera: CameraConfig,
+        camera: CameraGeometry,
         tag_size_m: float,
         tag_layout: dict[int, np.ndarray],
         diagnostics: PoseSolveDiagnostics,
@@ -453,7 +468,7 @@ class TagAngleSolver:
     def solve(
         self,
         observation: FiducialImageObservation,
-        camera: CameraConfig,
+        camera: CameraGeometry,
         single_tag_pose: SingleTagPoseObservation,
     ) -> TagAngleObservation:
         corner_angles = undistorted_corner_angles(
@@ -473,7 +488,7 @@ class TagAngleSolver:
     def solve_many(
         self,
         observations: Sequence[FiducialImageObservation],
-        camera: CameraConfig,
+        camera: CameraGeometry,
         single_tag_poses: Sequence[SingleTagPoseObservation],
     ) -> list[TagAngleObservation]:
         """Build tag-angle observations with one undistortion call."""
@@ -512,7 +527,7 @@ class TrigDistanceSolver:
     def solve(
         self,
         tag_angle: TagAngleObservation,
-        camera: CameraConfig,
+        camera: MountedCameraGeometry,
         tag_layout: dict[int, np.ndarray],
         robot_yaw_rad: float,
         *,

@@ -4,10 +4,10 @@ import numpy as np
 
 from northstar_vision import load_profile
 from northstar_vision.capture import FrameSource
-from northstar_vision.orientation import RobotYawSource, YawEstimate
+from northstar_vision.orientation import RobotYawSource, YawBuffer, YawEstimate
 from northstar_vision.output import OutputPublisher
 from northstar_vision.service import NorthstarVisionService
-from northstar_vision.types import FrameResult
+from northstar_vision.types import FiducialImageObservation, FrameResult
 
 
 class FrameSourceStub:
@@ -56,6 +56,39 @@ class YawSourceStub(RobotYawSource):
 
     def close(self) -> None:
         self.closed = True
+
+
+def test_service_uses_yaw_samples_that_arrive_during_detection() -> None:
+    class BufferedYawSource(YawSourceStub):
+        def __init__(self) -> None:
+            super().__init__()
+            self.buffer = YawBuffer()
+            self.buffer.add(9.99, 0.0)
+
+        def yaw_at(self, capture_monotonic_s: float) -> YawEstimate | None:
+            return self.buffer.estimate(capture_monotonic_s, max_age_s=0.1)
+
+    yaw = BufferedYawSource()
+
+    class SampleDeliveringDetector:
+        def detect(self, image: np.ndarray) -> list[FiducialImageObservation]:
+            yaw.buffer.add(10.01, 1.0)
+            return []
+
+    profile = load_profile("laptop")
+    profile.camera.width = profile.camera.height = 1
+    output = OutputStub()
+    service = NorthstarVisionService(
+        profile,
+        output,
+        frame_source=FrameSourceStub(),
+        yaw_source=yaw,
+        detector=SampleDeliveringDetector(),
+    )
+    service.run(max_frames=1)
+
+    assert output.results[0].health["yaw_interpolated"] is True
+    assert output.results[0].health["yaw_available"] is True
 
 
 def test_service_aligns_yaw_and_merges_source_health() -> None:

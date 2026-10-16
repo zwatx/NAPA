@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- TheLab metadata (read by the `lab` CLI on publish; do not remove).
+     thelab:plan is the STABLE plan id — re-publishing this file updates the same
+     plan (bumping its version) even if the title changes. -->
+<meta name="thelab:project" content="apriltag-detector">
+<meta name="thelab:title" content="Device-agnostic AprilTag processing">
+<meta name="thelab:plan" content="device-agnostic-apriltag-processing">
+<meta name="thelab:kind" content="plan">
+<meta name="thelab:status" content="active">
+<meta name="thelab:tags" content="architecture,portability">
+<!-- Optional: issue numbers this plan closes on ship, e.g. content="3,7". They
+     auto-close when the plan is marked done (`lab done … --commit`). -->
+<meta name="thelab:addresses" content="">
+<meta name="thelab:version" content="1">
+<meta name="thelab:hosted-url" content="https://thelab.wilsonzach.com/project/apriltag-detector/plan/device-agnostic-apriltag-processing">
+<!-- Optional owner questions. Add 1–8 entries; each needs 2–8 options. -->
+<script type="application/json" id="thelab-questions">[]</script>
+<title>Device-agnostic AprilTag processing</title>
+<style>
+  /* Self-contained. Mirrors The Lab reader so the local file looks like the hosted
+     one. This block is NOT published: the hosted view uses The Lab's own reader
+     stylesheet, and only the article content below is published. */
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    background: #0a0a0a; color: #a1a1a1;
+    font-size: 15px; line-height: 1.7; letter-spacing: -0.006em;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 820px; margin: 0 auto; padding: 40px 24px 96px; }
+  a { color: #4e9bfa; text-decoration: none; } a:hover { text-decoration: underline; }
+  img { max-width: 100%; height: auto; }
+  h1 { font-size: 30px; font-weight: 600; letter-spacing: -0.025em; line-height: 1.2; color: #ededed; margin-bottom: 8px; }
+  h2 { font-size: 17px; font-weight: 600; letter-spacing: -0.015em; color: #ededed; margin: 56px 0 16px; padding-top: 24px; border-top: 1px solid #222; }
+  h3 { font-size: 14px; font-weight: 600; color: #ededed; margin: 32px 0 12px; }
+  p { margin: 0 0 12px; } strong { color: #ededed; font-weight: 600; }
+  ul, ol { margin: 0 0 12px 22px; } li { margin: 4px 0; }
+  .lede { color: #ededed; font-size: 16px; margin: 4px 0 8px; }
+  code { font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace; }
+  pre.code { background: #0d0d0d; border: 1px solid #222; border-radius: 6px; padding: 16px 20px; overflow-x: auto; font-size: 12.5px; line-height: 1.65; color: #a1a1a1; tab-size: 2; margin: 16px 0; }
+  .callout { border: 1px solid #222; border-left: 2px solid #4e9bfa; border-radius: 0 6px 6px 0; padding: 14px 20px; margin: 20px 0; font-size: 13.5px; color: #a1a1a1; }
+  .callout strong { color: #ededed; }
+  figure { margin: 16px 0; } figcaption { font-size: 12px; color: #6b6b6b; padding-top: 8px; font-family: ui-monospace, Menlo, monospace; }
+  .fig-scroll { overflow-x: auto; border: 1px solid #222; border-radius: 6px; }
+  .fig-scroll svg { display: block; width: 100%; height: auto; }
+  .tbl-scroll { overflow-x: auto; }
+  table.data { width: 100%; border-collapse: collapse; font-size: 13.5px; margin: 12px 0; }
+  table.data th { text-align: left; font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.07em; color: #6b6b6b; padding: 10px 14px; border-bottom: 1px solid #222; }
+  table.data td { padding: 10px 14px; border-bottom: 1px solid #222; color: #a1a1a1; vertical-align: top; }
+  table.data tr:last-child td { border-bottom: 0; }
+  table.data td:first-child { color: #ededed; white-space: nowrap; }
+  .plan-links { margin: 16px 0 8px; }
+  .plan-links table.data td:first-child { font-size: 11px; text-transform: uppercase; letter-spacing: 0.07em; color: #6b6b6b; width: 90px; }
+  .plan-links table.data td:nth-child(2) { color: #ededed; font-family: ui-monospace, Menlo, monospace; font-size: 12.5px; word-break: break-all; }
+  .status { display: inline-flex; align-items: center; gap: 7px; }
+  .status::before { content: ""; width: 7px; height: 7px; border-radius: 50%; }
+  .st-draft::before { border: 1px solid #6b6b6b; }
+  .st-active::before { background: #4e9bfa; }
+  .st-done::before { background: #ededed; }
+  .st-archived::before { background: #333; }
+</style>
+</head>
+<body>
+<main class="wrap">
+<article>
+  <h1>Device-agnostic AprilTag processing</h1>
+
+  <!-- Plan meta: local-file chrome only — `lab publish` strips this whole section
+       from the published body (The Lab renders its own header + metadata rail). The
+       CLI fills the Version cell on publish (v1, v2, …). -->
+  <section class="plan-links">
+    <div class="tbl-scroll"><table class="data">
+      <tr><td>Project</td><td>apriltag-detector</td></tr>
+      <tr><td>Version</td><td id="thelab-version">v1</td></tr>
+      <tr><td>Status</td><td><span class="status st-active">active</span> · 2026-10-16</td></tr>
+    </table></div>
+  </section>
+
+  <p class="lede">Make image processing reusable across hosts first. Keep camera SDKs and transports outside the algorithm; share a native implementation when crossing language runtimes.</p>
+
+  <h2>Decision</h2>
+  <p>The reusable seam is a synchronous call from an image to structured observations. Each host supplies its own pixels, timestamps, calibration, and scheduling. A headset, a desktop, and a Raspberry Pi are consumers of the same interface. There is no fixed four-camera topology.</p>
+  <p><strong>Implemented in this change:</strong> a transport-free Python <code>VisionProcessor</code>, a structural detector interface, geometry-only solver inputs, and delegation from the existing camera service. <strong>Not implemented:</strong> a native C ABI, C# bindings, target SDK adapters, or an adaptive scanning algorithm. This is a concrete first phase of portability, not a claim that Python now runs inside every host.</p>
+
+  <h2>Module ownership</h2>
+  <div class="tbl-scroll"><table class="data">
+    <thead><tr><th>Module</th><th>Owns</th><th>Interface</th></tr></thead>
+    <tbody>
+      <tr><td>Host adapter</td><td>SDK permissions, camera selection, capture, pixel conversion, timestamps, scheduling, result delivery.</td><td>Supplies CPU image buffers; consumes observations. One processor per concurrent stream.</td></tr>
+      <tr><td>Vision processor</td><td>Input validation, detection, optional calibrated pose processing, per-call results and computation timings.</td><td><code>process(image, timestamp, optional capture time) → FrameResult</code></td></tr>
+      <tr><td>Detector adapter</td><td>Candidate search, optional ROI filtering, payload decoding, original IDs, decoded corner orientation.</td><td><code>detect(image) → list[FiducialImageObservation]</code></td></tr>
+      <tr><td>Optional localization</td><td>Existing IPPE ambiguity candidates, tag angles, and optional field pose rejection. The FRC service adds rig/yaw calculations.</td><td>Calibration and physical tag size enable metric poses. Layouts remain optional.</td></tr>
+      <tr><td>Pi/FRC service</td><td>Latest-frame capture, reconnect, frame age, yaw-source alignment, NetworkTables, recording, and display.</td><td>Uses the same processor as an embedding application.</td></tr>
+    </tbody>
+  </table></div>
+  <p>Detection requires no calibration, field layout, robot profile, rig mount, yaw source, camera ID, network connection, or device SDK. The processor imports no capture, profile, recording, or output modules. OpenCV and NumPy remain implementation dependencies of this Python phase.</p>
+
+  <h2>Image and result contract</h2>
+  <ul>
+    <li>Current images are nonempty uint8 grayscale, BGR, or BGRA NumPy arrays. Strided arrays work. Hosts convert RGB, YUV, GPU textures, and rotated frames before calling; conversion and readback costs belong in end-to-end measurements.</li>
+    <li>The call borrows the image synchronously and does not retain it. Detector adapters must not mutate or retain it and must return independent corner arrays. Calls must not overlap on one processor.</li>
+    <li>Results retain original tag IDs and finite 4×2 corners in input pixel coordinates. A replacement detector must preserve the existing corner order after decoded rotation, rather than silently reusing a different tag convention.</li>
+    <li>Calibration includes intrinsics, distortion, and image resolution. Resizing, rotating, or cropping pixels requires corresponding intrinsics. Calibrated processing rejects mismatched resolution.</li>
+    <li>The physical tag size is in metres. IPPE vectors use OpenCV axes; existing field and rig outputs use WPILib axes. Host/world coordinate conversion is explicit and remains outside the detector.</li>
+    <li>Frame timestamps and optional capture clock values are caller-supplied seconds. The processor never computes frame age from a different device clock. The FRC service resolves yaw after image processing so samples delivered during detection can bracket capture time.</li>
+    <li>No tags is a successful empty result. Invalid input and backend failures raise to the Python caller. A future native interface must represent errors explicitly without exceptions crossing languages.</li>
+  </ul>
+
+  <h2>Should finer rakes be implemented?</h2>
+  <p><strong>Keep them experimental and deferred.</strong> The current prefilter already performs sparse sampling followed by full-resolution detection inside padded regions. A second or third sparse level is useful only when it removes enough work to repay its own overhead. It cannot recover a small tag discarded at the first level.</p>
+  <p>The existing historical desktop comparison recorded tagged frames at 2.51 ms with skip-scan versus 2.29 ms for full-frame detection, and blank frames at 0.083 ms versus 0.050 ms with the uniformity gate. These are the July repository measurements, not fresh target-device benchmarks. They support leaving the prefilter off by default and do not verify the earlier 14.5×/2× claims for this pipeline.</p>
+  <p>When added, a bounded adaptive-search detector should remain interchangeable at the same seam. Compare it with baseline, ArUco3, and the existing prefilter using identical recorded frames. Require stable IDs/corners and no recall regression at the minimum supported tag size; include blur, occlusion, perspective, low contrast, image borders, and positions between sampling lines. Use padded overlaps and a defined full-frame reacquisition policy, cap levels and ROI coverage, and measure p50/p95 processing and frame age on the actual host.</p>
+  <p>The compact custom decoder remains in the archived experiment. It indexes three 12-bit payload blocks across all rotations, checks exact Hamming distance on candidates, and uses exhaustive decoding for erased masks or limits above two errors. Moving that implementation into a shared core must preserve rotation/corner semantics and fallback behavior; this refactor does not promote it into the main pipeline.</p>
+
+  <h2>Cross-language portability: next phase</h2>
+  <p>Use one C/C++ implementation with a small versioned C ABI, then thin Python and C# bindings. C# native interop supports C-style interfaces; it does not consume Python classes or NumPy memory conventions automatically. This recommendation is supported by Microsoft's <a href="https://learn.microsoft.com/dotnet/standard/native-interop/abi-support">ABI guidance</a> and <a href="https://learn.microsoft.com/en-us/dotnet/standard/native-interop/pinvoke">P/Invoke documentation</a>. Unity also documents <a href="https://docs.unity.com/en-us/engine/6000.3/manual/programming-environment/plug-ins/native/overview">native plug-ins</a>; no Unity dependency belongs in the core.</p>
+  <ol>
+    <li><strong>Freeze portable data contracts.</strong> Define image pointer, width, height, byte row stride, pixel-format enum, borrowed-buffer lifetime, capture timestamp, numeric intrinsics, and explicit distortion model. Define IDs/corners and optional metric poses with fixed conventions. Avoid strings, device handles, and managed objects in the per-frame interface.</li>
+    <li><strong>Build one native detector.</strong> Begin with the maintained detector backend and port the custom candidate/decoder path behind the same interface as a separately tested option. Keep Python as the reference until differential tests pass. Put prefiltering and candidate refinement inside this module so bindings never reimplement them.</li>
+    <li><strong>Expose lifecycle and bounded results.</strong> Use create/process/destroy operations with an opaque instance handle, ABI/version discovery, explicit status codes, and caller-owned result capacity plus required-count reporting. Define overflow and stale-result behavior. Keep errors and allocations within the owning runtime.</li>
+    <li><strong>Add thin bindings.</strong> Python validates buffers and releases them after synchronous calls; C# pins/copies input for the duration of the call and materializes results before reuse. Camera permission and SDK access remain independent adapters. CPU architecture and OS builds are packaging concerns.</li>
+    <li><strong>Verify shared behavior.</strong> Run identical fixtures through reference Python, native, and C# paths on desktop first, then on representative ARM64 hosts. Exercise strided buffers, bad sizes, lifetimes, all rotations, correction limits, invalid words, erasures, ID remapping, empty frames, coordinate conversions, and per-camera isolation. No target is declared supported before its build and runtime checks pass.</li>
+  </ol>
+
+  <h2>Integration contract explorer</h2>
+  <p>This local-only control summarizes the seam for an embedding application. It describes implemented Python behavior and clearly marks future native work; it does not run a detector.</p>
+  <p><label for="runtime">Host language </label><select id="runtime"><option value="python">Python</option><option value="csharp">C#</option><option value="cpp">C/C++</option></select></p>
+  <p><label><input type="checkbox" id="metric"> Require metric poses</label></p>
+  <p id="support" role="status"></p>
+  <pre class="code" id="contract"></pre>
+  <button id="copy" type="button">Copy integration contract as JSON</button>
+  <p id="copy-status" role="status"></p>
+
+  <h2>Verification and remaining work</h2>
+  <p>The original production suite and new embedding tests pass: 146 tests with 80.71% coverage. Fifteen new cases cover raw and strided color inputs, a structural backend, known calibrated geometry, layout isolation and yaw-sample arrival during detection, timestamp validation, resolution mismatch, backend failures, and import independence. The six custom experimental decoder tests pass. Ruff format/check and diff whitespace checks pass.</p>
+  <p>Build/package validation and independent final review are recorded in the companion review after completion. No headset, camera hardware, native toolchain, or C# runtime has been validated by this change. The native port and adaptive search are future work; the service and Python embedding seam share the same processing implementation today.</p>
+  <p>Relevant files: <code>src/northstar_vision/processing.py</code>, <code>fiducials.py</code>, <code>solvers.py</code>, <code>service.py</code>, <code>tests/test_processing.py</code>, and the README embedding section.</p>
+</article>
+</main>
+<script>
+const runtime=document.getElementById('runtime');
+const metric=document.getElementById('metric');
+function model(){return {runtime:runtime.value,status:runtime.value==='python'?'implemented':'native library and binding not implemented',input:{pixels:'uint8 grayscale/BGR/BGRA; host supplies camera buffers',timestamp:'caller seconds',calibration:metric.checked?'intrinsics, distortion, resolution, tag size in metres':'not required'},output:metric.checked?'IDs, oriented pixel corners, optional calibrated pose candidates':'IDs and oriented pixel corners',ownership:'host owns camera, buffers, clocks, scheduling and delivery',instance:'one per stream; synchronous calls',adaptive_search:'deferred; benchmark before enabling'};}
+function update(){document.getElementById('support').textContent=model().status;document.getElementById('contract').textContent=JSON.stringify(model(),null,2);}
+runtime.addEventListener('change',update);metric.addEventListener('change',update);
+document.getElementById('copy').addEventListener('click',async()=>{const value=JSON.stringify(model(),null,2);try{await navigator.clipboard.writeText(value);document.getElementById('copy-status').textContent='Copied.';}catch{document.getElementById('copy-status').textContent='Clipboard unavailable; select and copy the JSON above.';}});
+update();
+</script>
+</body>
+</html>

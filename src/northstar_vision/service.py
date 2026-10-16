@@ -5,15 +5,17 @@ from time import perf_counter
 
 import cv2
 
+from .calibration import CameraCalibration
 from .capture import FrameSource, make_frame_source
 from .config import PlatformProfile
-from .fiducials import OpenCVArucoFiducialDetector
+from .fiducials import FiducialDetector, OpenCVArucoFiducialDetector
 from .orientation import RobotYawSource, StaticRobotYawSource
 from .output import OutputPublisher
 from .overlay import draw_overlay
 from .prefilter import BlockSkipPrefilter
-from .solvers import CameraPoseSolver, SingleTagPoseSolver, TagAngleSolver, TrigDistanceSolver
-from .types import FrameResult, health_state_fields
+from .processing import VisionProcessor
+from .solvers import TrigDistanceSolver
+from .types import PoseSolveDiagnostics, health_state_fields
 
 
 class NorthstarVisionService:
@@ -28,7 +30,7 @@ class NorthstarVisionService:
         robot_yaw_rad: float | None = None,
         yaw_source: RobotYawSource | None = None,
         frame_source: FrameSource | None = None,
-        detector: OpenCVArucoFiducialDetector | None = None,
+        detector: FiducialDetector | None = None,
     ) -> None:
         self.profile = profile
         self.output = output
@@ -39,17 +41,24 @@ class NorthstarVisionService:
         if self.yaw_source is None and robot_yaw_rad is not None:
             self.yaw_source = StaticRobotYawSource(robot_yaw_rad)
         prefilter = BlockSkipPrefilter(profile.skip_scan) if profile.skip_scan.enabled else None
-        self.detector = detector or OpenCVArucoFiducialDetector(prefilter=prefilter)
-        self.single_solver = SingleTagPoseSolver(profile.max_reprojection_error_px)
-        self.camera_solver = CameraPoseSolver(
-            profile.max_reprojection_error_px,
+        camera = profile.camera
+        self.processor = VisionProcessor(
+            detector=detector if detector is not None else OpenCVArucoFiducialDetector(prefilter=prefilter),
+            calibration=CameraCalibration(
+                camera_matrix=camera.calibration_matrix,
+                distortion_coefficients=camera.distortion_coefficients,
+                image_size=(camera.width, camera.height),
+                provenance=camera.calibration_provenance,
+            ),
+            tag_size_m=profile.tag_size_m,
+            tag_layout=profile.tag_layout,
+            max_reprojection_error_px=profile.max_reprojection_error_px,
             max_tag_reprojection_error_px=profile.max_tag_reprojection_error_px,
-            bounds=profile.camera_pose_bounds,
+            camera_pose_bounds=profile.camera_pose_bounds,
             max_outlier_iterations=profile.max_outlier_iterations,
             ransac_iterations=profile.ransac_iterations,
         )
-        self.angle_solver = TagAngleSolver()
-        self.trig_solver = TrigDistanceSolver()
+        self._trig_solver = TrigDistanceSolver()
         self.frame_source = frame_source or make_frame_source(profile, replay_path, loop_replay=loop_replay)
         self.frame_times: deque[float] = deque(maxlen=60)
         self.previous_publish_ms = 0.0
@@ -74,24 +83,19 @@ class NorthstarVisionService:
                 f"{expected.width}x{expected.height}"
             )
 
-        detection_start = perf_counter()
-        observations = self.detector.detect(frame)
-        detection_end = perf_counter()
+        result = self.processor.process(
+            frame,
+            timestamp=timestamp,
+            capture_monotonic_s=capture_monotonic_s,
+        )
+        process_end = perf_counter()
+        # Detection can take long enough for new yaw samples to bracket capture
+        # time. Poll after it, so interpolation includes those samples.
         yaw_estimate = None if self.yaw_source is None else self.yaw_source.yaw_at(capture_monotonic_s)
-        single_poses = []
-        solved_observations = []
-        for observation in observations:
-            single = self.single_solver.solve(observation, self.profile.camera, self.profile.tag_size_m)
-            if single is None:
-                continue
-            single_poses.append(single)
-            solved_observations.append(observation)
-        tag_angles = self.angle_solver.solve_many(solved_observations, self.profile.camera, single_poses)
-        trig_poses = []
         if yaw_estimate is not None:
-            field_rotation = self.trig_solver.yaw_rotation(yaw_estimate.yaw_rad)
-            for tag_angle in tag_angles:
-                trig = self.trig_solver.solve(
+            field_rotation = self._trig_solver.yaw_rotation(yaw_estimate.yaw_rad)
+            for tag_angle in result.tag_angles:
+                trig = self._trig_solver.solve(
                     tag_angle,
                     self.profile.camera,
                     self.profile.tag_layout,
@@ -99,15 +103,9 @@ class NorthstarVisionService:
                     field_rotation=field_rotation,
                 )
                 if trig is not None:
-                    trig_poses.append(trig)
-        camera_pose = self.camera_solver.solve(
-            observations,
-            single_poses,
-            self.profile.camera,
-            self.profile.tag_size_m,
-            self.profile.tag_layout,
-        )
+                    result.trig_poses.append(trig)
         solve_end = perf_counter()
+        result.health["solve_ms"] += (solve_end - process_end) * 1000.0
         self.frame_times.append(solve_end)
         processing_ms = (solve_end - capture_end) * 1000.0
         frame_age_ms = max(0.0, (solve_end - capture_monotonic_s) * 1000.0)
@@ -124,23 +122,13 @@ class NorthstarVisionService:
             **self._component_state(self.frame_source),
             **({} if self.yaw_source is None else self._component_state(self.yaw_source)),
         }
-        result = FrameResult(
-            timestamp=timestamp,
-            capture_monotonic_s=capture_monotonic_s,
-            image_observations=observations,
-            single_tag_poses=single_poses,
-            camera_pose=camera_pose,
-            pose_diagnostics=self.camera_solver.last_diagnostics,
-            tag_angles=tag_angles,
-            trig_poses=trig_poses,
-            health={
+        result.health.update(
+            {
                 "fps": self._fps(),
                 "latency_ms": frame_age_ms,
                 "frame_age_ms": frame_age_ms,
                 "acquire_wait_ms": (capture_end - frame_start) * 1000.0,
                 "processing_ms": processing_ms,
-                "detection_ms": (detection_end - detection_start) * 1000.0,
-                "solve_ms": (solve_end - detection_end) * 1000.0,
                 "previous_publish_ms": self.previous_publish_ms,
                 "source_connected": True,
                 "yaw_available": yaw_estimate is not None,
@@ -150,8 +138,8 @@ class NorthstarVisionService:
                 **self._detailed_health,
                 **current_state,
                 "output": output_health,
-                "pose_solver": self._pose_health(),
-            },
+                "pose_solver": self._pose_health(result.pose_diagnostics),
+            }
         )
         publish_start = perf_counter()
         self.output.publish(result)
@@ -211,8 +199,10 @@ class NorthstarVisionService:
             return {}
         return health_state_fields(health())
 
-    def _pose_health(self) -> dict[str, object]:
-        diagnostics = self.camera_solver.last_diagnostics
+    @staticmethod
+    def _pose_health(diagnostics: PoseSolveDiagnostics | None) -> dict[str, object]:
+        if diagnostics is None:
+            return {}
         return {
             "attempted_tag_ids": diagnostics.attempted_tag_ids,
             "accepted_tag_ids": diagnostics.accepted_tag_ids,

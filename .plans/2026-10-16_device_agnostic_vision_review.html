@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- TheLab metadata (read by the `lab` CLI on publish; do not remove).
+     thelab:plan is the STABLE plan id — re-publishing this file updates the same
+     plan (bumping its version) even if the title changes. -->
+<meta name="thelab:project" content="apriltag-detector">
+<meta name="thelab:title" content="Device-agnostic processor implementation review">
+<meta name="thelab:plan" content="device-agnostic-processor-implementation-review">
+<meta name="thelab:kind" content="review">
+<meta name="thelab:status" content="done">
+<meta name="thelab:tags" content="architecture,portability,verification">
+<!-- Optional: issue numbers this plan closes on ship, e.g. content="3,7". They
+     auto-close when the plan is marked done (`lab done … --commit`). -->
+<meta name="thelab:addresses" content="">
+<meta name="thelab:version" content="2">
+<meta name="thelab:hosted-url" content="https://thelab.wilsonzach.com/project/apriltag-detector/review/device-agnostic-processor-implementation-review">
+<!-- Optional owner questions. Add 1–8 entries; each needs 2–8 options. -->
+<script type="application/json" id="thelab-questions">[]</script>
+<title>Device-agnostic processor implementation review</title>
+<style>
+  /* Self-contained. Mirrors The Lab reader so the local file looks like the hosted
+     one. This block is NOT published: the hosted view uses The Lab's own reader
+     stylesheet, and only the article content below is published. */
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    background: #0a0a0a; color: #a1a1a1;
+    font-size: 15px; line-height: 1.7; letter-spacing: -0.006em;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 820px; margin: 0 auto; padding: 40px 24px 96px; }
+  a { color: #4e9bfa; text-decoration: none; } a:hover { text-decoration: underline; }
+  img { max-width: 100%; height: auto; }
+  h1 { font-size: 30px; font-weight: 600; letter-spacing: -0.025em; line-height: 1.2; color: #ededed; margin-bottom: 8px; }
+  h2 { font-size: 17px; font-weight: 600; letter-spacing: -0.015em; color: #ededed; margin: 56px 0 16px; padding-top: 24px; border-top: 1px solid #222; }
+  h3 { font-size: 14px; font-weight: 600; color: #ededed; margin: 32px 0 12px; }
+  p { margin: 0 0 12px; } strong { color: #ededed; font-weight: 600; }
+  ul, ol { margin: 0 0 12px 22px; } li { margin: 4px 0; }
+  .lede { color: #ededed; font-size: 16px; margin: 4px 0 8px; }
+  code { font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace; }
+  pre.code { background: #0d0d0d; border: 1px solid #222; border-radius: 6px; padding: 16px 20px; overflow-x: auto; font-size: 12.5px; line-height: 1.65; color: #a1a1a1; tab-size: 2; margin: 16px 0; }
+  .callout { border: 1px solid #222; border-left: 2px solid #4e9bfa; border-radius: 0 6px 6px 0; padding: 14px 20px; margin: 20px 0; font-size: 13.5px; color: #a1a1a1; }
+  .callout strong { color: #ededed; }
+  figure { margin: 16px 0; } figcaption { font-size: 12px; color: #6b6b6b; padding-top: 8px; font-family: ui-monospace, Menlo, monospace; }
+  .fig-scroll { overflow-x: auto; border: 1px solid #222; border-radius: 6px; }
+  .fig-scroll svg { display: block; width: 100%; height: auto; }
+  .tbl-scroll { overflow-x: auto; }
+  table.data { width: 100%; border-collapse: collapse; font-size: 13.5px; margin: 12px 0; }
+  table.data th { text-align: left; font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.07em; color: #6b6b6b; padding: 10px 14px; border-bottom: 1px solid #222; }
+  table.data td { padding: 10px 14px; border-bottom: 1px solid #222; color: #a1a1a1; vertical-align: top; }
+  table.data tr:last-child td { border-bottom: 0; }
+  table.data td:first-child { color: #ededed; white-space: nowrap; }
+  .plan-links { margin: 16px 0 8px; }
+  .plan-links table.data td:first-child { font-size: 11px; text-transform: uppercase; letter-spacing: 0.07em; color: #6b6b6b; width: 90px; }
+  .plan-links table.data td:nth-child(2) { color: #ededed; font-family: ui-monospace, Menlo, monospace; font-size: 12.5px; word-break: break-all; }
+  .status { display: inline-flex; align-items: center; gap: 7px; }
+  .status::before { content: ""; width: 7px; height: 7px; border-radius: 50%; }
+  .st-draft::before { border: 1px solid #6b6b6b; }
+  .st-active::before { background: #4e9bfa; }
+  .st-done::before { background: #ededed; }
+  .st-archived::before { background: #333; }
+</style>
+</head>
+<body>
+<main class="wrap">
+<article>
+  <h1>Device-agnostic processor implementation review</h1>
+
+  <!-- Plan meta: local-file chrome only — `lab publish` strips this whole section
+       from the published body (The Lab renders its own header + metadata rail). The
+       CLI fills the Version cell on publish (v1, v2, …). -->
+  <section class="plan-links">
+    <div class="tbl-scroll"><table class="data">
+      <tr><td>Project</td><td>apriltag-detector</td></tr>
+      <tr><td>Version</td><td id="thelab-version">v2</td></tr>
+      <tr><td>Status</td><td><span class="status st-done">done</span> · 2026-10-16</td></tr>
+    </table></div>
+  </section>
+
+  <p class="lede">The reusable Python processor is implemented and independently reviewed. The existing Pi/FRC service uses it. Native C# portability and finer adaptive scanning remain explicit future work.</p>
+  <h2>Scope and verdict</h2>
+  <p><strong>Approve this first modularization phase.</strong> Reviewed the working-tree changes on <code>master</code> based on <code>a039b2b</code>, including the new processing module, embedding documentation, tests, solver interface, and service integration. No native library, C# binding, camera SDK, or adaptive rake is represented as implemented.</p>
+  <p>A read-only Terra design critique supported the frame-in/results-out seam, geometry-only inputs, and explicit distinction between Python reuse and cross-language portability. A separate Sol reviewer inspected the implementation and tests, found a yaw-timing regression, and approved the revised implementation after re-review. No unresolved blocking findings remain.</p>
+  <h2>What changed</h2>
+  <ul>
+    <li><code>VisionProcessor.process</code> accepts caller-owned images and seconds-based timestamps. Detection-only needs no profile or calibration. Existing <code>CameraCalibration</code> plus tag size enables metric solving; field layouts are optional.</li>
+    <li><code>FiducialDetector</code> is a structural interface, so a replacement implementation does not inherit from the OpenCV detector. Detector adapters own ROI strategy and must preserve IDs and decoded corner orientation.</li>
+    <li>Solver input types no longer import capture configuration or transport modules. The processor imports no capture, profile, output, recording, or NetworkTables modules.</li>
+    <li>The existing service retains capture, reconnect, output, recording, display, FPS/frame age, robot mount, and yaw/trig augmentation. The processing path is shared with direct embedding consumers.</li>
+  </ul>
+  <h2>Review finding resolved</h2>
+  <p>The first extraction moved yaw lookup before detection. Since the yaw source polls incoming samples when queried, this could exclude an after-capture sample delivered during detection and lose interpolation. Robot-specific augmentation now lives in the service after image processing. A deterministic test supplies yaw at 9.99 s, captures at 10 s, and delivers the 10.01 s sample from the detector; interpolation is retained.</p>
+  <p>The regression test was explicitly run against the incorrect early-lookup order and failed, then passed after restoring the corrected order. A same-second, equal-size source restoration required removing the generated service bytecode cache before re-running; the final full suite ran against the corrected source.</p>
+  <h2>Verification</h2>
+  <ul>
+    <li><code>.venv/bin/pytest --cov=northstar_vision --cov-report=term:skip-covered</code>: 146 passed, 80.71% coverage, 60% required.</li>
+    <li><code>.venv/bin/pytest experiments/occlusion_detector/tests</code>: 6 passed, including custom decoder rotations, corruption, fallback, and batched sampling behavior.</li>
+    <li><code>.venv/bin/ruff format --check .</code> and <code>.venv/bin/ruff check .</code>: passed.</li>
+    <li><code>git diff --check</code>: passed. No dependency or generated-source changes.</li>
+    <li><code>.venv/bin/python -m build</code> and <code>.venv/bin/python -m twine check dist/*</code>: wheel/sdist built and metadata passed.</li>
+    <li>Isolated import from the built wheel ran a blank frame through <code>VisionProcessor</code>, confirmed the wheel supplied the imported package, and confirmed capture/profile/output/NetworkTables modules were absent.</li>
+    <li>The independent final reviewer ran 33 processor, service, orientation, and simulation tests plus focused Ruff and whitespace checks; all passed.</li>
+  </ul>
+  <h2>Artifact tooling</h2>
+  <p>HTML element IDs and embedded JavaScript syntax were checked. T3 visual preview could not run because the host blocks its browser sandbox: “This host blocks the sandbox T3's browser runs in (AppArmor on Ubuntu 23.10+).” No system policy was changed, and visual QA is not claimed. The self-contained integration diagram was rendered inline.</p>
+  <p>The Lab plan and review publication succeeded. Live Activity start/end both returned <code>POST /live-activities → 400: Live Activity update failed</code>; phone-status delivery was not verified.</p>
+  <h2>Limits and next phase</h2>
+  <p>Existing OpenCV/WPILib coordinate conventions remain explicit. A host must adapt SDK pixel formats and world coordinates. The archived custom decoder is not yet a calibrated main-pipeline backend; its adapter must preserve decoded corner orientation before adoption.</p>
+  <p>No native/C# or target-camera runtime was built or tested. The companion plan proposes one C/C++ core and a versioned C ABI with Python and C# bindings, rather than a separate implementation for every device. Recursive finer scanning remains an opt-in experimental direction to justify against recall and latency on a representative corpus.</p>
+  <p>Design and portability plan: <a href="2026-10-16_device_agnostic_vision.html">Device-agnostic AprilTag processing</a>.</p>
+</article>
+</main>
+</body>
+</html>

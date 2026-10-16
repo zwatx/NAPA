@@ -10,7 +10,7 @@ import cv2
 import numpy as np
 
 from .config import PlatformProfile
-from .fiducials import OpenCVArucoFiducialDetector
+from .fiducials import FiducialDetector, OpenCVArucoFiducialDetector
 from .service import NorthstarVisionService
 from .simulation import RenderedFrame, SyntheticFrameSource
 from .simulation_artifacts import SIMULATION_LIMITATIONS
@@ -93,7 +93,7 @@ def run_simulation(
     supersample: int = 1,
     repetitions: int = 3,
     warmup_passes: int = 1,
-    detector: OpenCVArucoFiducialDetector | None = None,
+    detector: FiducialDetector | None = None,
     corpus: SimulationCorpus | None = None,
 ) -> SimulationRun:
     if repetitions < 1 or warmup_passes < 0:
