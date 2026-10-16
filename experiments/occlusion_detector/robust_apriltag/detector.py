@@ -9,7 +9,7 @@ from typing import Any
 import cv2
 import numpy as np
 
-from .family import TAG36H11, decode_observed, make_code_from_bits, near_code_lookup
+from .family import TAG36H11, decode_observed, make_code_from_bits
 
 
 @dataclass
@@ -68,7 +68,16 @@ class Robust36h11Detector:
         self._black_border_points = self._make_black_border_points()
         self._white_border_points = self._make_white_border_points()
         self._edge_points = self._make_edge_points()
-        near_code_lookup()
+        self._edge_canonical = np.asarray([point for point, _inward, _side in self._edge_points], dtype=np.float32)
+        self._edge_inward = np.asarray([inward for _point, inward, _side in self._edge_points], dtype=np.float32)
+        self._edge_sides = np.asarray([side for _point, _inward, side in self._edge_points], dtype=np.int8)
+        self._edge_offsets = np.linspace(-0.9, 0.9, 31, dtype=np.float32)
+        self._close_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+        self._black_sample_end = len(self._black_border_points)
+        self._white_sample_end = self._black_sample_end + len(self._white_border_points)
+        self._sample_points = np.concatenate(
+            (self._black_border_points, self._white_border_points, TAG36H11.bit_centers)
+        )
 
     def detect(
         self,

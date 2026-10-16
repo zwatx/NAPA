@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import cached_property
 
 import numpy as np
 
@@ -19,7 +20,7 @@ class Tag36h11Family:
     total_width: int
     nbits: int
 
-    @property
+    @cached_property
     def bit_centers(self) -> np.ndarray:
         return np.column_stack((self.bit_x + 0.5, self.bit_y + 0.5)).astype(np.float32)
 
@@ -35,11 +36,10 @@ TAG36H11 = Tag36h11Family(
 )
 
 FULL_MASK = (1 << tag36h11.NBITS) - 1
-_NEAR_CODE_LOOKUP: dict[int, tuple[int, int, int]] | None = None
 
 
 def popcount(value: int) -> int:
-    return bin(int(value)).count("1")
+    return int(value).bit_count()
 
 
 def code_to_bits(code: int, nbits: int = tag36h11.NBITS) -> np.ndarray:
@@ -60,34 +60,52 @@ def rotate90_code(code: int, nbits: int = tag36h11.NBITS) -> int:
     return rotated & ((1 << nbits) - 1)
 
 
-def _flip_combinations(nbits: int) -> list[int]:
-    masks = [0]
-    masks.extend(1 << i for i in range(nbits))
-    for i in range(nbits):
-        for j in range(i + 1, nbits):
-            masks.append((1 << i) | (1 << j))
-    return masks
+def _rotated_codes() -> tuple[tuple[int, int, int], ...]:
+    """Return the 2,348 rotated family words instead of a 1.5M-entry near-code table."""
+
+    variants: list[tuple[int, int, int]] = []
+    # Preserve the old decoder's iteration and reported rotation semantics: it
+    # rotated the observation clockwise, so the equivalent family word is
+    # rotated in the opposite direction.
+    for rotation in range(4):
+        family_rotations = (-rotation) % 4
+        for tag_id, family_code in enumerate(TAG36H11.codes):
+            code = family_code
+            for _ in range(family_rotations):
+                code = rotate90_code(code)
+            variants.append((code, tag_id, rotation))
+    return tuple(variants)
 
 
-def near_code_lookup() -> dict[int, tuple[int, int, int]]:
-    global _NEAR_CODE_LOOKUP
-    if _NEAR_CODE_LOOKUP is not None:
-        return _NEAR_CODE_LOOKUP
+ROTATED_CODES = _rotated_codes()
 
-    lookup: dict[int, tuple[int, int, int]] = {}
-    flip_masks = _flip_combinations(tag36h11.NBITS)
-    for tag_id, family_code in enumerate(TAG36H11.codes):
-        code = family_code
-        for rotation in range(4):
-            for flip_mask in flip_masks:
-                observed = code ^ flip_mask
-                hamming = popcount(flip_mask)
-                existing = lookup.get(observed)
-                if existing is None or hamming < existing[1]:
-                    lookup[observed] = (tag_id, hamming, rotation)
-            code = rotate90_code(code)
-    _NEAR_CODE_LOOKUP = lookup
-    return lookup
+_BLOCK_BITS = 12
+_BLOCK_MASK = (1 << _BLOCK_BITS) - 1
+_BLOCK_SHIFTS = (0, _BLOCK_BITS, 2 * _BLOCK_BITS)
+
+
+def _multi_index() -> tuple[tuple[tuple[int, ...], ...], ...]:
+    """Index each rotated code by three disjoint 12-bit blocks."""
+
+    blocks: list[list[list[int]]] = [
+        [[] for _ in range(1 << _BLOCK_BITS)] for _ in _BLOCK_SHIFTS
+    ]
+    for candidate_index, (code, _tag_id, _rotation) in enumerate(ROTATED_CODES):
+        for block, shift in zip(blocks, _BLOCK_SHIFTS, strict=True):
+            block[(code >> shift) & _BLOCK_MASK].append(candidate_index)
+    return tuple(tuple(tuple(bucket) for bucket in block) for block in blocks)
+
+
+_MULTI_INDEX = _multi_index()
+
+
+def _full_mask_candidates(observed_code: int) -> list[int]:
+    """Return ordered candidates guaranteed to include every <=2-bit match."""
+
+    candidates: set[int] = set()
+    for block, shift in zip(_MULTI_INDEX, _BLOCK_SHIFTS, strict=True):
+        candidates.update(block[(observed_code >> shift) & _BLOCK_MASK])
+    return sorted(candidates)
 
 
 def make_code_from_bits(bits: np.ndarray, mask: np.ndarray | None = None) -> tuple[int, int]:
@@ -124,30 +142,25 @@ def decode_observed(
     if popcount(observed_mask) < min_reliable_bits:
         return None
 
-    if observed_mask == FULL_MASK and max_hamming <= 2:
-        match = near_code_lookup().get(observed_code)
-        if match is None:
-            return None
-        tag_id, hamming, rotation = match
-        return tag_id, hamming, rotation, tag36h11.H - hamming
-
     best: tuple[int, int, int] | None = None
     second_hamming = 10_000
-    code = observed_code
-    mask = observed_mask
-    for rotation in range(4):
-        for tag_id, family_code in enumerate(TAG36H11.codes):
-            hamming = popcount((code ^ family_code) & mask)
-            if best is None or hamming < best[1]:
-                if best is not None:
-                    second_hamming = min(second_hamming, best[1])
-                best = (tag_id, hamming, rotation)
-            elif hamming < second_hamming:
-                second_hamming = hamming
-        code = rotate90_code(code)
-        mask = rotate90_code(mask)
+    if observed_mask == FULL_MASK and max_hamming <= 2:
+        candidate_indices = _full_mask_candidates(observed_code)
+    else:
+        candidate_indices = range(len(ROTATED_CODES))
+    for candidate_index in candidate_indices:
+        family_code, tag_id, rotation = ROTATED_CODES[candidate_index]
+        hamming = popcount((observed_code ^ family_code) & observed_mask)
+        if best is None or hamming < best[1]:
+            if best is not None:
+                second_hamming = min(second_hamming, best[1])
+            best = (tag_id, hamming, rotation)
+        elif hamming < second_hamming:
+            second_hamming = hamming
 
     if best is None or best[1] > max_hamming:
         return None
+    if observed_mask == FULL_MASK and max_hamming <= 2:
+        return best[0], best[1], best[2], tag36h11.H - best[1]
     margin = second_hamming - best[1] if second_hamming < 10_000 else TAG36H11.nbits - best[1]
     return best[0], best[1], best[2], margin
