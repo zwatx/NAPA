@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- TheLab metadata (read by the `lab` CLI on publish; do not remove).
+     thelab:plan is the STABLE plan id — re-publishing this file updates the same
+     plan (bumping its version) even if the title changes. -->
+<meta name="thelab:project" content="AprilTagDetector">
+<meta name="thelab:title" content="AprilTagDetector Efficiency Remediation">
+<meta name="thelab:plan" content="apriltagdetector-efficiency-remediation">
+<meta name="thelab:kind" content="plan">
+<meta name="thelab:status" content="done">
+<meta name="thelab:tags" content="performance,implementation">
+<!-- Optional: issue numbers this plan closes on ship, e.g. content="3,7". They
+     auto-close when the plan is marked done (`lab done … --commit`). -->
+<meta name="thelab:addresses" content="10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39">
+<meta name="thelab:version" content="1">
+<meta name="thelab:hosted-url" content="https://thelab.wilsonzach.com/project/apriltagdetector/plan/apriltagdetector-efficiency-remediation">
+<title>AprilTagDetector Efficiency Remediation</title>
+<style>
+  /* Self-contained. Mirrors The Lab reader so the local file looks like the hosted
+     one. This block is NOT published: the hosted view uses The Lab's own reader
+     stylesheet, and only the article content below is published. */
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    background: #0a0a0a; color: #a1a1a1;
+    font-size: 15px; line-height: 1.7; letter-spacing: -0.006em;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 820px; margin: 0 auto; padding: 40px 24px 96px; }
+  a { color: #4e9bfa; text-decoration: none; } a:hover { text-decoration: underline; }
+  img { max-width: 100%; height: auto; }
+  h1 { font-size: 30px; font-weight: 600; letter-spacing: -0.025em; line-height: 1.2; color: #ededed; margin-bottom: 8px; }
+  h2 { font-size: 17px; font-weight: 600; letter-spacing: -0.015em; color: #ededed; margin: 56px 0 16px; padding-top: 24px; border-top: 1px solid #222; }
+  h3 { font-size: 14px; font-weight: 600; color: #ededed; margin: 32px 0 12px; }
+  p { margin: 0 0 12px; } strong { color: #ededed; font-weight: 600; }
+  ul, ol { margin: 0 0 12px 22px; } li { margin: 4px 0; }
+  .lede { color: #ededed; font-size: 16px; margin: 4px 0 8px; }
+  code { font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace; }
+  pre.code { background: #0d0d0d; border: 1px solid #222; border-radius: 6px; padding: 16px 20px; overflow-x: auto; font-size: 12.5px; line-height: 1.65; color: #a1a1a1; tab-size: 2; margin: 16px 0; }
+  .callout { border: 1px solid #222; border-left: 2px solid #4e9bfa; border-radius: 0 6px 6px 0; padding: 14px 20px; margin: 20px 0; font-size: 13.5px; color: #a1a1a1; }
+  .callout strong { color: #ededed; }
+  figure { margin: 16px 0; } figcaption { font-size: 12px; color: #6b6b6b; padding-top: 8px; font-family: ui-monospace, Menlo, monospace; }
+  .fig-scroll { overflow-x: auto; border: 1px solid #222; border-radius: 6px; }
+  .fig-scroll svg { display: block; width: 100%; height: auto; }
+  .tbl-scroll { overflow-x: auto; }
+  table.data { width: 100%; border-collapse: collapse; font-size: 13.5px; margin: 12px 0; }
+  table.data th { text-align: left; font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.07em; color: #6b6b6b; padding: 10px 14px; border-bottom: 1px solid #222; }
+  table.data td { padding: 10px 14px; border-bottom: 1px solid #222; color: #a1a1a1; vertical-align: top; }
+  table.data tr:last-child td { border-bottom: 0; }
+  table.data td:first-child { color: #ededed; white-space: nowrap; }
+  .plan-links { margin: 16px 0 8px; }
+  .plan-links table.data td:first-child { font-size: 11px; text-transform: uppercase; letter-spacing: 0.07em; color: #6b6b6b; width: 90px; }
+  .plan-links table.data td:nth-child(2) { color: #ededed; font-family: ui-monospace, Menlo, monospace; font-size: 12.5px; word-break: break-all; }
+  .status { display: inline-flex; align-items: center; gap: 7px; }
+  .status::before { content: ""; width: 7px; height: 7px; border-radius: 50%; }
+  .st-draft::before { border: 1px solid #6b6b6b; }
+  .st-active::before { background: #4e9bfa; }
+  .st-done::before { background: #ededed; }
+  .st-archived::before { background: #333; }
+</style>
+</head>
+<body>
+<main class="wrap">
+<article>
+  <h1>AprilTagDetector Efficiency Remediation</h1>
+
+  <!-- Plan meta: local-file chrome only — `lab publish` strips this whole section
+       from the published body (The Lab renders its own header + metadata rail). The
+       CLI fills the Version cell on publish (v1, v2, …). -->
+  <section class="plan-links">
+    <div class="tbl-scroll"><table class="data">
+      <tr><td>Project</td><td>AprilTagDetector</td></tr>
+      <tr><td>Version</td><td id="thelab-version">v1</td></tr>
+      <tr><td>Status</td><td><span class="status st-done">done</span> · 2026-07-11</td></tr>
+    </table></div>
+  </section>
+
+  <p class="lede">Implement and verify all 30 findings from the codebase efficiency sweep without weakening correctness, compatibility, observability, or test assurance.</p>
+
+  <h2>Context</h2>
+  <p>The v1 efficiency review filed issues 10–39 across production runtime, simulation and benchmarks, the experimental detector, CI, packaging, and tests. The user requested that every finding be fixed. The working tree began with only the untracked review artifact; product files were clean.</p>
+
+  <h2>Execution model</h2>
+  <div class="tbl-scroll"><table class="data">
+    <thead><tr><th>Workstream</th><th>Issues</th><th>Acceptance</th></tr></thead>
+    <tbody>
+      <tr><td>Production runtime</td><td>12–18, 26–33</td><td>Behavioral tests pass; NT ownership, pose fallback, health cadence, JSONL schema, and import surfaces remain explicit.</td></tr>
+      <tr><td>Simulation/tooling</td><td>19–21, 27, 34–36</td><td>Identical deterministic outputs with less rendering, retention, sync, and serialization work.</td></tr>
+      <tr><td>Experiment</td><td>10–11, 25, 37</td><td>No 1.5M-entry eager lookup; decoder correctness preserved; candidate work batched.</td></tr>
+      <tr><td>CI/package/tests</td><td>22–24, 38–39</td><td>No duplicate lint/coverage jobs, safer NT test ports, supported headless install path, meaningful smoke coverage retained.</td></tr>
+    </tbody>
+  </table></div>
+
+  <h2>Implementation steps</h2>
+  <ol>
+    <li>Make focused subsystem changes in parallel with non-overlapping file ownership.</li>
+    <li>Add or update regression tests for every behavior-bearing change.</li>
+    <li>Integrate and inspect the complete diff for scope, duplication, and API consistency.</li>
+    <li>Run Ruff format/check, full pytest with coverage, build/twine, command smoke tests, and targeted performance measurements.</li>
+    <li>Run an independent adversarial review, address blocking findings, publish a final review, and close issues 10–39 when verified.</li>
+  </ol>
+
+  <h2>Risks &amp; mitigations</h2>
+  <div class="tbl-scroll"><table class="data">
+    <thead><tr><th>Risk</th><th>Likelihood</th><th>Mitigation</th></tr></thead>
+    <tbody>
+      <tr><td>Pose fast path reduces robustness</td><td>medium</td><td>Generic-first only accepts threshold-clean data; RANSAC remains fallback; corrupted-tag tests are required.</td></tr>
+      <tr><td>Health cadence hides urgent state</td><td>medium</td><td>Keep core scalar telemetry per frame and force detailed publication on state changes.</td></tr>
+      <tr><td>Headless packaging breaks GUI users</td><td>medium</td><td>Expose explicit mutually documented runtime extras rather than silently removing GUI support.</td></tr>
+      <tr><td>Test deduplication creates shared-state coupling</td><td>low</td><td>Reuse immutable rendered fixtures only; retain isolated CLI end-to-end coverage.</td></tr>
+    </tbody>
+  </table></div>
+
+  <h2>Verification</h2>
+  <ul>
+    <li><code>ruff format --check .</code> and <code>ruff check .</code></li>
+    <li><code>pytest --cov=northstar_vision</code> with focused runtime/experiment tests</li>
+    <li><code>python -m build</code> and <code>twine check dist/*</code></li>
+    <li>Repeat simulation cProfile and experimental detector construction measurements.</li>
+    <li>Confirm the final diff changes only files tied to issues 10–39.</li>
+  </ul>
+
+  <h2>Decision rule</h2>
+  <p>For conditional low-priority findings, preserve the supported capability and remove avoidable work through explicit configuration, caching, or separation. Do not trade correctness or deployment compatibility for a synthetic microbenchmark.</p>
+</article>
+</main>
+</body>
+</html>
