@@ -33,6 +33,20 @@ def test_renderer_is_deterministic_and_changes_with_seed() -> None:
     assert first.truth.to_dict() == repeated.truth.to_dict()
 
 
+def test_renderer_is_isolated_from_caller_layout_mutation() -> None:
+    profile = load_profile("laptop")
+    layout = synthetic_wall_layout()
+    renderer = SyntheticAprilTagRenderer(profile.camera, profile.tag_size_m, layout, seed=11)
+    spec = standard_simulation_frames()[0]
+    before = renderer.render(spec)
+
+    layout[1][:] = np.eye(4)
+    after = renderer.render(spec)
+
+    assert np.array_equal(before.image, after.image)
+    assert before.truth.to_dict() == after.truth.to_dict()
+
+
 def test_renderer_corner_order_matches_hard_coded_golden_projection() -> None:
     profile = load_profile("laptop")
     renderer = SyntheticAprilTagRenderer(profile.camera, profile.tag_size_m, synthetic_wall_layout(), supersample=1)

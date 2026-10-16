@@ -28,20 +28,35 @@ class SyntheticAprilTagRenderer:
             raise ValueError("invalid simulation renderer settings")
         self.camera = camera
         self.tag_size_m = float(tag_size_m)
-        self.tag_layout = tag_layout
+        self.tag_layout = {
+            tag_id: np.asarray(transform, dtype=np.float64).copy() for tag_id, transform in tag_layout.items()
+        }
         self.seed = int(seed)
         self.supersample = int(supersample)
         self.background = int(background)
         self.marker_pixels = int(marker_pixels)
         self.dictionary = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_APRILTAG_36h11)
         self._markers: dict[int, np.ndarray] = {}
+        self._field_corners = {
+            tag_id: tag_field_corners(transform, self.tag_size_m) for tag_id, transform in self.tag_layout.items()
+        }
+        self._source_corners = np.array(
+            [
+                [0, 0],
+                [self.marker_pixels - 1, 0],
+                [self.marker_pixels - 1, self.marker_pixels - 1],
+                [0, self.marker_pixels - 1],
+            ],
+            dtype=np.float32,
+        )
+        self._marker_mask = np.full((self.marker_pixels, self.marker_pixels), 255, dtype=np.uint8)
+        self._scaled_calibration_matrix = self.camera.calibration_matrix.copy() * self.supersample
+        self._scaled_calibration_matrix[2, 2] = 1.0
 
     def render(self, spec: SimulationFrameSpec) -> RenderedFrame:
         scale = self.supersample
         width, height = self.camera.width * scale, self.camera.height * scale
         image = np.full((height, width), self.background, dtype=np.uint8)
-        matrix = self.camera.calibration_matrix.copy() * scale
-        matrix[2, 2] = 1.0
         camera_to_field = invert_transform(spec.field_to_camera)
         render_items: list[tuple[float, int, np.ndarray]] = []
         layout_corners: dict[int, np.ndarray] = {}
@@ -50,7 +65,7 @@ class SyntheticAprilTagRenderer:
         for tag_id in spec.tag_ids:
             if tag_id not in self.tag_layout:
                 raise ValueError(f"simulation tag {tag_id} is not present in the layout")
-            field_corners = tag_field_corners(self.tag_layout[tag_id], self.tag_size_m)
+            field_corners = self._field_corners[tag_id]
             camera_corners = transform_points(camera_to_field, field_corners)
             opencv_corners = wpilib_points_to_opencv(camera_corners)
             if np.any(opencv_corners[:, 2] <= 0.02) or not self._front_facing(tag_id, spec.field_to_camera):
@@ -59,7 +74,7 @@ class SyntheticAprilTagRenderer:
                 opencv_corners,
                 np.zeros(3),
                 np.zeros(3),
-                matrix,
+                self._scaled_calibration_matrix,
                 self.camera.distortion_coefficients,
             )
             projected = projected.reshape(4, 2)
@@ -122,21 +137,13 @@ class SyntheticAprilTagRenderer:
         y1 = min(height, int(math.ceil(float(np.max(corners[:, 1])))) + 2)
         if x1 <= x0 or y1 <= y0:
             return
-        source = np.array(
-            [
-                [0, 0],
-                [self.marker_pixels - 1, 0],
-                [self.marker_pixels - 1, self.marker_pixels - 1],
-                [0, self.marker_pixels - 1],
-            ],
-            dtype=np.float32,
-        )
         destination = corners.astype(np.float32) - np.array([x0, y0], dtype=np.float32)
-        transform = cv2.getPerspectiveTransform(source, destination)
+        transform = cv2.getPerspectiveTransform(self._source_corners, destination)
         size = (x1 - x0, y1 - y0)
-        warped = cv2.warpPerspective(self._marker(tag_id), transform, size, flags=cv2.INTER_NEAREST, borderValue=255)
+        marker = self._marker(tag_id)
+        warped = cv2.warpPerspective(marker, transform, size, flags=cv2.INTER_NEAREST, borderValue=255)
         mask = cv2.warpPerspective(
-            np.full_like(self._marker(tag_id), 255),
+            self._marker_mask,
             transform,
             size,
             flags=cv2.INTER_NEAREST,
@@ -163,6 +170,15 @@ class SyntheticAprilTagRenderer:
 
     def _apply_effects(self, image: np.ndarray, spec: SimulationFrameSpec) -> np.ndarray:
         effects = spec.effects
+        if (
+            effects.brightness == 0.0
+            and effects.contrast == 1.0
+            and effects.blur_sigma == 0.0
+            and effects.noise_sigma == 0.0
+            and effects.motion_blur_px <= 1
+            and effects.jpeg_quality is None
+        ):
+            return image
         work = np.clip(image.astype(np.float32) * effects.contrast + effects.brightness, 0, 255)
         if effects.blur_sigma > 0.0:
             work = cv2.GaussianBlur(work, (0, 0), effects.blur_sigma)

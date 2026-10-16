@@ -42,11 +42,7 @@ class SimulationScoringPublisher(OutputPublisher):
         self.pose_expected = 0
         self.pose_solved = 0
         self.expected_rejection_failures = 0
-        self.corner_rms_px: list[float] = []
-        self.translation_error_m: list[float] = []
-        self.rotation_error_deg: list[float] = []
-        self.reprojection_error_px: list[float] = []
-        self.timings: dict[str, list[float]] = {"detection_ms": [], "solve_ms": [], "processing_ms": []}
+        self.processing_ms: list[float] = []
         self.scenarios = {
             frame.truth.name: _ScenarioSamples(frame.truth.expected_tag_ids, frame.truth.expect_pose)
             for frame in self.frames
@@ -75,7 +71,6 @@ class SimulationScoringPublisher(OutputPublisher):
         for tag_id in set(observations_by_id).intersection(truth.image_corners):
             residual = observations_by_id[tag_id].corners - truth.image_corners[tag_id]
             corner_error = float(np.sqrt(np.mean(np.sum(residual * residual, axis=1))))
-            self.corner_rms_px.append(corner_error)
             scenario.corner_rms_px.append(corner_error)
 
         pose = result.camera_pose
@@ -86,9 +81,6 @@ class SimulationScoringPublisher(OutputPublisher):
                 scenario.pose_solved += 1
                 translation_error = float(np.linalg.norm(pose.field_to_camera_0[:3, 3] - truth.field_to_camera[:3, 3]))
                 rotation_error = rotation_error_deg(truth.field_to_camera, pose.field_to_camera_0)
-                self.translation_error_m.append(translation_error)
-                self.rotation_error_deg.append(rotation_error)
-                self.reprojection_error_px.append(pose.error_0)
                 scenario.translation_error_m.append(translation_error)
                 scenario.rotation_error_deg.append(rotation_error)
                 scenario.reprojection_error_px.append(pose.error_0)
@@ -97,13 +89,14 @@ class SimulationScoringPublisher(OutputPublisher):
         if set(truth.expected_rejected_tag_ids) - rejected_ids:
             self.expected_rejection_failures += 1
             scenario.expected_rejection_failures += 1
-        for name in self.timings:
+        for name in ("detection_ms", "solve_ms", "processing_ms"):
             value = float(result.health[name])
-            self.timings[name].append(value)
             if name == "detection_ms":
                 scenario.detection_ms.append(value)
             elif name == "solve_ms":
                 scenario.solve_ms.append(value)
+            else:
+                self.processing_ms.append(value)
 
     def close(self) -> None:
         self.closed = True
@@ -149,12 +142,20 @@ class SimulationScoringPublisher(OutputPublisher):
                 "expected": self.pose_expected,
                 "solved": self.pose_solved,
                 "solve_rate": None if self.pose_expected == 0 else self.pose_solved / self.pose_expected,
-                "translation_error_m": metric_distribution(self.translation_error_m),
-                "rotation_error_deg": metric_distribution(self.rotation_error_deg),
-                "reprojection_error_px": metric_distribution(self.reprojection_error_px),
+                "translation_error_m": self._global_distribution("translation_error_m"),
+                "rotation_error_deg": self._global_distribution("rotation_error_deg"),
+                "reprojection_error_px": self._global_distribution("reprojection_error_px"),
                 "expected_rejection_failures": self.expected_rejection_failures,
             },
-            "corners": {"rms_px": metric_distribution(self.corner_rms_px)},
-            "timing": {name: metric_distribution(values) for name, values in self.timings.items()},
+            "corners": {"rms_px": self._global_distribution("corner_rms_px")},
+            "timing": {
+                "detection_ms": self._global_distribution("detection_ms"),
+                "solve_ms": self._global_distribution("solve_ms"),
+                "processing_ms": metric_distribution(self.processing_ms),
+            },
             "scenarios": scenario_summaries,
         }
+
+    def _global_distribution(self, metric: str) -> dict[str, float | int | None]:
+        values = [value for scenario in self.scenarios.values() for value in getattr(scenario, metric)]
+        return metric_distribution(values)
