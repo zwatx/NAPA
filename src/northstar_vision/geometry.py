@@ -3,8 +3,9 @@ from __future__ import annotations
 import math
 from functools import lru_cache
 
-import cv2
 import numpy as np
+
+from . import _import_cv2
 
 # OpenCV camera coordinates are +X right, +Y down, +Z forward. WPILib uses
 # +X forward, +Y left, +Z up. These matrices convert vector coordinates and
@@ -14,6 +15,9 @@ WPILIB_TO_OPENCV_ROTATION = np.array(
     dtype=np.float64,
 )
 OPENCV_TO_WPILIB_ROTATION = WPILIB_TO_OPENCV_ROTATION.T
+OPENCV_TO_WPILIB_BASIS = np.eye(4, dtype=np.float64)
+OPENCV_TO_WPILIB_BASIS[:3, :3] = OPENCV_TO_WPILIB_ROTATION
+OPENCV_TO_WPILIB_BASIS.setflags(write=False)
 
 
 def euler_xyz_to_matrix(roll: float, pitch: float, yaw: float) -> np.ndarray:
@@ -45,6 +49,7 @@ def invert_transform(transform: np.ndarray) -> np.ndarray:
 
 
 def rvec_tvec_to_transform(rvec: np.ndarray, tvec: np.ndarray) -> np.ndarray:
+    cv2 = _import_cv2()
     r, _ = cv2.Rodrigues(np.asarray(rvec, dtype=np.float64).reshape(3, 1))
     out = np.eye(4, dtype=np.float64)
     out[:3, :3] = r
@@ -56,9 +61,7 @@ def opencv_pose_to_wpilib_transform(rvec: np.ndarray, tvec: np.ndarray) -> np.nd
     """Convert an OpenCV pose transform into the equivalent WPILib basis."""
 
     opencv_transform = rvec_tvec_to_transform(rvec, tvec)
-    basis = np.eye(4, dtype=np.float64)
-    basis[:3, :3] = OPENCV_TO_WPILIB_ROTATION
-    return basis @ opencv_transform @ basis.T
+    return OPENCV_TO_WPILIB_BASIS @ opencv_transform @ OPENCV_TO_WPILIB_BASIS.T
 
 
 def opencv_translation_to_wpilib(translation: np.ndarray) -> np.ndarray:

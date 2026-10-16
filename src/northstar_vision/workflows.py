@@ -6,16 +6,6 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from .calibration import (
-    CalibrationError,
-    CheckerboardSpec,
-    calibrate_checkerboard_images,
-    discover_checkerboard_images,
-    save_calibration_data,
-)
-from .field_layout import FieldLayoutError, load_wpilib_apriltag_layout
-from .provenance import ArtifactProvenance, ProvenanceKind
-
 
 def _positive_int(value: str) -> int:
     parsed = int(value)
@@ -45,6 +35,14 @@ def calibration_parser() -> argparse.ArgumentParser:
 
 
 def calibration_main(argv: Sequence[str] | None = None) -> int:
+    from .calibration import (
+        CalibrationError,
+        CheckerboardSpec,
+        calibrate_checkerboard_images,
+        discover_checkerboard_images,
+        save_calibration_data,
+    )
+
     args = calibration_parser().parse_args(argv)
     try:
         images = discover_checkerboard_images(args.images)
@@ -87,6 +85,9 @@ def layout_parser() -> argparse.ArgumentParser:
 
 
 def layout_main(argv: Sequence[str] | None = None) -> int:
+    from .field_layout import FieldLayoutError, load_wpilib_apriltag_layout
+    from .provenance import ArtifactProvenance, ProvenanceKind
+
     args = layout_parser().parse_args(argv)
     provenance = None
     if args.official_source:

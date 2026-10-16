@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-import cv2
 import numpy as np
+
+from . import _import_cv2
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,10 +43,13 @@ class BlockSkipPrefilter:
 
     def __init__(self, config: SkipScanConfig) -> None:
         self.config = config
+        self._kernel_size = 0
+        self._kernel: np.ndarray | None = None
 
     def find_rois(self, image: np.ndarray) -> list[Roi] | None:
         if not self.config.enabled:
             return None
+        cv2 = _import_cv2()
         gray = image
         if image.ndim == 3:
             gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
@@ -65,7 +69,10 @@ class BlockSkipPrefilter:
         kernel_size = max(3, int(round(self.config.dilation_px / stride)))
         if kernel_size % 2 == 0:
             kernel_size += 1
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (kernel_size, kernel_size))
+        if self._kernel is None or self._kernel_size != kernel_size:
+            self._kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (kernel_size, kernel_size))
+            self._kernel_size = kernel_size
+        kernel = self._kernel
         mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
         mask = cv2.dilate(mask, kernel, iterations=1)
 
@@ -94,6 +101,7 @@ class BlockSkipPrefilter:
 
     @staticmethod
     def _sampled_gradient(sampled: np.ndarray) -> np.ndarray:
+        cv2 = _import_cv2()
         blur = cv2.GaussianBlur(sampled, (3, 3), 0)
         grad_x = cv2.Sobel(blur, cv2.CV_16S, 1, 0, ksize=3)
         grad_y = cv2.Sobel(blur, cv2.CV_16S, 0, 1, ksize=3)

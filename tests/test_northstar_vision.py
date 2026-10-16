@@ -12,6 +12,7 @@ import cv2
 import numpy as np
 import pytest
 
+import northstar_vision
 from northstar_vision import (
     BlockSkipPrefilter,
     CameraPoseObservation,
@@ -47,6 +48,18 @@ from northstar_vision.output import (
 from northstar_vision.recording import AsyncJsonlOutputPublisher, JsonlRecorderConfig
 from northstar_vision.service import NorthstarVisionService
 from northstar_vision.types import FiducialImageObservation, FrameResult, TagAngleObservation
+
+
+def test_lazy_public_import_explains_missing_opencv(monkeypatch: pytest.MonkeyPatch) -> None:
+    missing = ModuleNotFoundError("No module named 'cv2'", name="cv2")
+
+    def fail_import(*_args: object, **_kwargs: object) -> None:
+        raise missing
+
+    monkeypatch.setattr(northstar_vision, "import_module", fail_import)
+
+    with pytest.raises(RuntimeError, match=r"northstar-vision\[gui\].*northstar-vision\[headless\]"):
+        northstar_vision.__getattr__("OpenCVArucoFiducialDetector")
 
 
 def make_marker_scene(tag_id: int = 1, *, size: int = 200) -> np.ndarray:

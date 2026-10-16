@@ -5,9 +5,9 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-import cv2
 import numpy as np
 
+from . import _import_cv2
 from .provenance import ArtifactProvenance, ProvenanceError, ProvenanceKind
 
 
@@ -326,6 +326,8 @@ def calibrate_checkerboard_images(
     in ``checkerboard`` are inner-corner counts, not square counts.
     """
 
+    cv2 = _import_cv2()
+
     if minimum_views < 3:
         raise CalibrationError("minimum_views must be at least 3")
     paths = tuple(Path(path).expanduser() for path in image_paths)
@@ -426,6 +428,7 @@ def undistorted_corner_angles(
     this avoids rebuilding and inverting the same camera matrix for every tag.
     """
 
+    cv2 = _import_cv2()
     normalized = cv2.undistortPoints(
         np.asarray(corners, dtype=np.float64).reshape(-1, 1, 2),
         camera_matrix,
