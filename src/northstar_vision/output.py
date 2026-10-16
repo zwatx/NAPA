@@ -208,33 +208,44 @@ class NTOutputPublisher(OutputPublisher):
         server_port: int = 0,
         send_all: bool = True,
         close_drain_s: float = 0.1,
+        health_publish_interval_s: float = 1.0,
         clock: Callable[[], float] = perf_counter,
+        ntcore_module: Any | None = None,
+        instance: Any | None = None,
     ) -> None:
         if server_port < 0 or server_port > 65535:
             raise ValueError("server_port must be between 0 and 65535")
         if not math.isfinite(close_drain_s) or close_drain_s < 0:
             raise ValueError("close_drain_s must be finite and non-negative")
-        try:
-            import ntcore
-        except ImportError as exc:
-            raise RuntimeError("Install northstar-vision[nt] to use NetworkTables output") from exc
-        self.ntcore = ntcore
+        if not math.isfinite(health_publish_interval_s) or health_publish_interval_s <= 0:
+            raise ValueError("health_publish_interval_s must be finite and greater than zero")
+        if ntcore_module is None:
+            try:
+                import ntcore as ntcore_module
+            except ImportError as exc:
+                raise RuntimeError("Install northstar-vision[nt] to use NetworkTables output") from exc
+        self.ntcore = ntcore_module
         self.clock = clock
         self.send_all = send_all
         self.delivery_policy = "upstream_lossless" if send_all else "latest_value"
         self.close_drain_s = close_drain_s
-        self.instance = ntcore.NetworkTableInstance.create()
+        self.health_publish_interval_s = health_publish_interval_s
+        self._next_health_publish_s = 0.0
+        self._last_health_state: tuple[tuple[str, object], ...] | None = None
+        self.owns_instance = instance is None
+        self.instance = instance if instance is not None else self.ntcore.NetworkTableInstance.create()
         self.publishers: list[Any] = []
         self.closed = True
         try:
-            if server_port:
-                self.instance.setServer(server, server_port)
-            else:
-                self.instance.setServer(server)
-            self.instance.startClient4(device_id)
+            if self.owns_instance:
+                if server_port:
+                    self.instance.setServer(server, server_port)
+                else:
+                    self.instance.setServer(server)
+                self.instance.startClient4(device_id)
             table = self.instance.getTable(f"/{device_id}/output")
             self.observations = table.getDoubleArrayTopic("observations").publish(
-                ntcore.PubSubOptions(periodic=0.01, sendAll=send_all, keepDuplicates=True)
+                self.ntcore.PubSubOptions(periodic=0.01, sendAll=send_all, keepDuplicates=True)
             )
             self.publishers.append(self.observations)
             self.fps = table.getIntegerTopic("fps_apriltags").publish()
@@ -261,7 +272,12 @@ class NTOutputPublisher(OutputPublisher):
         self.fps.set(int(result.health.get("fps", 0)))
         self.latency.set(float(result.health.get("latency_ms", 0.0)))
         health = {**result.health, "nt_connected": self.instance.isConnected()}
-        self.health.set(json.dumps(health, separators=(",", ":")))
+        now = self.clock()
+        health_state = _health_state(health)
+        if now >= self._next_health_publish_s or health_state != self._last_health_state:
+            self.health.set(json.dumps(health, separators=(",", ":")))
+            self._next_health_publish_s = now + self.health_publish_interval_s
+            self._last_health_state = health_state
 
     def telemetry(self) -> dict[str, Any]:
         return {
@@ -270,6 +286,9 @@ class NTOutputPublisher(OutputPublisher):
             "delivery_policy": self.delivery_policy,
             "close_drain_s": self.close_drain_s,
         }
+
+    def health_state(self) -> dict[str, Any]:
+        return {"connected": bool(self.instance.isConnected())}
 
     def close(self) -> None:
         if self.closed:
@@ -292,14 +311,15 @@ class NTOutputPublisher(OutputPublisher):
             except Exception as exc:  # Continue so the NT client is always destroyed.
                 errors.append(exc)
         self.publishers.clear()
-        try:
-            self.instance.stopClient()
-        except Exception as exc:
-            errors.append(exc)
-        try:
-            self.ntcore.NetworkTableInstance.destroy(self.instance)
-        except Exception as exc:
-            errors.append(exc)
+        if self.owns_instance:
+            try:
+                self.instance.stopClient()
+            except Exception as exc:
+                errors.append(exc)
+            try:
+                self.ntcore.NetworkTableInstance.destroy(self.instance)
+            except Exception as exc:
+                errors.append(exc)
         if errors and raise_errors:
             raise errors[0]
 
@@ -330,3 +350,22 @@ def make_output_publisher(
 
         return AsyncJsonlOutputPublisher(output_path, config=jsonl_config)
     raise ValueError(f"Unknown output mode {mode!r}; expected jsonl, nt, or none")
+
+
+def _health_state(health: dict[str, Any]) -> tuple[tuple[str, object], ...]:
+    """Extract values whose changes should bypass the health cadence."""
+
+    state = [(key, _hashable_health_value(value)) for key, value in health_state_fields(health).items()]
+    for section, value in health.items():
+        if not isinstance(value, dict):
+            continue
+        state.extend(
+            (f"{section}.{key}", _hashable_health_value(child)) for key, child in health_state_fields(value).items()
+        )
+    return tuple(sorted(state))
+
+
+def _hashable_health_value(value: Any) -> object:
+    if isinstance(value, (str, int, float, bool, type(None))):
+        return value
+    return repr(value)

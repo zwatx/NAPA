@@ -665,6 +665,114 @@ def test_networktables_constructor_rolls_back_partial_initialization(monkeypatch
     assert FakeNetworkTableInstance.destroyed
 
 
+def test_networktables_health_uses_cadence_and_shared_instance_ownership() -> None:
+    class FakePublisher:
+        def __init__(self) -> None:
+            self.values: list[tuple[object, ...]] = []
+
+        def set(self, *values: object) -> None:
+            self.values.append(values)
+
+        def close(self) -> None:
+            return None
+
+    class FakeTopic:
+        def __init__(self) -> None:
+            self.publisher = FakePublisher()
+
+        def publish(self, *_args: object, **_kwargs: object) -> FakePublisher:
+            return self.publisher
+
+    class FakeTable:
+        def __init__(self) -> None:
+            self.topics: dict[str, FakeTopic] = {}
+
+        def topic(self, name: str) -> FakeTopic:
+            return self.topics.setdefault(name, FakeTopic())
+
+        getDoubleArrayTopic = topic
+        getIntegerTopic = topic
+        getDoubleTopic = topic
+        getStringTopic = topic
+
+    class FakeInstance:
+        def __init__(self) -> None:
+            self.table = FakeTable()
+            self.stopped = False
+
+        def getTable(self, _path: str) -> FakeTable:
+            return self.table
+
+        def isConnected(self) -> bool:
+            return True
+
+        def flush(self) -> None:
+            return None
+
+        def stopClient(self) -> None:
+            self.stopped = True
+
+    destroyed = False
+
+    class FakeNetworkTableInstance:
+        @staticmethod
+        def destroy(_instance: FakeInstance) -> None:
+            nonlocal destroyed
+            destroyed = True
+
+    now = [0.0]
+    instance = FakeInstance()
+    fake_ntcore = SimpleNamespace(
+        NetworkTableInstance=FakeNetworkTableInstance,
+        PubSubOptions=lambda **kwargs: kwargs,
+        _now=lambda: 1_000_000,
+    )
+    publisher = NTOutputPublisher(
+        "device",
+        "server",
+        clock=lambda: now[0],
+        close_drain_s=0.0,
+        ntcore_module=fake_ntcore,
+        instance=instance,
+    )
+
+    publisher.publish(
+        FrameResult(
+            timestamp=1.0,
+            health={"fps": 1, "latency_ms": 1.0, "source_connected": True, "output": {"connected": True}},
+        )
+    )
+    now[0] = 0.1
+    publisher.publish(
+        FrameResult(
+            timestamp=2.0,
+            health={"fps": 2, "latency_ms": 2.0, "source_connected": True, "output": {"connected": True}},
+        )
+    )
+    health_values = instance.table.topics["health"].publisher.values
+    assert len(health_values) == 1
+    assert len(instance.table.topics["fps_apriltags"].publisher.values) == 2
+
+    publisher.publish(
+        FrameResult(
+            timestamp=3.0,
+            health={"fps": 3, "latency_ms": 3.0, "source_connected": True, "output": {"connected": False}},
+        )
+    )
+    assert len(health_values) == 2
+    now[0] = 1.2
+    publisher.publish(
+        FrameResult(
+            timestamp=4.0,
+            health={"fps": 4, "latency_ms": 4.0, "source_connected": True, "output": {"connected": False}},
+        )
+    )
+    assert len(health_values) == 3
+    publisher.close()
+    assert not instance.stopped
+    assert not destroyed
+
+
 def test_image_directory_replay_stops_unless_looping(tmp_path: Path) -> None:
     cv2.imwrite(str(tmp_path / "frame.png"), np.zeros((20, 20, 3), dtype=np.uint8))
     source = ReplaySource(tmp_path)
