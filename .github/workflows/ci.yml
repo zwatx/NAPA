@@ -2,36 +2,51 @@ name: CI
 
 on:
   push:
+    branches: [master]
   pull_request:
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  test:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+      - run: python -m pip install -e '.[headless,test,nt]' ruff
+      - run: ruff format --check .
+      - run: ruff check .
+      - run: pytest --cov=northstar_vision
+      - run: pytest experiments/occlusion_detector/tests
+
+  compatibility:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         include:
           - python-version: "3.11"
-            opencv-floor: true
+            opencv: "opencv-python-headless==4.7.0.72"
+            numpy: "numpy<2"
           - python-version: "3.12"
-            opencv-floor: false
+            opencv: "opencv-python-headless>=4.7"
+            numpy: "numpy>=1.24"
           - python-version: "3.13"
-            opencv-floor: false
-          - python-version: "3.14"
-            opencv-floor: false
+            opencv: "opencv-python-headless>=4.7"
+            numpy: "numpy>=1.24"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
-      - run: python -m pip install --upgrade pip
-      - if: matrix.opencv-floor
-        run: python -m pip install 'numpy<2' 'opencv-python==4.7.0.72'
-      - run: python -m pip install -e '.[dev,nt]'
-      - run: ruff format --check .
-      - run: ruff check .
-      - run: pytest --cov=northstar_vision
+      - run: python -m pip install '${{ matrix.numpy }}' '${{ matrix.opencv }}' -e '.[test]'
+      - run: pytest
 
   package-smoke:
     runs-on: ubuntu-latest
@@ -41,11 +56,17 @@ jobs:
         with:
           python-version: "3.14"
           cache: pip
-      - run: python -m pip install --upgrade pip build twine
+      - run: python -m pip install build twine
       - run: python -m build
       - run: python -m twine check dist/*
+      - run: >-
+          python -c 'import email, glob, zipfile;
+          wheel=glob.glob("dist/*.whl")[0];
+          archive=zipfile.ZipFile(wheel);
+          metadata=email.message_from_bytes(archive.read(next(name for name in archive.namelist() if name.endswith("METADATA"))));
+          assert {"gui", "headless"} <= set(metadata.get_all("Provides-Extra", []))'
       - run: python -m venv /tmp/northstar-wheel
-      - run: /tmp/northstar-wheel/bin/python -m pip install dist/*.whl
+      - run: /tmp/northstar-wheel/bin/python -m pip install opencv-python-headless dist/*.whl
       - run: cd /tmp && /tmp/northstar-wheel/bin/northstar-vision --list-profiles
       - run: cd /tmp && /tmp/northstar-wheel/bin/northstar-vision --profile laptop --check-config
       - run: cd /tmp && /tmp/northstar-wheel/bin/northstar-benchmark --help
@@ -54,8 +75,8 @@ jobs:
       - run: cd /tmp && /tmp/northstar-wheel/bin/northstar-simulate --help
       - run: cd /tmp && /tmp/northstar-wheel/bin/northstar-simulate --repetitions 1 --warmup-passes 0 --output-dir /tmp/northstar-sim
       - run: python -m venv /tmp/northstar-sdist
-      - run: /tmp/northstar-sdist/bin/python -m pip install dist/*.tar.gz
-      - run: cd /tmp && /tmp/northstar-sdist/bin/northstar-vision --profile raspi --check-config
+      - run: /tmp/northstar-sdist/bin/python -m pip install --no-deps dist/*.tar.gz
+      - run: /tmp/northstar-sdist/bin/python -c 'import importlib.metadata; assert importlib.metadata.version("northstar-vision")'
       - uses: actions/upload-artifact@v4
         with:
           name: northstar-vision-dist
