@@ -8,9 +8,9 @@ from pathlib import Path
 
 import pytest
 
-from northstar_vision.orientation import NetworkTablesRobotYawSource
-from northstar_vision.output import NTOutputPublisher
-from northstar_vision.types import FrameResult
+from napa_vision.orientation import NetworkTablesRobotYawSource
+from napa_vision.output import NTOutputPublisher
+from napa_vision.types import FrameResult
 
 ntcore = pytest.importorskip("ntcore")
 
@@ -40,14 +40,14 @@ def _start_server(server: object, persistence_path: Path) -> int:
 def _endpoint_matches_server(server: object, port: int, nonce: str, timeout_s: float = 1.0) -> bool:
     """Verify a port at the NT protocol level using a server-owned nonce topic."""
 
-    topic_name = f"/__northstar_test_probe/{nonce}"
+    topic_name = f"/__napa_test_probe/{nonce}"
     publisher = server.getStringTopic(topic_name).publish()  # type: ignore[attr-defined]
     probe = ntcore.NetworkTableInstance.create()
     subscriber = None
     try:
         subscriber = probe.getStringTopic(topic_name).subscribe("")
         probe.setServer("127.0.0.1", port)
-        probe.startClient4(f"northstar-port-probe-{nonce}")
+        probe.startClient4(f"napa-port-probe-{nonce}")
         publisher.set(nonce)
         server.flush()  # type: ignore[attr-defined]
         return _wait_until(lambda: probe.isConnected() and subscriber.get() == nonce, timeout_s=timeout_s)

@@ -1,2 +1,3 @@
 include CHANGELOG.md
 include benchmarks/corpus.example.json
+include docs/operations.md

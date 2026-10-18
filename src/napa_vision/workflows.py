@@ -22,7 +22,7 @@ def _positive_float(value: str) -> float:
 
 
 def calibration_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Calibrate a Northstar camera from checkerboard photographs")
+    parser = argparse.ArgumentParser(description="Calibrate a camera for Napa from checkerboard photographs")
     parser.add_argument("images", help="Directory containing checkerboard images")
     parser.add_argument("--output", required=True, help="Destination calibration JSON")
     parser.add_argument("--columns", type=_positive_int, required=True, help="Checkerboard inner-corner columns")
@@ -53,7 +53,7 @@ def calibration_main(argv: Sequence[str] | None = None) -> int:
         )
         save_calibration_data(args.output, calibration)
     except (CalibrationError, OSError, ValueError) as exc:
-        print(f"northstar-calibrate: error: {exc}", file=sys.stderr)
+        print(f"napa-calibrate: error: {exc}", file=sys.stderr)
         return 2
     summary = {
         "output": str(Path(args.output).expanduser().resolve()),
@@ -97,7 +97,7 @@ def layout_main(argv: Sequence[str] | None = None) -> int:
         if args.require_production:
             layout.require_production()
     except (FieldLayoutError, OSError, ValueError) as exc:
-        print(f"northstar-layout: error: {exc}", file=sys.stderr)
+        print(f"napa-layout: error: {exc}", file=sys.stderr)
         return 2
     report = {
         "layout": str(Path(args.layout).expanduser().resolve()),

@@ -628,7 +628,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             write_benchmark_summary_text(serialized, args.output)
         print(serialized)
     except (CorpusManifestError, OSError, RuntimeError, ValueError) as exc:
-        print(f"northstar-benchmark: error: {exc}", file=sys.stderr)
+        print(f"napa-benchmark: error: {exc}", file=sys.stderr)
         return 2
     return 0 if gate["passed"] else 1
 

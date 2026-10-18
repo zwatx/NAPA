@@ -84,7 +84,7 @@ class AsyncJsonlOutputPublisher(OutputPublisher):
 
     def __init__(
         self,
-        path: str | Path = "northstar_output.jsonl",
+        path: str | Path = "napa_output.jsonl",
         *,
         config: JsonlRecorderConfig | None = None,
         clock: Callable[[], float] = perf_counter,
@@ -143,7 +143,7 @@ class AsyncJsonlOutputPublisher(OutputPublisher):
 
         self._thread = threading.Thread(
             target=self._writer_main,
-            name=f"northstar-jsonl-{self.path.name}",
+            name=f"napa-jsonl-{self.path.name}",
             daemon=True,
         )
         self._thread.start()

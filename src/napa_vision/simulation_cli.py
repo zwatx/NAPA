@@ -186,7 +186,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         stdout_text = report_text if args.pretty else serialize_benchmark_summary(baseline.summary)
         print(stdout_text)
     except (cv2.error, OSError, ProfileError, RuntimeError, ValueError) as exc:
-        print(f"northstar-simulate: error: {exc}", file=sys.stderr)
+        print(f"napa-simulate: error: {exc}", file=sys.stderr)
         return 2
     return 0 if baseline.summary["gate"]["passed"] else 1
 

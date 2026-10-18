@@ -223,7 +223,7 @@ class NTOutputPublisher(OutputPublisher):
             try:
                 import ntcore as ntcore_module
             except ImportError as exc:
-                raise RuntimeError("Install northstar-vision[nt] to use NetworkTables output") from exc
+                raise RuntimeError("Install napa-vision[nt] to use NetworkTables output") from exc
         self.ntcore = ntcore_module
         self.clock = clock
         self.send_all = send_all
@@ -329,7 +329,7 @@ def make_output_publisher(
     device_id: str,
     nt_server: str,
     *,
-    output_path: str | Path = "northstar_output.jsonl",
+    output_path: str | Path = "napa_output.jsonl",
     nt_server_port: int = 0,
     nt_send_all: bool = True,
     nt_close_drain_s: float = 0.1,

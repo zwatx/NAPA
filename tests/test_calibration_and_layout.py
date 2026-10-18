@@ -8,7 +8,7 @@ import cv2
 import numpy as np
 import pytest
 
-from northstar_vision.calibration import (
+from napa_vision.calibration import (
     CalibrationError,
     CameraCalibration,
     CheckerboardSpec,
@@ -16,8 +16,8 @@ from northstar_vision.calibration import (
     load_calibration_data,
     save_calibration_data,
 )
-from northstar_vision.field_layout import FieldLayoutError, load_wpilib_apriltag_layout
-from northstar_vision.provenance import (
+from napa_vision.field_layout import FieldLayoutError, load_wpilib_apriltag_layout
+from napa_vision.provenance import (
     ArtifactProvenance,
     ProvenanceKind,
     require_production_artifacts,

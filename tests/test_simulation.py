@@ -6,19 +6,19 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-import northstar_vision.simulation_artifacts as simulation_artifacts_module
-import northstar_vision.simulation_cli as simulation_cli_module
-from northstar_vision.benchmark import load_corpus_manifest
-from northstar_vision.config import load_profile
-from northstar_vision.fiducials import OpenCVArucoFiducialDetector
-from northstar_vision.geometry import transform_matrix
-from northstar_vision.simulation import SimulationFrameSpec
-from northstar_vision.simulation_artifacts import write_simulation_corpus
-from northstar_vision.simulation_benchmark import SimulationRun, run_simulation
-from northstar_vision.simulation_cli import main
-from northstar_vision.simulation_metrics import SimulationThresholds, evaluate_simulation_gate
-from northstar_vision.simulation_renderer import SyntheticAprilTagRenderer
-from northstar_vision.simulation_scenarios import standard_simulation_frames, synthetic_wall_layout
+import napa_vision.simulation_artifacts as simulation_artifacts_module
+import napa_vision.simulation_cli as simulation_cli_module
+from napa_vision.benchmark import load_corpus_manifest
+from napa_vision.config import load_profile
+from napa_vision.fiducials import OpenCVArucoFiducialDetector
+from napa_vision.geometry import transform_matrix
+from napa_vision.simulation import SimulationFrameSpec
+from napa_vision.simulation_artifacts import write_simulation_corpus
+from napa_vision.simulation_benchmark import SimulationRun, run_simulation
+from napa_vision.simulation_cli import main
+from napa_vision.simulation_metrics import SimulationThresholds, evaluate_simulation_gate
+from napa_vision.simulation_renderer import SyntheticAprilTagRenderer
+from napa_vision.simulation_scenarios import standard_simulation_frames, synthetic_wall_layout
 
 
 @pytest.fixture(scope="module")

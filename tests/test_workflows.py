@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from northstar_vision.workflows import calibration_main, layout_main
+from napa_vision.workflows import calibration_main, layout_main
 
 
 def _layout(path: Path) -> None:

@@ -78,7 +78,7 @@ class PlatformProfile:
 def available_profiles() -> tuple[str, ...]:
     """Return the names of profiles bundled in the installed package."""
 
-    profile_root = resources.files("northstar_vision.profiles")
+    profile_root = resources.files("napa_vision.profiles")
     return tuple(
         sorted(item.name.removesuffix(".json") for item in profile_root.iterdir() if item.name.endswith(".json"))
     )
@@ -199,7 +199,7 @@ def _resolve_profile(profile: str | Path) -> Any:
     raw = Path(profile).expanduser()
     if raw.suffix == ".json" or raw.exists() or raw.parent != Path("."):
         return raw
-    return resources.files("northstar_vision.profiles").joinpath(f"{raw.name}.json")
+    return resources.files("napa_vision.profiles").joinpath(f"{raw.name}.json")
 
 
 def load_profile(profile: str | Path) -> PlatformProfile:
@@ -500,7 +500,7 @@ def load_profile(profile: str | Path) -> PlatformProfile:
     output_mode = _string(output.get("mode", "jsonl"), "output.mode")
     if output_mode not in {"jsonl", "none", "nt"}:
         raise ProfileError("output.mode must be one of: jsonl, none, nt")
-    output_path = _string(output.get("path", "northstar_output.jsonl"), "output.path")
+    output_path = _string(output.get("path", "napa_output.jsonl"), "output.path")
     nt_server = _string(output.get("nt_server", "10.0.0.2"), "output.nt_server")
     nt_server_port = _integer(output.get("nt_server_port", 0), "output.nt_server_port", minimum=0)
     if nt_server_port > 65535:
@@ -597,7 +597,7 @@ def load_profile(profile: str | Path) -> PlatformProfile:
         shutdown_timeout_s=shutdown_timeout_s,
     )
     name = _string(data.get("name", getattr(source, "stem", "profile")), "name")
-    device_id = _string(data.get("device_id", "northstar_0"), "device_id")
+    device_id = _string(data.get("device_id", "napa_0"), "device_id")
     platform = _string(data.get("platform", name), "platform")
     replay_path_value = data.get("replay_path")
     if replay_path_value is not None:

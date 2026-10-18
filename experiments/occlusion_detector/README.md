@@ -3,7 +3,7 @@
 This folder preserves the earlier custom `tag36h11` occlusion-tolerant detector.
 It is no longer the runtime architecture for the main project.
 
-The current direction is Northstar-style:
+Napa's maintained path is separate from this experiment:
 
 - OpenCV AprilTag detection is the detector of record.
 - The project focuses on camera service structure, calibration, pose solvers,

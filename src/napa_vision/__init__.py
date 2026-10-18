@@ -1,4 +1,4 @@
-"""AprilTag detection and Northstar-compatible pose publishing."""
+"""Napa: modular AprilTag perception and pose processing."""
 
 from __future__ import annotations
 
@@ -9,8 +9,8 @@ from typing import Any
 from ._version import __version__
 
 _OPENCV_INSTALL_HINT = (
-    "OpenCV is not installed; install northstar-vision[gui] for desktop display support "
-    "or northstar-vision[headless] for servers and robots"
+    "OpenCV is not installed; install napa-vision[gui] for desktop display support "
+    "or napa-vision[headless] for servers and robots"
 )
 
 _EXPORT_MODULES = {

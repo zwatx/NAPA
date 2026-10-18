@@ -12,8 +12,8 @@ import cv2
 import numpy as np
 import pytest
 
-import northstar_vision
-from northstar_vision import (
+import napa_vision
+from napa_vision import (
     BlockSkipPrefilter,
     CameraPoseObservation,
     CameraPoseSolver,
@@ -26,11 +26,11 @@ from northstar_vision import (
     available_profiles,
     load_profile,
 )
-from northstar_vision.calibration import load_calibration, save_calibration, undistorted_corner_angles
-from northstar_vision.capture import ReplaySource
-from northstar_vision.cli import main
-from northstar_vision.fiducials import make_apriltag_detector
-from northstar_vision.geometry import (
+from napa_vision.calibration import load_calibration, save_calibration, undistorted_corner_angles
+from napa_vision.capture import ReplaySource
+from napa_vision.cli import main
+from napa_vision.fiducials import make_apriltag_detector
+from napa_vision.geometry import (
     invert_transform,
     opencv_translation_to_wpilib,
     tag_field_corners,
@@ -39,16 +39,16 @@ from northstar_vision.geometry import (
     transform_points,
     wpilib_points_to_opencv,
 )
-from northstar_vision.output import (
+from napa_vision.output import (
     NTOutputPublisher,
     OutputPublisher,
     encode_observations,
     frame_result_to_dict,
     make_output_publisher,
 )
-from northstar_vision.recording import AsyncJsonlOutputPublisher, JsonlRecorderConfig
-from northstar_vision.service import NorthstarVisionService
-from northstar_vision.types import FiducialImageObservation, FrameResult, TagAngleObservation
+from napa_vision.recording import AsyncJsonlOutputPublisher, JsonlRecorderConfig
+from napa_vision.service import NapaVisionService
+from napa_vision.types import FiducialImageObservation, FrameResult, TagAngleObservation
 
 
 def test_lazy_public_import_explains_missing_opencv(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -57,10 +57,10 @@ def test_lazy_public_import_explains_missing_opencv(monkeypatch: pytest.MonkeyPa
     def fail_import(*_args: object, **_kwargs: object) -> None:
         raise missing
 
-    monkeypatch.setattr(northstar_vision, "import_module", fail_import)
+    monkeypatch.setattr(napa_vision, "import_module", fail_import)
 
-    with pytest.raises(RuntimeError, match=r"northstar-vision\[gui\].*northstar-vision\[headless\]"):
-        northstar_vision.__getattr__("OpenCVArucoFiducialDetector")
+    with pytest.raises(RuntimeError, match=r"napa-vision\[gui\].*napa-vision\[headless\]"):
+        napa_vision.__getattr__("OpenCVArucoFiducialDetector")
 
 
 def make_marker_scene(tag_id: int = 1, *, size: int = 200) -> np.ndarray:
@@ -116,7 +116,7 @@ def test_cli_lists_profiles_without_loading_opencv_config(
     capsys: pytest.CaptureFixture[str],
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    from northstar_vision import cli
+    from napa_vision import cli
 
     original_import = cli.import_module
 
@@ -134,7 +134,7 @@ def test_cli_lists_profiles_without_loading_opencv_config(
 
 
 def test_cli_constructor_rollback_closes_output_when_yaw_close_fails(monkeypatch: pytest.MonkeyPatch) -> None:
-    from northstar_vision import orientation, output, service
+    from napa_vision import orientation, output, service
 
     class FailingYaw:
         def close(self) -> None:
@@ -157,14 +157,14 @@ def test_cli_constructor_rollback_closes_output_when_yaw_close_fails(monkeypatch
     def fail_service(*_args: object, **_kwargs: object) -> None:
         raise RuntimeError("service setup failed")
 
-    monkeypatch.setattr(service, "NorthstarVisionService", fail_service)
+    monkeypatch.setattr(service, "NapaVisionService", fail_service)
 
     assert main(["--output", "none", "--robot-yaw-topic", "/RobotState/yaw"]) == 1
     assert tracking_output.closed
 
 
 def test_profile_validation_rejects_unknown_output_mode(tmp_path: Path) -> None:
-    source = resources.files("northstar_vision.profiles").joinpath("laptop.json")
+    source = resources.files("napa_vision.profiles").joinpath("laptop.json")
     data = json.loads(source.read_text(encoding="utf-8"))
     data["output"]["mode"] = "typo"
     path = tmp_path / "invalid.json"
@@ -174,7 +174,7 @@ def test_profile_validation_rejects_unknown_output_mode(tmp_path: Path) -> None:
 
 
 def test_profile_validation_rejects_duplicate_tag_ids(tmp_path: Path) -> None:
-    source = resources.files("northstar_vision.profiles").joinpath("laptop.json")
+    source = resources.files("napa_vision.profiles").joinpath("laptop.json")
     data = json.loads(source.read_text(encoding="utf-8"))
     data["tag_layout"]["tags"].append(data["tag_layout"]["tags"][0])
     path = tmp_path / "duplicate.json"
@@ -205,7 +205,7 @@ def test_profile_validation_rejects_malformed_typed_values(
     mutation: object,
     message: str,
 ) -> None:
-    source = resources.files("northstar_vision.profiles").joinpath("laptop.json")
+    source = resources.files("napa_vision.profiles").joinpath("laptop.json")
     data = json.loads(source.read_text(encoding="utf-8"))
     mutation(data)  # type: ignore[operator]
     path = tmp_path / "malformed.json"
@@ -343,7 +343,7 @@ def test_tag_angle_solver_batches_corner_undistortion(monkeypatch: pytest.Monkey
         calls += 1
         return original(*args, **kwargs)  # type: ignore[arg-type]
 
-    monkeypatch.setattr("northstar_vision.solvers.undistorted_corner_angles", counted)
+    monkeypatch.setattr("napa_vision.solvers.undistorted_corner_angles", counted)
 
     results = TagAngleSolver().solve_many(observations, profile.camera, singles)  # type: ignore[arg-type]
 
@@ -508,7 +508,7 @@ def test_trig_distance_solver_uses_full_pnp_translation_and_mount_transform() ->
     assert result.robot_pose == pytest.approx([0.0, 0.0, 0.0], abs=1e-12)
 
 
-def test_northstar_output_schema_is_unambiguous_for_multi_tag_pose() -> None:
+def test_napa_output_schema_is_unambiguous_for_multi_tag_pose() -> None:
     camera_pose = CameraPoseObservation(
         tag_ids=[1, 2],
         field_to_camera_0=np.eye(4),
@@ -525,7 +525,7 @@ def test_northstar_output_schema_is_unambiguous_for_multi_tag_pose() -> None:
     assert encoded[9] == 1.0
 
 
-def test_northstar_output_schema_preserves_single_tag_ambiguity() -> None:
+def test_napa_output_schema_preserves_single_tag_ambiguity() -> None:
     camera_pose = CameraPoseObservation(
         tag_ids=[1],
         field_to_camera_0=np.eye(4),
@@ -900,7 +900,7 @@ def test_service_can_run_without_camera_and_reports_stage_timing() -> None:
     profile = load_profile("laptop")
     source = _StaticFrameSource(np.full((720, 1280), 255, dtype=np.uint8))
     output = _CollectingPublisher()
-    service = NorthstarVisionService(profile, output, frame_source=source)
+    service = NapaVisionService(profile, output, frame_source=source)
     service.run()
     assert len(output.results) == 1
     assert output.results[0].health["source_connected"] is True
@@ -914,7 +914,7 @@ def test_service_zero_frame_limit_does_not_read() -> None:
     profile = load_profile("laptop")
     source = _StaticFrameSource(np.full((720, 1280), 255, dtype=np.uint8))
     output = _CollectingPublisher()
-    NorthstarVisionService(profile, output, frame_source=source).run(max_frames=0)
+    NapaVisionService(profile, output, frame_source=source).run(max_frames=0)
     assert source.read_count == 0
     assert output.closed and source.released
 
@@ -923,7 +923,7 @@ def test_service_negative_frame_limit_still_releases_resources() -> None:
     profile = load_profile("laptop")
     source = _StaticFrameSource(np.full((720, 1280), 255, dtype=np.uint8))
     output = _CollectingPublisher()
-    service = NorthstarVisionService(profile, output, frame_source=source)
+    service = NapaVisionService(profile, output, frame_source=source)
     with pytest.raises(ValueError, match="must not be negative"):
         service.run(max_frames=-1)
     assert source.read_count == 0
@@ -934,7 +934,7 @@ def test_service_rejects_frames_that_do_not_match_calibration_resolution() -> No
     profile = load_profile("laptop")
     source = _StaticFrameSource(np.full((480, 640), 255, dtype=np.uint8))
     output = _CollectingPublisher()
-    service = NorthstarVisionService(profile, output, frame_source=source)
+    service = NapaVisionService(profile, output, frame_source=source)
     with pytest.raises(RuntimeError, match="profile calibration requires"):
         service.run()
     assert output.closed and source.released

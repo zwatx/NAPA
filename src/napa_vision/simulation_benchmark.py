@@ -11,7 +11,7 @@ import numpy as np
 
 from .config import PlatformProfile
 from .fiducials import FiducialDetector, OpenCVArucoFiducialDetector
-from .service import NorthstarVisionService
+from .service import NapaVisionService
 from .simulation import RenderedFrame, SyntheticFrameSource
 from .simulation_artifacts import SIMULATION_LIMITATIONS
 from .simulation_metrics import metric_distribution
@@ -123,7 +123,7 @@ def run_simulation(
     )
     measured_source = frames * (warmup_passes + repetitions)
     scorer = SimulationScoringPublisher(frames, warmup_passes=warmup_passes)
-    service = NorthstarVisionService(
+    service = NapaVisionService(
         service_profile,
         scorer,
         frame_source=SyntheticFrameSource(measured_source),

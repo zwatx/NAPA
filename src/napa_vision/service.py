@@ -18,7 +18,7 @@ from .solvers import TrigDistanceSolver
 from .types import PoseSolveDiagnostics, health_state_fields
 
 
-class NorthstarVisionService:
+class NapaVisionService:
     def __init__(
         self,
         profile: PlatformProfile,
@@ -145,7 +145,7 @@ class NorthstarVisionService:
         self.output.publish(result)
         self.previous_publish_ms = (perf_counter() - publish_start) * 1000.0
         if self.show:
-            cv2.imshow("Northstar Vision", draw_overlay(frame, result))
+            cv2.imshow("Napa", draw_overlay(frame, result))
             if cv2.waitKey(1) & 0xFF in (27, ord("q")):
                 return False
         return True

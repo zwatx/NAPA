@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
-  "name": "laptop",
-  "device_id": "northstar_laptop",
-  "platform": "laptop",
+  "name": "raspi",
+  "device_id": "napa_raspi",
+  "platform": "raspberry_pi",
   "production": false,
   "tag_size_m": 0.1651,
   "camera": {
@@ -11,9 +11,9 @@
     "height": 720,
     "fps": 30,
     "buffer_size": 1,
-    "auto_exposure": null,
-    "exposure": null,
-    "gain": null,
+    "auto_exposure": 1,
+    "exposure": 120,
+    "gain": 10,
     "calibration": {
       "camera_matrix": [[900.0, 0.0, 640.0], [0.0, 900.0, 360.0], [0.0, 0.0, 1.0]],
       "distortion_coefficients": [0.0, 0.0, 0.0, 0.0, 0.0],
@@ -59,8 +59,8 @@
     }
   },
   "output": {
-    "mode": "jsonl",
-    "path": "northstar_output.jsonl",
+    "mode": "nt",
+    "path": "napa_output.jsonl",
     "nt_server": "10.0.0.2",
     "nt_server_port": 0,
     "nt_delivery": "upstream",

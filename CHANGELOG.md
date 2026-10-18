@@ -2,6 +2,9 @@
 
 ## Unreleased — 0.3.0
 
+- Renamed the project to Napa, the Python package to `napa_vision`, and the command prefix to `napa-`.
+- Renamed the camera service class to `NapaVisionService`; explicit device IDs and the Northstar observation packet remain compatible.
+- Added a reproducible detector/occlusion matrix with RobotPy AprilTag 3 baselines, raw timings, and explicit ID-only accuracy scoring.
 - Added latest-frame camera capture, bounded reconnects, negotiated-camera telemetry, and deterministic shutdown.
 - Added bounded asynchronous JSONL recording with rotation, retention, drop policies, periodic durable syncs, and health counters.
 - Added versioned calibration artifacts, checkerboard calibration, strict WPILib field-layout import, and production provenance gates.

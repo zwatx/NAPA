@@ -6,16 +6,16 @@ import cv2
 import numpy as np
 import pytest
 
-from northstar_vision.config import load_profile
-from northstar_vision.geometry import (
+from napa_vision.config import load_profile
+from napa_vision.geometry import (
     invert_transform,
     tag_field_corners,
     transform_matrix,
     transform_points,
     wpilib_points_to_opencv,
 )
-from northstar_vision.solvers import CameraPoseSolver
-from northstar_vision.types import CameraPoseBounds, FiducialImageObservation
+from napa_vision.solvers import CameraPoseSolver
+from napa_vision.types import CameraPoseBounds, FiducialImageObservation
 
 
 def _project_tag(

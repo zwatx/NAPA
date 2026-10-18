@@ -13,7 +13,7 @@ LOGGER = logging.getLogger(__name__)
 
 
 def _available_profiles() -> tuple[str, ...]:
-    profile_root = resources.files("northstar_vision.profiles")
+    profile_root = resources.files("napa_vision.profiles")
     return tuple(
         sorted(item.name.removesuffix(".json") for item in profile_root.iterdir() if item.name.endswith(".json"))
     )
@@ -64,7 +64,7 @@ def _port(value: str) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Detect AprilTags and publish Northstar-compatible observations")
+    parser = argparse.ArgumentParser(description="Napa AprilTag camera service with Northstar-compatible observations")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     parser.add_argument("--profile", default="laptop", help="Bundled profile name or path to a JSON profile")
     parser.add_argument("--list-profiles", action="store_true", help="List bundled profile names and exit")
@@ -178,7 +178,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         try:
             from .orientation import NetworkTablesRobotYawSource
             from .output import NTOutputPublisher, make_output_publisher
-            from .service import NorthstarVisionService
+            from .service import NapaVisionService
         except ModuleNotFoundError as exc:
             if exc.name == "cv2":
                 raise RuntimeError(_OPENCV_INSTALL_HINT) from exc
@@ -253,7 +253,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     ntcore_module=None if shared_nt is None else shared_nt.ntcore,
                     instance=None if shared_nt is None else shared_nt.instance,
                 )
-            service = NorthstarVisionService(
+            service = NapaVisionService(
                 profile,
                 output,
                 replay_path=args.replay,

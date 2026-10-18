@@ -171,7 +171,7 @@ class NetworkTablesRobotYawSource(RobotYawSource):
             try:
                 import ntcore as ntcore_module
             except ImportError as exc:
-                raise RuntimeError("Install northstar-vision[nt] to use NetworkTables robot yaw") from exc
+                raise RuntimeError("Install napa-vision[nt] to use NetworkTables robot yaw") from exc
 
         self.ntcore = ntcore_module
         self.clock = clock

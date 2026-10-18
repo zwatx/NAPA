@@ -57,7 +57,7 @@ def write_simulation_corpus(
     manifest_path = write_benchmark_summary(
         {
             "schema_version": 1,
-            "name": f"northstar-synthetic-{suite}",
+            "name": f"napa-synthetic-{suite}",
             "description": "Deterministic synthetic evidence; it is not a substitute for robot-camera testing.",
             "frames": manifest_frames,
         },
@@ -102,7 +102,7 @@ def _simulation_profile(profile: PlatformProfile, tag_layout: dict[int, np.ndarr
     return {
         "schema_version": 1,
         "name": "synthetic-replay",
-        "device_id": "northstar_sim",
+        "device_id": "napa_sim",
         "platform": "simulation",
         "production": False,
         "tag_size_m": profile.tag_size_m,
