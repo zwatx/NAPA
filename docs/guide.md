@@ -29,7 +29,7 @@ processing and calibration.
 | --- | ---: | --- |
 | `min_tag_px` | 32 | Smallest black-square side, in pixels, that Napa guarantees to sample. Lower it for distant tags; the work grows roughly with `1 / min_tag_px²`. |
 | `max_hamming` | 3 | Payload bits Napa will correct (0–3). A third bit is corrected only when the three wrong cells touch, as they do under a finger, cable, or glare spot; scattered errors look like chance matches and are rejected. Lower it to reject more aggressively. |
-| `min_contrast` | 20 | Minimum grey-level difference between tag black and the white quiet zone. Napa raises this automatically on noisy frames. |
+| `min_contrast` | 20 | Minimum grey-level difference between tag black and the white quiet zone. Napa raises this automatically, region by region, where the frame is noisy or textured. Lowering it finds fainter tags in washed-out scenes, but costs speed on every frame, because sensor noise then passes the threshold too. |
 | `min_border_cells` | 22 | How many of the 28 border cells must read as dark before a candidate is decoded. |
 | `sharpening` | 0.25 | Cell sharpening before decoding, as upstream AprilTag's `decode_sharpening`. |
 | `max_detections` | 64 | Results returned per frame. |
