@@ -1,5 +1,7 @@
 # Napa
 
+**Not Another Pixel Algorithm**: Napa skips most of the pixels in each frame.
+
 Napa is a fast AprilTag (`tag36h11`) detector for any camera. Give it a frame and get back tag IDs and sub-pixel
 corners, plus poses if you provide calibration. It opens no cameras, starts no threads, and publishes nothing, so a
 webcam, a Raspberry Pi, a headset, recorded video, or a camera SDK can all feed it the same way.
