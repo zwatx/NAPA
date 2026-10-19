@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import math
 from collections.abc import Sequence
 from typing import Protocol
 
@@ -23,7 +22,6 @@ from .types import (
     PoseSolveDiagnostics,
     SingleTagPoseObservation,
     TagAngleObservation,
-    TrigPoseObservation,
 )
 
 
@@ -35,11 +33,6 @@ class CameraGeometry(Protocol):
 
     @property
     def distortion_coefficients(self) -> np.ndarray: ...
-
-
-class MountedCameraGeometry(CameraGeometry, Protocol):
-    @property
-    def robot_to_camera(self) -> np.ndarray: ...
 
 
 def _solution_error(
@@ -521,42 +514,3 @@ class TagAngleSolver:
             )
             for observation, single, corner_angles in zip(observations, single_tag_poses, all_angles, strict=True)
         ]
-
-
-class TrigDistanceSolver:
-    def solve(
-        self,
-        tag_angle: TagAngleObservation,
-        camera: MountedCameraGeometry,
-        tag_layout: dict[int, np.ndarray],
-        robot_yaw_rad: float,
-        *,
-        field_rotation: np.ndarray | None = None,
-    ) -> TrigPoseObservation | None:
-        field_to_tag = tag_layout.get(tag_angle.tag_id)
-        if field_to_tag is None:
-            return None
-
-        camera_to_tag = np.asarray(tag_angle.camera_to_tag_translation, dtype=np.float64).reshape(3)
-        robot_to_tag = camera.robot_to_camera[:3, 3] + camera.robot_to_camera[:3, :3] @ camera_to_tag
-        if field_rotation is None:
-            field_rotation = self.yaw_rotation(robot_yaw_rad)
-        field_to_robot_translation = field_to_tag[:3, 3] - field_rotation @ robot_to_tag
-        robot_pose = np.array(
-            [field_to_robot_translation[0], field_to_robot_translation[1], robot_yaw_rad],
-            dtype=np.float64,
-        )
-        return TrigPoseObservation(
-            tag_id=tag_angle.tag_id,
-            robot_pose=robot_pose,
-            camera_to_tag_translation=camera_to_tag.copy(),
-            distance=tag_angle.distance,
-        )
-
-    @staticmethod
-    def yaw_rotation(robot_yaw_rad: float) -> np.ndarray:
-        cosine, sine = math.cos(robot_yaw_rad), math.sin(robot_yaw_rad)
-        return np.array(
-            [[cosine, -sine, 0.0], [sine, cosine, 0.0], [0.0, 0.0, 1.0]],
-            dtype=np.float64,
-        )

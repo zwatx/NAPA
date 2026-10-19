@@ -5,10 +5,10 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "napa-vision"
 dynamic = ["version"]
-description = "Fast, camera-agnostic AprilTag detection and pose processing"
+description = "Napa: a fast, dependency-free tag36h11 AprilTag detector with optional pose processing"
 readme = "README.md"
 requires-python = ">=3.11"
-keywords = ["apriltag", "computer-vision", "frc", "networktables", "robotics"]
+keywords = ["apriltag", "computer-vision", "fiducial", "pose-estimation", "robotics"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -31,7 +31,6 @@ Issues = "https://github.com/Zw96042/apriltag-detector/issues"
 [project.optional-dependencies]
 gui = ["opencv-python>=4.7"]
 headless = ["opencv-python-headless>=4.7"]
-nt = ["pyntcore>=2024"]
 benchmark = ["robotpy-apriltag==2026.2.2"]
 test = [
     "pytest>=8,<10",
@@ -46,18 +45,15 @@ dev = [
 ]
 
 [project.scripts]
-napa-vision = "napa_vision.cli:main"
 napa-benchmark = "napa_vision.benchmark:main"
 napa-calibrate = "napa_vision.workflows:calibration_main"
-napa-layout = "napa_vision.workflows:layout_main"
-napa-simulate = "napa_vision.simulation_cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["napa_vision*"]
 
 [tool.setuptools.package-data]
-napa_vision = ["py.typed", "profiles/*.json"]
+napa_vision = ["py.typed"]
 
 [tool.setuptools.dynamic]
 version = { attr = "napa_vision._version.__version__" }
@@ -69,7 +65,6 @@ addopts = "--strict-config --strict-markers"
 [tool.ruff]
 line-length = 120
 target-version = "py311"
-extend-exclude = ["experiments"]
 
 [tool.ruff.lint]
 select = ["B", "E", "F", "I", "UP"]

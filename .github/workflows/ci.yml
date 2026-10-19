@@ -18,7 +18,7 @@ jobs:
         with:
           python-version: "3.14"
           cache: pip
-      - run: python -m pip install -e '.[headless,test,nt]' ruff
+      - run: python -m pip install -e '.[headless,test]' ruff
       - run: ruff format --check .
       - run: ruff check .
       - run: pytest --cov=napa_vision
@@ -81,15 +81,14 @@ jobs:
           metadata=email.message_from_bytes(archive.read(next(name for name in archive.namelist() if name.endswith("METADATA"))));
           assert {"gui", "headless"} <= set(metadata.get_all("Provides-Extra", []))'
       - run: python -m venv /tmp/napa-wheel
-      - run: /tmp/napa-wheel/bin/python -m pip install opencv-python-headless dist/*.whl
-      - run: cd /tmp && /tmp/napa-wheel/bin/python -c 'import napa_vision; assert napa_vision.native_available()'
-      - run: cd /tmp && /tmp/napa-wheel/bin/napa-vision --list-profiles
-      - run: cd /tmp && /tmp/napa-wheel/bin/napa-vision --profile laptop --check-config
+      # The detector itself needs only numpy: check it before OpenCV is installed.
+      - run: /tmp/napa-wheel/bin/python -m pip install dist/*.whl
+      - run: >-
+          cd /tmp && /tmp/napa-wheel/bin/python -c 'import sys, numpy as np; sys.modules["cv2"] = None;
+          from napa_vision import NapaDetector; assert NapaDetector().detect(np.zeros((64, 64, 3), np.uint8)) == []'
+      - run: /tmp/napa-wheel/bin/python -m pip install opencv-python-headless
       - run: cd /tmp && /tmp/napa-wheel/bin/napa-benchmark --help
       - run: cd /tmp && /tmp/napa-wheel/bin/napa-calibrate --help
-      - run: cd /tmp && /tmp/napa-wheel/bin/napa-layout --help
-      - run: cd /tmp && /tmp/napa-wheel/bin/napa-simulate --help
-      - run: cd /tmp && /tmp/napa-wheel/bin/napa-simulate --repetitions 1 --warmup-passes 0 --output-dir /tmp/napa-sim
       - run: python -m venv /tmp/napa-sdist
       - run: /tmp/napa-sdist/bin/python -m pip install --no-deps dist/*.tar.gz
       - run: /tmp/napa-sdist/bin/python -c 'import importlib.metadata; assert importlib.metadata.version("napa-vision")'

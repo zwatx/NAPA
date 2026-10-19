@@ -1,4 +1,4 @@
-"""Build the optional native Napa core; all other metadata lives in pyproject.toml."""
+"""Build Napa's native C core; all other metadata lives in pyproject.toml."""
 
 from setuptools import Extension, setup
 from setuptools.command.build_ext import build_ext
@@ -26,8 +26,8 @@ setup(
             sources=[f"{NATIVE}/napa_core.c"],
             depends=[f"{NATIVE}/napa_core.h", f"{NATIVE}/tag36h11_codes.h"],
             include_dirs=[NATIVE],
-            # Without a compiler the install still succeeds and Napa falls back to OpenCV detection.
-            optional=True,
+            # Napa is the C core: installing without a C compiler fails rather than shipping no detector.
+            optional=False,
         )
     ],
     cmdclass={"build_ext": BuildNative},

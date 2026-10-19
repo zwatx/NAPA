@@ -5,10 +5,7 @@ import numpy as np
 import pytest
 
 import napa_vision.napa_detector as napa_detector
-from napa_vision import NapaDetector, OpenCVArucoFiducialDetector, VisionProcessor, default_detector, native_available
-from napa_vision.fiducials import make_apriltag_detector
-
-pytestmark = pytest.mark.skipif(not native_available(), reason="Napa core library is not built")
+from napa_vision import NapaDetector, VisionProcessor, native_available
 
 DICTIONARY = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_APRILTAG_36h11)
 
@@ -48,14 +45,6 @@ def test_sub_pixel_corners_across_sizes_and_angles(side: int, angle: float) -> N
     observations = NapaDetector().detect(image)
     assert [observation.tag_id for observation in observations] == [42]
     assert np.abs(observations[0].corners - corners).max() < 0.6
-
-
-def test_matches_opencv_ids_and_corner_order() -> None:
-    image, _corners = _scene(314, 160, angle_deg=33.0)
-    napa = NapaDetector().detect(image)
-    opencv = OpenCVArucoFiducialDetector().detect(image)
-    assert [observation.tag_id for observation in napa] == [observation.tag_id for observation in opencv] == [314]
-    assert np.abs(napa[0].corners - opencv[0].corners).max() < 1.5
 
 
 def test_accepts_colour_and_strided_frames() -> None:
@@ -114,18 +103,39 @@ def test_no_false_positives_on_noise_text_and_flat_frames() -> None:
         assert detector.detect(frame) == []
 
 
-def test_decodes_with_corrupted_payload_bits() -> None:
-    image, _corners = _scene(100, 200)
+def _corrupt(image, cells):
+    """Invert whole cells of the 200 px tag centred in a 640x480 _scene (grid rows/cols 0-7)."""
+
     cell = 200 / 8
-    origin = 320 - 100
-    # Flip three payload cells; tag36h11's minimum distance of 11 keeps three corrections unambiguous.
-    for row, column in ((2, 2), (4, 5), (6, 3)):
+    for row, column in cells:
         y0 = int(240 - 100 + row * cell + 4)
-        x0 = int(origin + column * cell + 4)
+        x0 = int(320 - 100 + column * cell + 4)
         patch = image[y0 : y0 + int(cell) - 8, x0 : x0 + int(cell) - 8]
         patch[...] = 255 - patch
-    assert [observation.tag_id for observation in NapaDetector().detect(image)] == [100]
+    return image
+
+
+def test_corrects_three_touching_bits_like_an_obstruction() -> None:
+    image = _corrupt(_scene(100, 200)[0], ((3, 3), (3, 4), (4, 4)))
+    found = NapaDetector().detect(image)
+    assert [observation.tag_id for observation in found] == [100]
+    assert found[0].hamming == 3
     assert NapaDetector(max_hamming=2).detect(image) == []
+
+
+def test_rejects_three_scattered_bits_but_corrects_two() -> None:
+    # Three wrong cells far apart look like a chance match, not damage: rejected.
+    assert NapaDetector().detect(_corrupt(_scene(100, 200)[0], ((2, 2), (4, 5), (6, 3)))) == []
+    # Two scattered wrong cells are corrected, as upstream AprilTag does.
+    found = NapaDetector().detect(_corrupt(_scene(100, 200)[0], ((2, 2), (6, 5))))
+    assert [(observation.tag_id, observation.hamming) for observation in found] == [(100, 2)]
+
+
+def test_reports_hamming_and_decision_margin() -> None:
+    image, _corners = _scene(7, 120)
+    (observation,) = NapaDetector().detect(image)
+    assert observation.hamming == 0
+    assert observation.decision_margin > 60  # a clean tag: every bit far from the threshold
 
 
 def test_multiple_tags_and_processor_default() -> None:
@@ -144,17 +154,33 @@ def test_multiple_tags_and_processor_default() -> None:
         np.testing.assert_allclose(found[tag_id], corners, atol=0.2)
 
 
-def test_default_detector_falls_back_without_native_library(monkeypatch, tmp_path) -> None:
+def test_missing_native_library_is_a_clear_error(monkeypatch, tmp_path) -> None:
     napa_detector._library.cache_clear()
     monkeypatch.setenv("NAPA_CORE_LIBRARY", str(tmp_path / "missing.so"))
     monkeypatch.setattr(napa_detector, "_LIBRARY_PATTERNS", ())
     try:
         assert not native_available()
-        assert isinstance(default_detector(), OpenCVArucoFiducialDetector)
         with pytest.raises(napa_detector.NativeLibraryError, match="NAPA_CORE_LIBRARY"):
             NapaDetector()
     finally:
         napa_detector._library.cache_clear()
+
+
+def test_detect_after_close_raises_instead_of_crashing() -> None:
+    detector = NapaDetector()
+    detector.close()
+    detector.close()
+    with pytest.raises(RuntimeError, match="after close"):
+        detector.detect(np.zeros((64, 64), np.uint8))
+
+
+def test_colour_conversion_without_opencv_matches_opencv() -> None:
+    rng = np.random.default_rng(3)
+    for channels, code in ((3, cv2.COLOR_BGR2GRAY), (4, cv2.COLOR_BGRA2GRAY)):
+        image = rng.integers(0, 256, (61, 83, channels), dtype=np.uint8)
+        b, g, r = (image[..., channel].astype(np.int32) for channel in range(3))
+        fallback = (b * 1868 + g * 9617 + r * 4899 + (1 << 13)) >> 14
+        assert np.abs(fallback - cv2.cvtColor(image, code)).max() <= 1
 
 
 def test_minimum_size_guarantee_holds_at_every_sampling_phase() -> None:
@@ -182,8 +208,3 @@ def test_minimum_size_guarantee_holds_at_every_sampling_phase() -> None:
                 if not found or np.abs(found[0].corners - corners).max() > 0.5:
                     misses.append((side, angle, offset))
     assert misses == []
-
-
-def test_napa_is_a_named_comparison_candidate() -> None:
-    assert isinstance(make_apriltag_detector("napa"), NapaDetector)
-    assert isinstance(make_apriltag_detector("baseline"), OpenCVArucoFiducialDetector)

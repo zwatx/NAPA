@@ -1,8 +1,13 @@
-"""Reproducible whole-frame AprilTag detector and occlusion benchmark.
+"""Napa versus standard AprilTag on a large, seeded corpus of distinct synthetic frames.
 
-The corpus is deliberately generated in memory before any detector is called.
-Timing excludes generation, report writing, and scoring; it includes each
-detector wrapper's normal image conversion or uniform-image gate.
+Every frame is rendered independently: random tag IDs, positions, sizes, arbitrary in-plane
+angles, 3D tilt, backgrounds, and camera degradations. Each tag is rendered with exact sub-pixel
+ground truth (4x supersampled, area-averaged like a sensor), so the benchmark scores which tags
+were found, which IDs were invented, and how far each corner landed from the truth.
+
+Timing is per frame and interleaved: every backend runs on the same frame, in a shuffled order,
+``--repetitions`` times. Rendering, scoring, and report writing are outside the timed calls.
+Frames are generated one at a time, so the corpus size is bounded by run time, not memory.
 """
 
 from __future__ import annotations
@@ -10,14 +15,15 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import math
 import os
 import platform
 import random
 import sys
 import tempfile
 from collections import defaultdict
-from collections.abc import Callable, Iterable, Sequence
-from dataclasses import asdict, dataclass
+from collections.abc import Callable, Iterator, Sequence
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -26,177 +32,735 @@ from time import perf_counter_ns
 import cv2
 import numpy as np
 
-from napa_vision.benchmark import write_benchmark_summary
-from napa_vision.fiducials import OpenCVArucoFiducialDetector, make_apriltag_detector
 from napa_vision.napa_detector import NapaDetector, native_available
-from napa_vision.prefilter import BlockSkipPrefilter, SkipScanConfig
 
-REPORT_SCHEMA_VERSION = 2
+REPORT_SCHEMA_VERSION = 3
 DEFAULT_RESOLUTIONS = ((640, 480), (1280, 720), (1920, 1080))
-DEFAULT_TAG_SIDES = (96, 160)
-TAG_IDS = (1, 42, 314)
-LAYOUT_TAG_IDS = (1, 42, 200, 314)
+DEFAULT_FRAMES_PER_SCENARIO = 50
+DEFAULT_OCCLUSION_CASES = 24
+TAG_COUNT = 587
+SUPERSAMPLE = 4
 OCCLUSION_FRACTIONS = (0.0, 0.05, 0.10, 0.20, 0.30, 0.40)
 OCCLUSION_REGIONS = ("payload-center", "border-strip", "corner")
 OCCLUSION_VALUES = (255, 127)
-STRESS_TAG_ID = 200
-CORNER_TAG_SIDES = (32, 48, 64, 96, 160, 240)
-CORNER_POSES_PER_SIDE = 20
+
+Corners = np.ndarray  # (4, 2) float64, black-square corners in OpenCV order, pixel-centre coordinates
+Detection = tuple[int, Corners]
+DetectFn = Callable[[np.ndarray], list[Detection]]
+
+
+# ------------------------------------------------------------------------------------------- data
 
 
 @dataclass(frozen=True, slots=True)
-class BenchmarkFrame:
-    name: str
-    image: np.ndarray
-    expected_ids: tuple[int, ...]
-    resolution: tuple[int, int]
-    scenario: str
-    rotation: int = 0
-    tag_side_px: int | None = None
-    occlusion: dict[str, object] | None = None
+class TagTruth:
+    tag_id: int
+    corners: Corners
+
+    @property
+    def side_px(self) -> float:
+        """Mean edge length of the black square, in pixels."""
+
+        return float(np.mean(np.linalg.norm(self.corners - np.roll(self.corners, -1, axis=0), axis=1)))
 
 
 @dataclass(slots=True)
-class Backend:
-    name: str
-    factory: Callable[[], Callable[[np.ndarray], list[int]]]
-    config: dict[str, object]
-    experimental: bool = False
+class Frame:
+    scenario: str
+    index: int
+    resolution: tuple[int, int]
+    image: np.ndarray
+    tags: list[TagTruth] = field(default_factory=list)
+    details: dict[str, object] = field(default_factory=dict)
+
+    @property
+    def name(self) -> str:
+        return f"{self.scenario}-{self.resolution[0]}x{self.resolution[1]}-{self.index:03d}"
 
 
 @dataclass(frozen=True, slots=True)
-class IdMetrics:
+class Scenario:
+    name: str
+    description: str
+    render: Callable[[np.random.Generator, int, int], tuple[np.ndarray, list[TagTruth], dict[str, object]]]
+
+
+@dataclass(frozen=True, slots=True)
+class Backend:
+    name: str
+    factory: Callable[[], DetectFn]
+    config: dict[str, object]
+
+
+@dataclass(frozen=True, slots=True)
+class FrameScore:
     true_positive: int
     false_positive: int
     false_negative: int
+    corner_errors: tuple[float, ...]
+
+
+# -------------------------------------------------------------------------------------- rendering
+
+
+@dataclass(frozen=True, slots=True)
+class Occlusion:
+    """An axis-aligned patch in tag cell units, where the black square spans 0.5 to 8.5."""
+
+    x0: float
+    y0: float
+    x1: float
+    y1: float
+    value: int
 
     @property
-    def precision(self) -> float | None:
-        denominator = self.true_positive + self.false_positive
-        return None if denominator == 0 else self.true_positive / denominator
-
-    @property
-    def recall(self) -> float | None:
-        denominator = self.true_positive + self.false_negative
-        return None if denominator == 0 else self.true_positive / denominator
+    def fraction(self) -> float:
+        return (self.x1 - self.x0) * (self.y1 - self.y0) / 64.0
 
 
-def build_corpus(
+_PATTERNS: dict[int, np.ndarray] = {}
+
+
+def tag_pattern(tag_id: int) -> np.ndarray:
+    """Return the 10x10 cell pattern: one white quiet-zone cell around the 8x8 black-bordered tag."""
+
+    pattern = _PATTERNS.get(tag_id)
+    if pattern is None:
+        dictionary = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_APRILTAG_36h11)
+        pattern = np.full((10, 10), 255, np.uint8)
+        pattern[1:9, 1:9] = cv2.aruco.generateImageMarker(dictionary, tag_id, 8, borderBits=1)
+        _PATTERNS[tag_id] = pattern
+    return pattern
+
+
+def render_tag(
+    image: np.ndarray,
+    tag_id: int,
+    corners: Corners,
     *,
-    resolutions: Sequence[tuple[int, int]] = DEFAULT_RESOLUTIONS,
-    tag_side_pixels: Sequence[int] = DEFAULT_TAG_SIDES,
-    seed: int = 2468,
-) -> list[BenchmarkFrame]:
-    """Build a seeded, in-memory grayscale corpus shared by every backend."""
+    black: float = 30.0,
+    white: float = 235.0,
+    occlusion: Occlusion | None = None,
+) -> None:
+    """Composite one tag (with its white quiet zone) into a float32 image, in place.
 
-    if not resolutions or not tag_side_pixels:
-        raise ValueError("resolutions and tag_side_pixels must not be empty")
-    if any(width < 160 or height < 120 for width, height in resolutions):
-        raise ValueError("each resolution must be at least 160x120")
-    if any(side < 32 for side in tag_side_pixels):
-        raise ValueError("tag_side_pixels must be at least 32")
+    ``corners`` are the black square's corners in pixel-centre coordinates. Each output pixel is
+    the mean of a 4x4 grid of exact point samples, so edges are integrated like a real sensor.
+    """
 
-    occlusion_resolution = min(resolutions, key=lambda item: item[0] * item[1])
-    rng = np.random.default_rng(seed)
-    frames: list[BenchmarkFrame] = []
-    for width, height in resolutions:
-        resolution = (width, height)
-        blank = np.full((height, width), 255, dtype=np.uint8)
-        frames.append(BenchmarkFrame("blank", blank, (), resolution, "blank"))
-        frames.append(
-            BenchmarkFrame(
-                "textured-negative",
-                _textured_negative(width, height, rng),
-                (),
-                resolution,
-                "textured-negative",
-            )
-        )
-        for side in tag_side_pixels:
-            if side + 20 >= min(width, height):
-                continue
-            for rotation in range(4):
-                frames.append(
-                    _single_tag_frame(
-                        name=f"clean-id1-r{rotation}-s{side}",
-                        width=width,
-                        height=height,
-                        tag_id=1,
-                        side=side,
-                        rotation=rotation,
-                        scenario="clean-one-tag",
-                    )
-                )
-            frames.append(_four_tag_frame(width, height, side))
-            frames.append(
-                _single_tag_frame(
-                    name=f"tiny-id314-s{side}",
-                    width=width,
-                    height=height,
-                    tag_id=314,
-                    side=max(32, side // 3),
-                    rotation=2,
-                    scenario="tiny-tag",
-                )
-            )
-            blurred = _single_tag_frame(
-                name=f"blurred-id42-s{side}",
-                width=width,
-                height=height,
-                tag_id=42,
-                side=side,
-                rotation=1,
-                scenario="blurred",
-            )
-            frames.append(
-                BenchmarkFrame(
-                    blurred.name,
-                    cv2.GaussianBlur(blurred.image, (0, 0), sigmaX=1.6),
-                    blurred.expected_ids,
-                    resolution,
-                    blurred.scenario,
-                    blurred.rotation,
-                    blurred.tag_side_px,
-                )
-            )
-            frames.append(_perspective_frame(width, height, side))
-            frames.extend(_stress_frames(width, height, side, rng))
-            # Hold ID and rotation fixed across every obstruction fraction.
-            # Payload sampling depends on tag size, so test both sizes at the
-            # smallest frame resolution rather than retaining gigabytes of copies.
-            if resolution == occlusion_resolution:
-                for tag_id in TAG_IDS:
-                    for rotation in range(4):
-                        for fraction in OCCLUSION_FRACTIONS:
-                            for region in OCCLUSION_REGIONS:
-                                for value in OCCLUSION_VALUES:
-                                    frames.append(
-                                        _occlusion_frame(
-                                            width=width,
-                                            height=height,
-                                            tag_id=tag_id,
-                                            side=side,
-                                            rotation=rotation,
-                                            fraction=fraction,
-                                            region=region,
-                                            value=value,
-                                        )
-                                    )
-    return frames
-
-
-def score_ids(expected: Iterable[int], detected: Iterable[int]) -> IdMetrics:
-    """Score IDs exactly; repeated detected IDs count as additional false positives."""
-
-    expected_set = set(expected)
-    detected_values = [int(value) for value in detected]
-    detected_set = set(detected_values)
-    duplicates = len(detected_values) - len(detected_set)
-    return IdMetrics(
-        true_positive=len(expected_set & detected_set),
-        false_positive=len(detected_set - expected_set) + duplicates,
-        false_negative=len(expected_set - detected_set),
+    height, width = image.shape
+    source = np.array([[0.5, 0.5], [8.5, 0.5], [8.5, 8.5], [0.5, 8.5]], np.float64)
+    to_image = cv2.getPerspectiveTransform(source.astype(np.float32), np.asarray(corners, np.float32)).astype(
+        np.float64
     )
+    outer = cv2.perspectiveTransform(
+        np.array([[[-0.5, -0.5], [9.5, -0.5], [9.5, 9.5], [-0.5, 9.5]]], np.float64), to_image
+    )[0]
+    x0 = max(0, int(math.floor(outer[:, 0].min())) - 1)
+    y0 = max(0, int(math.floor(outer[:, 1].min())) - 1)
+    x1 = min(width, int(math.ceil(outer[:, 0].max())) + 2)
+    y1 = min(height, int(math.ceil(outer[:, 1].max())) + 2)
+    if x1 <= x0 or y1 <= y0:
+        return
+    step = 1.0 / SUPERSAMPLE
+    xs = x0 - 0.5 + (np.arange((x1 - x0) * SUPERSAMPLE) + 0.5) * step
+    ys = y0 - 0.5 + (np.arange((y1 - y0) * SUPERSAMPLE) + 0.5) * step
+    grid_x, grid_y = np.meshgrid(xs, ys)
+    to_cells = np.linalg.inv(to_image)
+    w = to_cells[2, 0] * grid_x + to_cells[2, 1] * grid_y + to_cells[2, 2]
+    u = (to_cells[0, 0] * grid_x + to_cells[0, 1] * grid_y + to_cells[0, 2]) / w
+    v = (to_cells[1, 0] * grid_x + to_cells[1, 1] * grid_y + to_cells[1, 2]) / w
+    column = np.floor(u + 0.5).astype(np.int64)
+    row = np.floor(v + 0.5).astype(np.int64)
+    inside = (column >= 0) & (column < 10) & (row >= 0) & (row < 10)
+    pattern = tag_pattern(tag_id)
+    values = np.where(inside, pattern[np.clip(row, 0, 9), np.clip(column, 0, 9)], 255).astype(np.float32)
+    values = black + (white - black) * values / 255.0
+    if occlusion is not None:
+        covered = inside & (u >= occlusion.x0) & (u < occlusion.x1) & (v >= occlusion.y0) & (v < occlusion.y1)
+        values[covered] = occlusion.value
+    shape = (y1 - y0, SUPERSAMPLE, x1 - x0, SUPERSAMPLE)
+    coverage = inside.astype(np.float32).reshape(shape).mean(axis=(1, 3))
+    tag = (values * inside).reshape(shape).sum(axis=(1, 3)) / (SUPERSAMPLE * SUPERSAMPLE)
+    patch = image[y0:y1, x0:x1]
+    patch *= 1.0 - coverage
+    patch += tag
+
+
+def tag_pose(
+    rng: np.random.Generator,
+    side: float,
+    center: tuple[float, float],
+    *,
+    max_tilt_deg: float = 20.0,
+    min_tilt_deg: float = 0.0,
+) -> Corners:
+    """Corners of a square of roughly ``side`` pixels at any in-plane angle, tilted in 3D."""
+
+    roll = rng.uniform(0.0, 2.0 * math.pi)
+    tilt = math.radians(rng.uniform(min_tilt_deg, max_tilt_deg))
+    axis = rng.uniform(0.0, 2.0 * math.pi)
+    square = np.array([[-0.5, -0.5, 0.0], [0.5, -0.5, 0.0], [0.5, 0.5, 0.0], [-0.5, 0.5, 0.0]])
+    roll_matrix = np.array([[math.cos(roll), -math.sin(roll), 0], [math.sin(roll), math.cos(roll), 0], [0, 0, 1]])
+    k = np.array([math.cos(axis), math.sin(axis), 0.0])
+    kx = np.array([[0, -k[2], k[1]], [k[2], 0, -k[0]], [-k[1], k[0], 0]])
+    tilt_matrix = np.eye(3) + math.sin(tilt) * kx + (1 - math.cos(tilt)) * kx @ kx
+    points = square @ roll_matrix.T @ tilt_matrix.T
+    distance = 2.5  # tag widths from the camera: close enough for visible perspective
+    projected = points[:, :2] / (distance + points[:, 2:3]) * distance
+    corners = projected * side + np.asarray(center)
+    return corners.astype(np.float64)
+
+
+def _outer_radius(corners: Corners) -> float:
+    center = corners.mean(axis=0)
+    return float(np.linalg.norm(corners - center, axis=1).max()) * 1.25 + 2.0
+
+
+def place_tags(
+    rng: np.random.Generator,
+    width: int,
+    height: int,
+    count: int,
+    side_range: tuple[float, float],
+    **pose: float,
+) -> list[TagTruth]:
+    """Place up to ``count`` non-overlapping tags with distinct random IDs, fully inside the frame."""
+
+    tags: list[TagTruth] = []
+    ids = rng.choice(TAG_COUNT, size=count, replace=False)
+    for tag_id in ids:
+        for _attempt in range(60):
+            side = float(rng.uniform(*side_range))
+            reach = side * 0.9 + 4
+            if 2 * reach >= min(width, height):
+                side = (min(width, height) / 2 - 4) / 0.9 - 1
+                reach = side * 0.9 + 4
+            center = (float(rng.uniform(reach, width - reach)), float(rng.uniform(reach, height - reach)))
+            corners = tag_pose(rng, side, center, **pose)
+            radius = _outer_radius(corners)
+            mean = corners.mean(axis=0)
+            if (
+                mean[0] - radius < 0
+                or mean[1] - radius < 0
+                or mean[0] + radius > width - 1
+                or mean[1] + radius > height - 1
+            ):
+                continue
+            if all(
+                np.linalg.norm(mean - other.corners.mean(axis=0)) > radius + _outer_radius(other.corners)
+                for other in tags
+            ):
+                tags.append(TagTruth(int(tag_id), corners))
+                break
+    return tags
+
+
+# ------------------------------------------------------------------------------------ backgrounds
+
+
+def _uniform(rng: np.random.Generator, width: int, height: int) -> np.ndarray:
+    return np.full((height, width), rng.uniform(150, 245), np.float32)
+
+
+def _smooth_texture(rng: np.random.Generator, width: int, height: int) -> np.ndarray:
+    """Low-frequency 'natural' texture: blurred noise at a few scales."""
+
+    image = np.zeros((height, width), np.float32)
+    for scale, weight in ((64, 40.0), (16, 18.0), (4, 8.0)):
+        small = rng.normal(0.0, 1.0, (height // scale + 2, width // scale + 2)).astype(np.float32)
+        image += weight * cv2.resize(small, (width, height), interpolation=cv2.INTER_CUBIC)
+    return image + rng.uniform(110, 170)
+
+
+def _shapes(rng: np.random.Generator, width: int, height: int) -> np.ndarray:
+    # OpenCV draws text and shapes only on 8-bit images.
+    image = np.full((height, width), int(rng.uniform(180, 240)), np.uint8)
+    for _ in range(int(rng.integers(20, 60))):
+        x0, x1 = sorted(rng.integers(0, width, size=2).tolist())
+        y0, y1 = sorted(rng.integers(0, height, size=2).tolist())
+        value = int(rng.uniform(20, 220))
+        thickness = int(rng.choice((1, 2, 3, -1)))
+        shape = int(rng.integers(0, 3))
+        if shape == 0:
+            cv2.rectangle(image, (x0, y0), (x1, y1), value, thickness=thickness)
+        elif shape == 1:
+            cv2.line(image, (x0, y0), (x1, y1), value, thickness=max(1, thickness))
+        else:
+            radius = int(rng.integers(5, max(6, min(width, height) // 6)))
+            cv2.circle(image, (x0, y0), radius, value, thickness=thickness)
+    return image.astype(np.float32)
+
+
+def _text(rng: np.random.Generator, width: int, height: int) -> np.ndarray:
+    image = np.full((height, width), int(rng.uniform(200, 240)), np.uint8)
+    alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789#@%&"
+    for _ in range(max(10, (width * height) // 12_000)):
+        text = "".join(rng.choice(list(alphabet), size=int(rng.integers(3, 12))))
+        origin = (int(rng.integers(-40, width)), int(rng.integers(10, height + 20)))
+        font = int(rng.choice((cv2.FONT_HERSHEY_SIMPLEX, cv2.FONT_HERSHEY_DUPLEX, cv2.FONT_HERSHEY_TRIPLEX)))
+        scale = float(rng.uniform(0.5, 2.5))
+        cv2.putText(image, text, origin, font, scale, int(rng.uniform(0, 100)), int(rng.integers(1, 4)))
+    return image.astype(np.float32)
+
+
+def _checkers(rng: np.random.Generator, width: int, height: int) -> np.ndarray:
+    """Checkerboards and grids: high-contrast square structure that is not a tag."""
+
+    image = np.full((height, width), rng.uniform(170, 240), np.float32)
+    for _ in range(int(rng.integers(2, 6))):
+        cell = int(rng.integers(6, 40))
+        cols, rows = int(rng.integers(3, 12)), int(rng.integers(3, 12))
+        board = ((np.indices((rows, cols)).sum(axis=0) % 2) * 200 + 25).astype(np.float32)
+        board = cv2.resize(board, (cols * cell, rows * cell), interpolation=cv2.INTER_NEAREST)
+        angle = float(rng.uniform(0, 360))
+        center = (float(rng.uniform(0, width)), float(rng.uniform(0, height)))
+        matrix = cv2.getRotationMatrix2D((cols * cell / 2, rows * cell / 2), angle, 1.0)
+        matrix[:, 2] += np.array(center) - np.array([cols * cell / 2, rows * cell / 2])
+        mask = cv2.warpAffine(np.ones_like(board), matrix, (width, height), flags=cv2.INTER_LINEAR)
+        warped = cv2.warpAffine(board, matrix, (width, height), flags=cv2.INTER_LINEAR)
+        image = image * (1 - mask) + warped * mask
+    return image
+
+
+def _decoys(rng: np.random.Generator, width: int, height: int) -> np.ndarray:
+    """Black-bordered squares with random payloads: tag-shaped, but (almost always) not tag36h11 codes."""
+
+    image = _uniform(rng, width, height)
+    for _ in range(int(rng.integers(4, 12))):
+        cells = np.full((10, 10), 255, np.uint8)
+        cells[1:9, 1:9] = 0
+        cells[2:8, 2:8] = rng.integers(0, 2, (6, 6)) * 255
+        side = float(rng.uniform(40, min(160, min(width, height) / 3)))
+        center = (float(rng.uniform(side, width - side)), float(rng.uniform(side, height - side)))
+        _render_cells(image, cells, tag_pose(rng, side, center))
+    return image
+
+
+def _render_cells(image: np.ndarray, cells: np.ndarray, corners: Corners) -> None:
+    """Render an arbitrary 10x10 cell pattern, reusing render_tag's sampler via a temporary pattern."""
+
+    _PATTERNS[-1] = cells
+    try:
+        render_tag(image, -1, corners)
+    finally:
+        _PATTERNS.pop(-1, None)
+
+
+BACKGROUNDS: dict[str, Callable[[np.random.Generator, int, int], np.ndarray]] = {
+    "uniform": _uniform,
+    "texture": _smooth_texture,
+    "shapes": _shapes,
+    "text": _text,
+    "checkers": _checkers,
+}
+
+
+def _random_background(rng: np.random.Generator, width: int, height: int) -> tuple[np.ndarray, str]:
+    name = str(rng.choice(list(BACKGROUNDS)))
+    return BACKGROUNDS[name](rng, width, height), name
+
+
+# ----------------------------------------------------------------------------------- degradations
+
+
+def gaussian_blur(image: np.ndarray, sigma: float) -> np.ndarray:
+    return cv2.GaussianBlur(image, (0, 0), sigma)
+
+
+def motion_blur(image: np.ndarray, length: int, angle_deg: float) -> np.ndarray:
+    kernel = np.zeros((length, length), np.float32)
+    kernel[length // 2, :] = 1.0
+    rotation = cv2.getRotationMatrix2D(((length - 1) / 2, (length - 1) / 2), angle_deg, 1.0)
+    kernel = cv2.warpAffine(kernel, rotation, (length, length))
+    return cv2.filter2D(image, -1, kernel / kernel.sum())
+
+
+def lighting(rng: np.random.Generator, image: np.ndarray) -> np.ndarray:
+    """A linear gradient in a random direction plus radial vignetting."""
+
+    height, width = image.shape
+    yy, xx = np.mgrid[0:height, 0:width].astype(np.float32)
+    angle = rng.uniform(0, 2 * math.pi)
+    ramp = (xx - width / 2) * math.cos(angle) + (yy - height / 2) * math.sin(angle)
+    ramp = ramp / max(1.0, float(np.abs(ramp).max()))
+    low = rng.uniform(0.3, 0.6)
+    gain = low + (1 - low) * (ramp + 1) / 2
+    radius = np.hypot((xx - width / 2) / (width / 2), (yy - height / 2) / (height / 2))
+    gain *= 1.0 - rng.uniform(0.2, 0.45) * np.clip(radius, 0, 1.5) ** 2
+    return image * gain
+
+
+def jpeg(image: np.ndarray, quality: int) -> np.ndarray:
+    ok, encoded = cv2.imencode(".jpg", _to_uint8(image), (cv2.IMWRITE_JPEG_QUALITY, quality))
+    if not ok:
+        raise RuntimeError("JPEG encoding failed")
+    return cv2.imdecode(encoded, cv2.IMREAD_GRAYSCALE).astype(np.float32)
+
+
+def add_noise(rng: np.random.Generator, image: np.ndarray, sigma: float) -> np.ndarray:
+    return image + rng.normal(0.0, sigma, image.shape).astype(np.float32)
+
+
+def _to_uint8(image: np.ndarray) -> np.ndarray:
+    return np.clip(np.rint(image), 0, 255).astype(np.uint8)
+
+
+# -------------------------------------------------------------------------------------- scenarios
+
+
+def _scale(width: int, height: int) -> float:
+    """Tag sizes scale gently with resolution, so larger frames don't only add empty pixels."""
+
+    return min(width, height) / 480.0
+
+
+def _tags_scene(
+    rng: np.random.Generator,
+    width: int,
+    height: int,
+    *,
+    count: tuple[int, int] = (1, 3),
+    side: tuple[float, float] | None = None,
+    background: str | None = None,
+    black: tuple[float, float] = (15, 60),
+    white: tuple[float, float] = (200, 250),
+    **pose: float,
+) -> tuple[np.ndarray, list[TagTruth], dict[str, object]]:
+    scale = _scale(width, height)
+    side = side or (48 * scale, 170 * scale)
+    if background is None:
+        image, background = _random_background(rng, width, height)
+    else:
+        image = BACKGROUNDS[background](rng, width, height)
+    tags = place_tags(rng, width, height, int(rng.integers(count[0], count[1] + 1)), side, **pose)
+    for tag in tags:
+        render_tag(image, tag.tag_id, tag.corners, black=rng.uniform(*black), white=rng.uniform(*white))
+    return image, tags, {"background": background}
+
+
+def _degraded(
+    transform: Callable[[np.random.Generator, np.ndarray, dict[str, object]], np.ndarray], **scene: object
+) -> Callable[[np.random.Generator, int, int], tuple[np.ndarray, list[TagTruth], dict[str, object]]]:
+    def render(rng: np.random.Generator, width: int, height: int):
+        image, tags, details = _tags_scene(rng, width, height, **scene)
+        return transform(rng, image, details), tags, details
+
+    return render
+
+
+def _negative(
+    background: str | None,
+) -> Callable[[np.random.Generator, int, int], tuple[np.ndarray, list[TagTruth], dict[str, object]]]:
+    def render(rng: np.random.Generator, width: int, height: int):
+        if background == "decoys":
+            image, name = _decoys(rng, width, height), "decoys"
+        elif background is None:
+            image, name = _random_background(rng, width, height)
+            while name == "uniform":
+                image, name = _random_background(rng, width, height)
+        else:
+            image, name = BACKGROUNDS[background](rng, width, height), background
+        return add_noise(rng, image, rng.uniform(0.5, 3.0)), [], {"background": name}
+
+    return render
+
+
+def _with(key: str, value_fn: Callable[[np.random.Generator], object], apply):
+    def transform(rng: np.random.Generator, image: np.ndarray, details: dict[str, object]) -> np.ndarray:
+        value = value_fn(rng)
+        details[key] = value
+        return apply(rng, image, value)
+
+    return transform
+
+
+def _mild_noise(rng: np.random.Generator, image: np.ndarray, details: dict[str, object]) -> np.ndarray:
+    return add_noise(rng, image, 1.5)
+
+
+def _edge_scene(rng: np.random.Generator, width: int, height: int):
+    """Tags whose quiet zone touches the frame edge."""
+
+    image, background = _random_background(rng, width, height)
+    scale = _scale(width, height)
+    tags: list[TagTruth] = []
+    for edge in rng.permutation(4)[: int(rng.integers(1, 4))]:
+        side = float(rng.uniform(40 * scale, 120 * scale))
+        corners = tag_pose(rng, side, (0.0, 0.0), max_tilt_deg=15)
+        radius = _outer_radius(corners) - 2.0
+        along = float(rng.uniform(radius, (width if edge in (0, 2) else height) - radius))
+        center = {
+            0: (along, radius),
+            1: (width - 1 - radius, along),
+            2: (along, height - 1 - radius),
+            3: (radius, along),
+        }[int(edge)]
+        corners = corners + np.asarray(center)
+        mean = corners.mean(axis=0)
+        if any(np.linalg.norm(mean - t.corners.mean(axis=0)) < radius + _outer_radius(t.corners) for t in tags):
+            continue
+        tag_id = int(rng.integers(0, TAG_COUNT))
+        if any(t.tag_id == tag_id for t in tags):
+            continue
+        render_tag(image, tag_id, corners, black=rng.uniform(15, 60), white=rng.uniform(200, 250))
+        tags.append(TagTruth(tag_id, corners))
+    return add_noise(rng, image, 1.5), tags, {"background": background}
+
+
+def _large_tags(rng: np.random.Generator, width: int, height: int):
+    lo, hi = 0.45 * min(width, height) / 1.25, 0.8 * min(width, height) / 1.25
+    image, tags, details = _tags_scene(rng, width, height, count=(1, 1), side=(lo, hi), max_tilt_deg=20)
+    return add_noise(rng, image, 1.5), tags, details
+
+
+def _busy(rng: np.random.Generator, width: int, height: int):
+    background = str(rng.choice(("text", "shapes", "checkers")))
+    image, tags, details = _tags_scene(rng, width, height, background=background)
+    return add_noise(rng, image, 1.5), tags, details
+
+
+def _dark_background(rng: np.random.Generator, width: int, height: int):
+    """Tags whose one-cell white margin is all that separates the black border from a dark background."""
+
+    name = str(rng.choice(("uniform", "texture", "shapes")))
+    image = BACKGROUNDS[name](rng, width, height)
+    image *= float(rng.uniform(15, 120)) / max(1.0, float(image.mean()))
+    tags = place_tags(rng, width, height, int(rng.integers(1, 4)), (36.0, 140.0 * _scale(width, height)))
+    for tag in tags:
+        render_tag(image, tag.tag_id, tag.corners, black=rng.uniform(5, 40), white=rng.uniform(170, 250))
+    return add_noise(rng, image, 1.5), tags, {"background": name}
+
+
+SCENARIOS: tuple[Scenario, ...] = (
+    Scenario("empty", "Uniform frame at a random brightness, light noise", _negative("uniform")),
+    Scenario("clutter-only", "Shapes, text, checkerboards, or natural texture with no tag", _negative(None)),
+    Scenario("decoys", "Black-bordered squares with random payloads; none is a valid code", _negative("decoys")),
+    Scenario(
+        "one-tag",
+        "One tag, any angle, mild tilt, uniform background",
+        _degraded(_mild_noise, count=(1, 1), background="uniform"),
+    ),
+    Scenario(
+        "many-tags",
+        "2-12 tags of mixed sizes on mixed backgrounds",
+        _degraded(_mild_noise, count=(2, 12)),
+    ),
+    Scenario(
+        "small-tags",
+        "1-4 tags with a 32-53 px black square",
+        _degraded(_mild_noise, count=(1, 4), side=(32.0, 53.0), max_tilt_deg=10),
+    ),
+    Scenario("large-tags", "One tag filling 45-80% of the frame height", _large_tags),
+    Scenario(
+        "steep-angle",
+        "1-3 tags tilted 40-65 degrees away from the camera",
+        _degraded(_mild_noise, min_tilt_deg=40.0, max_tilt_deg=65.0),
+    ),
+    Scenario(
+        "blur",
+        "Gaussian defocus, sigma 0.8-2.0 px",
+        _degraded(
+            _with(
+                "blur_sigma",
+                lambda rng: round(float(rng.uniform(0.8, 2.0)), 2),
+                lambda rng, img, s: add_noise(rng, gaussian_blur(img, s), 1.5),
+            )
+        ),
+    ),
+    Scenario(
+        "motion-blur",
+        "Linear motion blur, 3-11 px (odd lengths) in any direction",
+        _degraded(
+            _with(
+                "motion_px",
+                lambda rng: int(rng.integers(1, 6)) * 2 + 1,  # odd: centred kernel, no shift
+                lambda rng, img, n: add_noise(rng, motion_blur(img, n, float(rng.uniform(0, 180))), 1.5),
+            )
+        ),
+    ),
+    Scenario(
+        "noise",
+        "Gaussian sensor noise, sigma 4-14 grey levels",
+        _degraded(
+            _with(
+                "noise_sigma",
+                lambda rng: round(float(rng.uniform(4, 14)), 1),
+                lambda rng, img, s: add_noise(rng, img, s),
+            )
+        ),
+    ),
+    Scenario(
+        "uneven-light",
+        "Lighting gradient (30-60% at the dark end) plus vignetting",
+        _degraded(
+            _with(
+                "lighting",
+                lambda rng: "gradient+vignette",
+                lambda rng, img, _v: add_noise(rng, lighting(rng, img), 1.5),
+            )
+        ),
+    ),
+    Scenario(
+        "low-contrast",
+        "Black and white only 40-90 grey levels apart",
+        _degraded(_mild_noise, background="uniform", black=(90, 120), white=(160, 190)),
+    ),
+    Scenario(
+        "underexposed",
+        "Dark frame: everything scaled to 15-35% brightness, then noise",
+        _degraded(
+            _with(
+                "exposure",
+                lambda rng: round(float(rng.uniform(0.15, 0.35)), 2),
+                lambda rng, img, gain: add_noise(rng, img * gain, 2.0),
+            )
+        ),
+    ),
+    Scenario(
+        "overexposed",
+        "Bright frame: gain 1.3-1.8 with clipping",
+        _degraded(
+            _with(
+                "exposure",
+                lambda rng: round(float(rng.uniform(1.3, 1.8)), 2),
+                lambda rng, img, gain: add_noise(rng, img * gain + 20, 1.5),
+            )
+        ),
+    ),
+    Scenario(
+        "jpeg",
+        "JPEG compression at quality 25-70",
+        _degraded(
+            _with(
+                "jpeg_quality",
+                lambda rng: int(rng.integers(25, 71)),
+                lambda rng, img, q: jpeg(add_noise(rng, img, 1.5), q),
+            )
+        ),
+    ),
+    Scenario("busy-background", "1-3 tags on text, shapes, or checkerboards", _busy),
+    Scenario("frame-edge", "1-3 tags whose quiet zone touches the frame edge", _edge_scene),
+    # Every other scene adds at least light sensor noise; this one shows the noise-free baseline.
+    Scenario(
+        "noise-free",
+        "1-3 tags on a plain background with no sensor noise at all",
+        lambda rng, width, height: _tags_scene(rng, width, height, background="uniform"),
+    ),
+    Scenario("dark-background", "1-3 tags on a dark or mid-grey background, 36-140 px", _dark_background),
+)
+
+SCENARIO_NAMES = tuple(scenario.name for scenario in SCENARIOS)
+_SCENARIO_BY_NAME = {scenario.name: scenario for scenario in SCENARIOS}
+
+
+def iter_frames(
+    *,
+    scenarios: Sequence[str] = SCENARIO_NAMES,
+    resolutions: Sequence[tuple[int, int]] = DEFAULT_RESOLUTIONS,
+    frames_per_scenario: int = DEFAULT_FRAMES_PER_SCENARIO,
+    seed: int = 2468,
+) -> Iterator[Frame]:
+    """Yield distinct frames. Each frame has its own seed, so any one can be re-rendered alone."""
+
+    unknown = set(scenarios) - set(_SCENARIO_BY_NAME)
+    if unknown:
+        raise ValueError(f"unknown scenarios: {sorted(unknown)}")
+    for width, height in resolutions:
+        for name in scenarios:
+            for index in range(frames_per_scenario):
+                yield render_frame(name, index, (width, height), seed)
+
+
+def render_frame(name: str, index: int, resolution: tuple[int, int], seed: int = 2468) -> Frame:
+    """Render one frame. Its seed depends only on its scenario, index, and resolution."""
+
+    width, height = resolution
+    rng = np.random.default_rng((seed, SCENARIO_NAMES.index(name), width, height, index))
+    image, tags, details = _SCENARIO_BY_NAME[name].render(rng, width, height)
+    return Frame(name, index, resolution, _to_uint8(image), tags, details)
+
+
+# -------------------------------------------------------------------------------------- occlusion
+
+
+def occlusion_box(fraction: float, region: str) -> tuple[float, float, float, float]:
+    """A patch covering ``fraction`` of the black square, in cell units (the square spans 0.5-8.5)."""
+
+    if not 0.0 <= fraction <= 1.0:
+        raise ValueError("occlusion fraction must be between zero and one")
+    if region == "payload-center":
+        length = math.sqrt(fraction) * 8.0
+        start = 4.5 - length / 2
+        return start, start, start + length, start + length
+    if region == "border-strip":
+        return 0.5, 0.5, 0.5 + fraction * 8.0, 8.5
+    if region == "corner":
+        length = math.sqrt(fraction) * 8.0
+        return 0.5, 0.5, 0.5 + length, 0.5 + length
+    raise ValueError(f"unknown occlusion region {region!r}")
+
+
+def iter_occlusion_frames(
+    *, resolution: tuple[int, int] = (640, 480), cases: int = DEFAULT_OCCLUSION_CASES, seed: int = 2468
+) -> Iterator[Frame]:
+    """One tag per frame, a random ID, angle, and size, with a patch hiding part of it."""
+
+    for index in range(len(OCCLUSION_REGIONS) * len(OCCLUSION_FRACTIONS) * len(OCCLUSION_VALUES) * cases):
+        yield render_occlusion_frame(index, resolution=resolution, cases=cases, seed=seed)
+
+
+def render_occlusion_frame(
+    index: int, *, resolution: tuple[int, int] = (640, 480), cases: int = DEFAULT_OCCLUSION_CASES, seed: int = 2468
+) -> Frame:
+    """Obstruction frame ``index``, in region, fraction, patch colour, case order."""
+
+    width, height = resolution
+    case = index % cases
+    value = OCCLUSION_VALUES[index // cases % len(OCCLUSION_VALUES)]
+    fraction_index = index // (cases * len(OCCLUSION_VALUES)) % len(OCCLUSION_FRACTIONS)
+    region_index = index // (cases * len(OCCLUSION_VALUES) * len(OCCLUSION_FRACTIONS))
+    region, fraction = OCCLUSION_REGIONS[region_index], OCCLUSION_FRACTIONS[fraction_index]
+    rng = np.random.default_rng((seed, 999, region_index, fraction_index, value, case))
+    image = _uniform(rng, width, height)
+    (tag,) = place_tags(rng, width, height, 1, (64.0, 160.0), max_tilt_deg=15)
+    occlusion = Occlusion(*occlusion_box(fraction, region), value=value)
+    render_tag(
+        image, tag.tag_id, tag.corners, black=rng.uniform(15, 60), white=rng.uniform(200, 250), occlusion=occlusion
+    )
+    details = {"region": region, "fraction": fraction, "mask_value": value}
+    return Frame("occlusion", index, resolution, _to_uint8(add_noise(rng, image, 1.5)), [tag], details)
+
+
+# ---------------------------------------------------------------------------------------- scoring
+
+
+def score_frame(truth: Sequence[TagTruth], detections: Sequence[Detection], *, align_corners: bool) -> FrameScore:
+    """Score IDs exactly and corners against ground truth.
+
+    Each expected ID is found at most once; repeated or unexpected IDs are false positives.
+    With ``align_corners`` the detector's corner order is matched to the truth (rotation or
+    reflection) before scoring, for detectors with a different corner convention.
+    """
+
+    expected = {tag.tag_id: tag for tag in truth}
+    matched: set[int] = set()
+    false_positive = 0
+    errors: list[float] = []
+    for tag_id, corners in detections:
+        tag = expected.get(tag_id)
+        if tag is None or tag_id in matched:
+            false_positive += 1
+            continue
+        matched.add(tag_id)
+        corners = np.asarray(corners, np.float64).reshape(4, 2)
+        if align_corners:
+            corners = min(
+                (np.roll(order, shift, 0) for order in (corners, corners[::-1]) for shift in range(4)),
+                key=lambda candidate: float(np.abs(candidate - tag.corners).max()),
+            )
+        errors.append(float(np.linalg.norm(corners - tag.corners, axis=1).max()))
+    return FrameScore(len(matched), false_positive, len(expected) - len(matched), tuple(errors))
 
 
 def summarize_latency(samples_ns: Sequence[int]) -> dict[str, float | int]:
@@ -212,941 +776,353 @@ def summarize_latency(samples_ns: Sequence[int]) -> dict[str, float | int]:
         "p95_ms": float(p95),
         "p99_ms": float(p99),
         "max_ms": float(np.max(values)),
-        "latency_derived_p50_fps": float(1000.0 / p50) if p50 > 0 else float("inf"),
     }
 
 
-def build_backends(*, threads: int, include_robust_erased10: bool = False) -> tuple[list[Backend], dict[str, str]]:
-    """Create factories only. Construction and first-call time are measured later."""
-
-    if threads < 1:
-        raise ValueError("threads must be at least 1")
-    dictionary = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_APRILTAG_36h11)
-    raw_params = cv2.aruco.DetectorParameters()
-    dictionary_config = _dictionary_config(dictionary)
-    open_cv_threads = cv2.getNumThreads()
-    raw_config = {
-        "dictionary": "DICT_APRILTAG_36h11",
-        "dictionary_config": dictionary_config,
-        "parameters": _opencv_parameters(raw_params),
-        "wrapper": "none",
-        "opencv_threads_effective": open_cv_threads,
+def _error_summary(errors: Sequence[float]) -> dict[str, float | None]:
+    if not errors:
+        return {"median_px": None, "p95_px": None, "max_px": None}
+    values = np.asarray(errors)
+    return {
+        "median_px": float(np.median(values)),
+        "p95_px": float(np.percentile(values, 95)),
+        "max_px": float(values.max()),
     }
-    backends = []
+
+
+# --------------------------------------------------------------------------------------- backends
+
+
+def build_backends(names: Sequence[str], *, threads: int = 1) -> tuple[list[Backend], dict[str, str]]:
+    """Create backend factories. Construction is measured later, separately from detection."""
+
+    available: dict[str, Callable[[], Backend]] = {
+        "napa": _napa_backend,
+        "apriltag": lambda: _apriltag_backend(2.0, threads),
+        "apriltag-full-res": lambda: _apriltag_backend(1.0, threads),
+        "opencv-aruco": _opencv_backend,
+    }
+    backends: list[Backend] = []
     skipped: dict[str, str] = {}
-    if native_available():
-        native = NapaDetector()
-        backends.append(
-            Backend(
-                "napa-native",
-                _napa_native_detector,
-                {
-                    "min_tag_px": native.min_tag_px,
-                    "max_hamming": native.max_hamming,
-                    "implementation": "portable C core via ctypes",
-                },
-            )
-        )
-        native.close()
-    else:
-        skipped["napa-native"] = "unavailable: the Napa core library is not built"
-    backends += [
-        Backend("opencv-aruco-raw", lambda: _raw_opencv_detector(dictionary, raw_params), raw_config),
-        Backend(
-            "napa-default",
-            _napa_default_detector,
-            _napa_config("baseline", dictionary, cv2.aruco.DetectorParameters(), open_cv_threads),
-        ),
-        Backend(
-            "napa-aruco3",
-            _napa_aruco3_detector,
-            _napa_config("aruco3", dictionary, _aruco3_parameters(), open_cv_threads),
-        ),
-        Backend(
-            "napa-skip-scan",
-            _napa_skip_scan_detector,
-            _napa_config(
-                "skip-scan",
-                dictionary,
-                cv2.aruco.DetectorParameters(),
-                open_cv_threads,
-                skip_scan=asdict(SkipScanConfig(enabled=True)),
-            ),
-        ),
-        Backend(
-            "napa-layout-restricted",
-            lambda: _napa_layout_detector(LAYOUT_TAG_IDS),
-            _napa_config(
-                "layout-restricted",
-                dictionary,
-                cv2.aruco.DetectorParameters(),
-                open_cv_threads,
-                layout_tag_ids=list(LAYOUT_TAG_IDS),
-            ),
-        ),
-    ]
-    try:
-        import robotpy_apriltag  # noqa: F401
-    except ImportError as exc:
-        skipped["apriltag3-robotpy-decimate-1"] = f"unavailable: {exc}"
-        skipped["apriltag3-robotpy-decimate-2"] = f"unavailable: {exc}"
-    else:
-        for decimate in (1.0, 2.0):
-            config = {
-                "family": "tag36h11",
-                "bits_corrected": 2,
-                "num_threads": threads,
-                "quad_decimate": decimate,
-            }
-            backends.append(
-                Backend(
-                    f"apriltag3-robotpy-decimate-{int(decimate)}",
-                    lambda decimate=decimate, config=config: _robotpy_detector(
-                        threads=threads,
-                        quad_decimate=decimate,
-                        recorded_config=config,
-                    ),
-                    config,
-                )
-            )
-    try:
-        _ensure_repository_root_on_path()
-        from experiments.occlusion_detector.robust_apriltag import Robust36h11Detector  # noqa: F401
-    except ImportError as exc:
-        skipped["experimental-robust36h11-full-search"] = f"unavailable: {exc}"
-    else:
-        backends.append(
-            Backend(
-                "experimental-robust36h11-full-search",
-                lambda: _robust_detector(max_erased_bits=0),
-                {
-                    "experimental": True,
-                    "candidate_mode": "full-search",
-                    "seeded_corners": False,
-                    "max_erased_bits": 0,
-                },
-                experimental=True,
-            )
-        )
-        if include_robust_erased10:
-            backends.append(
-                Backend(
-                    "experimental-robust36h11-full-search-erased10",
-                    lambda: _robust_detector(max_erased_bits=10),
-                    {
-                        "experimental": True,
-                        "candidate_mode": "full-search",
-                        "seeded_corners": False,
-                        "max_erased_bits": 10,
-                    },
-                    experimental=True,
-                )
-            )
+    for name in names:
+        if name not in available:
+            raise ValueError(f"unknown backend {name!r}; choose from {sorted(available)}")
+        try:
+            backends.append(available[name]())
+        except (ImportError, RuntimeError) as exc:
+            skipped[name] = str(exc)
     return backends, skipped
 
 
+def _napa_backend() -> Backend:
+    if not native_available():
+        raise RuntimeError("the Napa core library is not built")
+
+    def factory() -> DetectFn:
+        detector = NapaDetector()
+        return lambda image: [(o.tag_id, o.corners) for o in detector.detect(image)]
+
+    defaults = NapaDetector()
+    config = {"min_tag_px": defaults.min_tag_px, "max_hamming": defaults.max_hamming, "corner_order": "native"}
+    defaults.close()
+    return Backend("napa", factory, config)
+
+
+def _apriltag_backend(decimate: float, threads: int) -> Backend:
+    from robotpy_apriltag import AprilTagDetector
+
+    def factory() -> DetectFn:
+        detector = AprilTagDetector()
+        if not detector.addFamily("tag36h11", 2):
+            raise RuntimeError("AprilTag could not load tag36h11")
+        config = detector.getConfig()
+        config.numThreads = threads
+        config.quadDecimate = decimate
+        detector.setConfig(config)
+        applied = detector.getConfig()
+        if applied.numThreads != threads or applied.quadDecimate != decimate:
+            raise RuntimeError("AprilTag did not apply the requested configuration")
+
+        def detect(image: np.ndarray) -> list[Detection]:
+            # AprilTag's pixel origin is a pixel's corner, not its centre: shift by -0.5 px.
+            return [
+                (int(d.getId()), np.array([[d.getCorner(i).x, d.getCorner(i).y] for i in range(4)]) - 0.5)
+                for d in detector.detect(image)
+            ]
+
+        return detect
+
+    name = "apriltag" if decimate == 2.0 else "apriltag-full-res"
+    config = {
+        "library": "AprilTag 3 (robotpy-apriltag)",
+        "version": _package_version("robotpy-apriltag"),
+        "family": "tag36h11",
+        "bits_corrected": 2,
+        "quad_decimate": decimate,
+        "num_threads": threads,
+        "corner_order": "aligned to truth",
+    }
+    return Backend(name, factory, config)
+
+
+def _opencv_backend() -> Backend:
+    def factory() -> DetectFn:
+        dictionary = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_APRILTAG_36h11)
+        parameters = cv2.aruco.DetectorParameters()
+        parameters.cornerRefinementMethod = cv2.aruco.CORNER_REFINE_SUBPIX
+        detector = cv2.aruco.ArucoDetector(dictionary, parameters)
+
+        def detect(image: np.ndarray) -> list[Detection]:
+            corners, ids, _rejected = detector.detectMarkers(image)
+            if ids is None:
+                return []
+            return [(int(i), c.reshape(4, 2).astype(np.float64)) for i, c in zip(ids.reshape(-1), corners, strict=True)]
+
+        return detect
+
+    config = {"library": "OpenCV ArUco", "version": cv2.__version__, "corner_refinement": "subpix"}
+    return Backend("opencv-aruco", factory, config)
+
+
+# ---------------------------------------------------------------------------------------- running
+
+
 def run_matrix(
-    frames: Sequence[BenchmarkFrame],
+    frames: Iterator[Frame] | Sequence[Frame],
     *,
+    backends: Sequence[Backend],
     repetitions: int = 10,
-    occlusion_repetitions: int = 1,
-    warmup: int = 2,
+    warmup: int = 1,
     seed: int = 2468,
-    threads: int = 1,
-    include_robust_erased10: bool = False,
-) -> tuple[dict[str, object], list[dict[str, object]]]:
-    """Run detectors in a deterministic interleaved order and return report plus raw samples."""
+    progress: Callable[[int], None] | None = None,
+) -> tuple[dict[str, dict], list[dict[str, object]]]:
+    """Time and score every backend on every frame; return per-group aggregates and per-frame rows."""
 
-    if repetitions < 1 or occlusion_repetitions < 1 or warmup < 0:
+    if repetitions < 1 or warmup < 0:
         raise ValueError("repetitions must be positive and warmup must not be negative")
-    if not frames:
-        raise ValueError("frames must not be empty")
-    cv2.setNumThreads(threads)
-    backends, skipped = build_backends(threads=threads, include_robust_erased10=include_robust_erased10)
-    instances: dict[str, Callable[[np.ndarray], list[int]]] = {}
-    lifecycle: dict[str, dict[str, object]] = {}
+    if not backends:
+        raise ValueError("at least one backend is required")
+    lifecycle: dict[str, dict[str, float]] = {}
+    instances: dict[str, DetectFn] = {}
     for backend in backends:
-        start_ns = perf_counter_ns()
+        start = perf_counter_ns()
         instances[backend.name] = backend.factory()
-        lifecycle[backend.name] = {"init_ms": (perf_counter_ns() - start_ns) / 1_000_000.0, "first_call_ms": None}
-
-    first_frame = frames[0]
-    for backend in backends:
-        start_ns = perf_counter_ns()
-        instances[backend.name](first_frame.image)
-        lifecycle[backend.name]["first_call_ms"] = (perf_counter_ns() - start_ns) / 1_000_000.0
-
-    rng = random.Random(seed)
-    pairs = [(backend, frame) for backend in backends for frame in frames]
-    for _pass_index in range(warmup):
-        order = pairs.copy()
-        rng.shuffle(order)
-        for backend, frame in order:
-            instances[backend.name](frame.image)
-
-    raw_samples: list[dict[str, object]] = []
-    totals: dict[str, IdMetrics] = {backend.name: IdMetrics(0, 0, 0) for backend in backends}
-    occlusion_totals: dict[tuple[str, str, str, float, str, int], IdMetrics] = {}
-    latency: dict[str, list[int]] = defaultdict(list)
-    scenario_totals: dict[tuple[str, str, str], IdMetrics] = {}
-    scenario_latency: dict[tuple[str, str, str], list[int]] = defaultdict(list)
-
-    def measure(pairs_to_measure: Sequence[tuple[Backend, BenchmarkFrame]], stage: str, count: int) -> None:
-        for repetition in range(count):
-            order = list(pairs_to_measure)
-            rng.shuffle(order)
-            for backend, frame in order:
-                start_ns = perf_counter_ns()
-                detected = instances[backend.name](frame.image)
-                elapsed_ns = perf_counter_ns() - start_ns
-                metric = score_ids(frame.expected_ids, detected)
-                totals[backend.name] = _add_metrics(totals[backend.name], metric)
-                latency[backend.name].append(elapsed_ns)
-                scenario_key = (backend.name, frame.scenario, f"{frame.resolution[0]}x{frame.resolution[1]}")
-                scenario_totals[scenario_key] = _add_metrics(
-                    scenario_totals.get(scenario_key, IdMetrics(0, 0, 0)), metric
-                )
-                scenario_latency[scenario_key].append(elapsed_ns)
-                row = {
-                    "backend": backend.name,
-                    "stage": stage,
-                    "repetition": repetition,
+        lifecycle[backend.name] = {"init_ms": (perf_counter_ns() - start) / 1e6}
+    shuffler = random.Random(seed)
+    rows: list[dict[str, object]] = []
+    for count, frame in enumerate(frames, start=1):
+        if count == 1:
+            for backend in backends:
+                start = perf_counter_ns()
+                instances[backend.name](frame.image)
+                lifecycle[backend.name]["first_call_ms"] = (perf_counter_ns() - start) / 1e6
+        samples: dict[str, list[int]] = {backend.name: [] for backend in backends}
+        results: dict[str, list[Detection]] = {}
+        for _ in range(warmup):
+            for backend in backends:
+                instances[backend.name](frame.image)
+        for _ in range(repetitions):
+            order = list(backends)
+            shuffler.shuffle(order)
+            for backend in order:
+                start = perf_counter_ns()
+                detections = instances[backend.name](frame.image)
+                samples[backend.name].append(perf_counter_ns() - start)
+                results[backend.name] = detections
+        for backend in backends:
+            score = score_frame(
+                frame.tags, results[backend.name], align_corners=backend.config.get("corner_order") != "native"
+            )
+            latency = samples[backend.name]
+            rows.append(
+                {
                     "frame": frame.name,
                     "scenario": frame.scenario,
                     "resolution": f"{frame.resolution[0]}x{frame.resolution[1]}",
-                    "tag_side_px": frame.tag_side_px,
-                    "latency_ns": elapsed_ns,
-                    "expected_ids": ";".join(map(str, frame.expected_ids)),
-                    "detected_ids": ";".join(map(str, detected)),
-                    "true_positive": metric.true_positive,
-                    "false_positive": metric.false_positive,
-                    "false_negative": metric.false_negative,
+                    "backend": backend.name,
+                    "tags": len(frame.tags),
+                    "min_side_px": round(min((t.side_px for t in frame.tags), default=0.0), 1),
+                    "expected_ids": ";".join(str(t.tag_id) for t in frame.tags),
+                    "detected_ids": ";".join(str(tag_id) for tag_id, _ in results[backend.name]),
+                    "true_positive": score.true_positive,
+                    "false_positive": score.false_positive,
+                    "false_negative": score.false_negative,
+                    "max_corner_error_px": round(max(score.corner_errors), 4) if score.corner_errors else "",
+                    "corner_errors_px": ";".join(f"{e:.4f}" for e in score.corner_errors),
+                    "median_ms": round(float(np.median(latency)) / 1e6, 5),
+                    "min_ms": round(min(latency) / 1e6, 5),
+                    "max_ms": round(max(latency) / 1e6, 5),
+                    "samples_ns": ";".join(map(str, latency)),
+                    **{f"detail_{key}": value for key, value in frame.details.items()},
                 }
-                if frame.occlusion is not None:
-                    row.update({f"occlusion_{key}": value for key, value in frame.occlusion.items()})
-                    key = (
-                        backend.name,
-                        f"{frame.resolution[0]}x{frame.resolution[1]}",
-                        str(frame.occlusion["region"]),
-                        float(frame.occlusion["requested_fraction"]),
-                        str(frame.occlusion["mask_value"]),
-                        frame.tag_side_px or 0,
-                    )
-                    occlusion_totals[key] = _add_metrics(occlusion_totals.get(key, IdMetrics(0, 0, 0)), metric)
-                raw_samples.append(row)
-
-    main_pairs = [(backend, frame) for backend, frame in pairs if frame.scenario != "occlusion"]
-    occlusion_pairs = [(backend, frame) for backend, frame in pairs if frame.scenario == "occlusion"]
-    measure(main_pairs, "main", repetitions)
-    measure(occlusion_pairs, "occlusion", occlusion_repetitions)
-
-    backend_reports: dict[str, object] = {}
-    for backend in backends:
-        metrics = totals[backend.name]
-        backend_reports[backend.name] = {
-            "experimental_backend": backend.experimental,
-            "config": backend.config,
-            "lifecycle": lifecycle[backend.name],
-            "latency": summarize_latency(latency[backend.name]),
-            "id_metrics": _metrics_dict(metrics),
-        }
-    report = {
-        "schema_version": REPORT_SCHEMA_VERSION,
-        "generated_at_utc": datetime.now(UTC).isoformat(),
-        "measurement_scope": {
-            "quality": (
-                "Exact-ID precision/recall for ALL backends. Corner accuracy against exact ground truth is "
-                "reported separately in corner_accuracy; pose accuracy is in the calibrated simulator."
-            ),
-            "included": "Detector call, selected wrapper conversion/uniformity gate, and per-backend ID extraction.",
-            "excluded": "Synthetic rendering, file I/O, report writing, ID scoring, and module imports.",
-            "experimental_robust": (
-                "Robust36h11 full-search is an experimental ID-only comparison; it receives no "
-                "seeded corners and is not a production detector claim."
-            ),
-            "memory": (
-                "No memory metric is reported; tracemalloc would not represent native OpenCV or AprilTag allocations."
-            ),
-        },
-        "metadata": _metadata(),
-        "run_config": {
-            "seed": seed,
-            "repetitions": repetitions,
-            "occlusion_repetitions": occlusion_repetitions,
-            "warmup": warmup,
-            "threads": threads,
-            "frames": len(frames),
-            "first_call_frame": {"name": first_frame.name, "resolution": list(first_frame.resolution)},
-            "opencv_threads_effective": cv2.getNumThreads(),
-        },
-        "corpus": _corpus_summary(frames),
-        "backends": backend_reports,
-        "scenario_resolution": _scenario_report(scenario_totals, scenario_latency),
-        "skipped_backends": skipped,
-        "occlusion": _occlusion_report(occlusion_totals, raw_samples),
-        "decoder_microbenchmark": run_decoder_microbenchmark(),
-        "corner_accuracy": run_corner_accuracy(seed=seed, threads=threads),
-    }
-    return report, raw_samples
-
-
-def run_decoder_microbenchmark() -> dict[str, object]:
-    """Compare the compact decoder with an exhaustive reference after exact output checks."""
-
-    try:
-        _ensure_repository_root_on_path()
-        from experiments.occlusion_detector.robust_apriltag.family import (
-            FULL_MASK,
-            ROTATED_CODES,
-            TAG36H11,
-            decode_observed,
-            popcount,
-            rotate90_code,
-        )
-    except ImportError as exc:
-        return {"skipped": f"robust decoder unavailable: {exc}"}
-
-    queries: list[tuple[int, int, int, int]] = []
-    for tag_id in TAG_IDS:
-        observed = TAG36H11.codes[tag_id]
-        for _rotation in range(4):
-            queries.append((observed, FULL_MASK, 2, 36))
-            queries.append((observed ^ (1 << 3), FULL_MASK, 2, 36))
-            queries.append((observed ^ (1 << 3) ^ (1 << 29), FULL_MASK, 2, 36))
-            queries.append((observed ^ (1 << 3), FULL_MASK ^ (1 << 7) ^ (1 << 21), 2, 30))
-            observed = rotate90_code(observed)
-
-    def exhaustive(code: int, mask: int, max_hamming: int, min_reliable_bits: int) -> tuple[int, int, int, int] | None:
-        if popcount(mask) < min_reliable_bits:
-            return None
-        best: tuple[int, int, int] | None = None
-        second = 10_000
-        for family_code, tag_id, rotation in ROTATED_CODES:
-            hamming = popcount((code ^ family_code) & mask)
-            if best is None or hamming < best[1]:
-                if best is not None:
-                    second = min(second, best[1])
-                best = (tag_id, hamming, rotation)
-            elif hamming < second:
-                second = hamming
-        if best is None or best[1] > max_hamming:
-            return None
-        margin = 11 - best[1] if mask == FULL_MASK and max_hamming <= 2 else second - best[1]
-        return best[0], best[1], best[2], margin
-
-    def compact(query: tuple[int, int, int, int]) -> tuple[int, int, int, int] | None:
-        return decode_observed(query[0], query[1], max_hamming=query[2], min_reliable_bits=query[3])
-
-    expected = [exhaustive(*query) for query in queries]
-    actual = [compact(query) for query in queries]
-    if actual != expected:
-        raise RuntimeError("compact decoder disagrees with exhaustive rotated-word reference")
-    loops = 100
-    start_ns = perf_counter_ns()
-    for _ in range(loops):
-        for query in queries:
-            exhaustive(*query)
-    exhaustive_ns = perf_counter_ns() - start_ns
-    start_ns = perf_counter_ns()
-    for _ in range(loops):
-        for query in queries:
-            compact(query)
-    compact_ns = perf_counter_ns() - start_ns
-    return {
-        "separate_from_whole_frame_speed": True,
-        "queries": len(queries),
-        "verification": "all compact outputs match exhaustive rotated-word reference before timing",
-        "exhaustive_ns": exhaustive_ns,
-        "compact_ns": compact_ns,
-        "speedup": exhaustive_ns / compact_ns if compact_ns else float("inf"),
-    }
-
-
-def write_reports(
-    report: dict[str, object],
-    samples: Sequence[dict[str, object]],
-    output: Path,
-    csv_output: Path,
-) -> None:
-    output.parent.mkdir(parents=True, exist_ok=True)
-    csv_output.parent.mkdir(parents=True, exist_ok=True)
-    write_benchmark_summary(report, output, pretty=True, durable=True)
-    _write_csv_atomically(samples, csv_output)
-
-
-def build_parser() -> argparse.ArgumentParser:
-    today = datetime.now().date().isoformat()
-    parser = argparse.ArgumentParser(
-        description="Run deterministic AprilTag detector, occlusion, and decoder benchmarks"
-    )
-    parser.add_argument("--output", type=Path, default=Path(f"benchmarks/results/napa-performance-{today}.json"))
-    parser.add_argument("--samples-csv", type=Path, help="Raw detector-call samples CSV (defaults beside --output)")
-    parser.add_argument("--seed", type=int, default=2468)
-    parser.add_argument("--repetitions", type=_positive_int, default=10)
-    parser.add_argument(
-        "--occlusion-repetitions",
-        type=_positive_int,
-        default=1,
-        help="Measured passes over the occlusion sweep, separate from --repetitions",
-    )
-    parser.add_argument("--warmup", type=_nonnegative_int, default=2)
-    parser.add_argument(
-        "--threads", type=_positive_int, default=1, help="OpenCV and RobotPy AprilTag3 detector threads"
-    )
-    parser.add_argument(
-        "--resolutions",
-        type=_resolution_list,
-        default=DEFAULT_RESOLUTIONS,
-        help="Comma-separated WIDTHxHEIGHT values",
-    )
-    parser.add_argument(
-        "--tag-side-pixels",
-        type=_positive_int_list,
-        default=DEFAULT_TAG_SIDES,
-        help="Comma-separated marker sides; defaults to 96,160",
-    )
-    parser.add_argument(
-        "--include-robust-erased10",
-        action="store_true",
-        help="Add experimental Robust36h11 max_erased_bits=10 full-search backend",
-    )
-    return parser
-
-
-def main(argv: Sequence[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
-    try:
-        frames = build_corpus(resolutions=args.resolutions, tag_side_pixels=args.tag_side_pixels, seed=args.seed)
-        report, samples = run_matrix(
-            frames,
-            repetitions=args.repetitions,
-            occlusion_repetitions=args.occlusion_repetitions,
-            warmup=args.warmup,
-            seed=args.seed,
-            threads=args.threads,
-            include_robust_erased10=args.include_robust_erased10,
-        )
-        csv_output = args.samples_csv or args.output.with_suffix(".csv")
-        write_reports(report, samples, args.output, csv_output)
-        print(json.dumps({"report": str(args.output), "samples_csv": str(csv_output)}, indent=2))
-    except (ImportError, OSError, RuntimeError, ValueError) as exc:
-        print(f"performance-matrix: error: {exc}", file=sys.stderr)
-        return 2
-    return 0
-
-
-def _single_tag_frame(
-    *, name: str, width: int, height: int, tag_id: int, side: int, rotation: int, scenario: str
-) -> BenchmarkFrame:
-    image = np.full((height, width), 255, dtype=np.uint8)
-    x = (width - side) // 2
-    y = (height - side) // 2
-    _place_marker(image, tag_id, side, rotation, x, y)
-    return BenchmarkFrame(name, image, (tag_id,), (width, height), scenario, rotation, side)
-
-
-def _four_tag_frame(width: int, height: int, requested_side: int) -> BenchmarkFrame:
-    side = min(requested_side, max(32, min(width, height) // 4))
-    image = np.full((height, width), 255, dtype=np.uint8)
-    positions = (
-        (width // 4 - side // 2, height // 4 - side // 2),
-        (3 * width // 4 - side // 2, height // 4 - side // 2),
-        (width // 4 - side // 2, 3 * height // 4 - side // 2),
-        (3 * width // 4 - side // 2, 3 * height // 4 - side // 2),
-    )
-    ids = LAYOUT_TAG_IDS
-    for index, (x, y) in enumerate(positions):
-        _place_marker(image, ids[index], side, index, x, y)
-    return BenchmarkFrame(
-        f"four-tags-s{requested_side}",
-        image,
-        ids,
-        (width, height),
-        "four-tag",
-        tag_side_px=side,
-    )
-
-
-def _perspective_frame(width: int, height: int, side: int) -> BenchmarkFrame:
-    image = np.full((height, width), 255, dtype=np.uint8)
-    marker = _marker(314, side, 3)
-    source = np.array([[0, 0], [side - 1, 0], [side - 1, side - 1], [0, side - 1]], dtype=np.float32)
-    cx, cy = width // 2, height // 2
-    target = np.array(
-        [
-            [cx - side * 0.52, cy - side * 0.42],
-            [cx + side * 0.45, cy - side * 0.55],
-            [cx + side * 0.58, cy + side * 0.43],
-            [cx - side * 0.46, cy + side * 0.57],
-        ],
-        dtype=np.float32,
-    )
-    transform = cv2.getPerspectiveTransform(source, target)
-    warped = cv2.warpPerspective(marker, transform, (width, height), flags=cv2.INTER_LINEAR, borderValue=255)
-    mask = cv2.warpPerspective(np.full_like(marker, 255), transform, (width, height), flags=cv2.INTER_NEAREST)
-    image[mask > 0] = warped[mask > 0]
-    return BenchmarkFrame(f"perspective-id314-s{side}", image, (314,), (width, height), "perspective", 3, side)
-
-
-def _occlusion_frame(
-    *, width: int, height: int, tag_id: int, side: int, rotation: int, fraction: float, region: str, value: int
-) -> BenchmarkFrame:
-    image = np.full((height, width), 255, dtype=np.uint8)
-    x = (width - side) // 2
-    y = (height - side) // 2
-    marker = _marker(tag_id, side, rotation)
-    original = marker.copy()
-    x0, y0, x1, y1 = _occlusion_box(side, fraction, region)
-    marker[y0:y1, x0:x1] = value
-    image[y : y + side, x : x + side] = marker
-    raster_pixels = (x1 - x0) * (y1 - y0)
-    changed_pixels = int(np.count_nonzero(original[y0:y1, x0:x1] != value))
-    occlusion = {
-        "region": region,
-        "mask_value": value,
-        "requested_fraction": fraction,
-        "geometric_fraction": raster_pixels / float(side * side),
-        "raster_fraction": raster_pixels / float(side * side),
-        "changed_pixel_fraction": changed_pixels / float(side * side),
-    }
-    name = f"occlusion-{region}-f{fraction:.2f}-v{value}-id{tag_id}-r{rotation}-s{side}"
-    return BenchmarkFrame(name, image, (tag_id,), (width, height), "occlusion", rotation, side, occlusion)
-
-
-def _occlusion_box(side: int, fraction: float, region: str) -> tuple[int, int, int, int]:
-    if not 0.0 <= fraction <= 1.0:
-        raise ValueError("occlusion fraction must be between zero and one")
-    if fraction == 0.0:
-        return (side // 2, side // 2, side // 2, side // 2)
-    if region == "payload-center":
-        payload_start = side // 8
-        payload_end = side - payload_start
-        length = min(payload_end - payload_start, max(1, round((fraction**0.5) * side)))
-        x0 = payload_start + (payload_end - payload_start - length) // 2
-        y0 = payload_start + (payload_end - payload_start - length) // 2
-        return x0, y0, x0 + length, y0 + length
-    if region == "border-strip":
-        length = min(side, max(1, round(fraction * side)))
-        return 0, 0, length, side
-    if region == "corner":
-        length = min(side, max(1, round((fraction**0.5) * side)))
-        return 0, 0, length, length
-    raise ValueError(f"unknown occlusion region {region!r}")
-
-
-def _place_marker(image: np.ndarray, tag_id: int, side: int, rotation: int, x: int, y: int) -> None:
-    image[y : y + side, x : x + side] = _marker(tag_id, side, rotation)
-
-
-def _marker(tag_id: int, side: int, rotation: int) -> np.ndarray:
-    dictionary = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_APRILTAG_36h11)
-    marker = cv2.aruco.generateImageMarker(dictionary, tag_id, side, borderBits=1)
-    return np.rot90(marker, rotation).copy()
-
-
-def _textured_negative(width: int, height: int, rng: np.random.Generator) -> np.ndarray:
-    image = np.full((height, width), 235, dtype=np.uint8)
-    for _ in range(36):
-        x0, x1 = sorted(rng.integers(0, width, size=2).tolist())
-        y0, y1 = sorted(rng.integers(0, height, size=2).tolist())
-        if x1 - x0 < 8 or y1 - y0 < 8:
-            continue
-        value = int(rng.integers(70, 210))
-        if rng.integers(0, 2):
-            cv2.rectangle(image, (x0, y0), (x1, y1), value, thickness=2)
-        else:
-            cv2.line(image, (x0, y0), (x1, y1), value, thickness=2)
-    return image
-
-
-def _stress_frames(width: int, height: int, side: int, rng: np.random.Generator) -> list[BenchmarkFrame]:
-    """Camera-like degradations of one tag, each a separate scenario."""
-
-    resolution = (width, height)
-    base = _single_tag_frame(
-        name="stress", width=width, height=height, tag_id=STRESS_TAG_ID, side=side, rotation=3, scenario="stress"
-    ).image.astype(np.float32)
-    noisy = base + rng.normal(0.0, 6.0, base.shape)
-    gradient = base * np.linspace(0.35, 1.0, width, dtype=np.float32)[None, :]
-    kernel = np.zeros((7, 7), np.float32)
-    kernel[3, :] = 1.0 / 7.0
-    motion = cv2.filter2D(base, -1, kernel)
-    clutter = np.full((height, width), 225, np.uint8)
-    for _ in range(max(6, (width * height) // 40_000)):
-        origin = (int(rng.integers(0, max(1, width - 240))), int(rng.integers(24, height)))
-        cv2.putText(clutter, "NAPA 2468 ##", origin, cv2.FONT_HERSHEY_SIMPLEX, 1.0, int(rng.integers(0, 90)), 2)
-    # The tag keeps its one-cell white quiet zone, as a printed tag does.
-    margin = side // 8 + 2
-    x = (width - side) // 2
-    y = (height - side) // 2
-    clutter[y - margin : y + side + margin, x - margin : x + side + margin] = 255
-    clutter[y : y + side, x : x + side] = base[y : y + side, x : x + side].astype(np.uint8)
-    scenes = (("noisy", noisy), ("lighting-gradient", gradient), ("motion-blur", motion), ("cluttered", clutter))
-    return [
-        BenchmarkFrame(
-            f"{scenario}-id{STRESS_TAG_ID}-s{side}",
-            np.clip(image, 0, 255).astype(np.uint8),
-            (STRESS_TAG_ID,),
-            resolution,
-            scenario,
-            3,
-            side,
-        )
-        for scenario, image in scenes
-    ]
-
-
-def corner_accuracy_scene(
-    tag_id: int,
-    side: float,
-    angle_rad: float,
-    center: tuple[float, float],
-    blur_sigma: float,
-    noise_sigma: float,
-    rng: np.random.Generator,
-    size: tuple[int, int] = (1280, 720),
-) -> tuple[np.ndarray, np.ndarray]:
-    """Render a tag with exact sub-pixel corners: supersample 4x, then area-average like a sensor."""
-
-    width, height = size
-    cells = 10
-    padded = np.full((10 * cells, 10 * cells), 255, np.uint8)
-    padded[cells : 9 * cells, cells : 9 * cells] = _marker(tag_id, 8 * cells, 0)
-    source = np.array([[cells, cells], [9 * cells, cells], [9 * cells, 9 * cells], [cells, 9 * cells]], np.float32)
-    source -= 0.5
-    rotation = np.array([[np.cos(angle_rad), -np.sin(angle_rad)], [np.sin(angle_rad), np.cos(angle_rad)]])
-    unit = np.array([[-0.5, -0.5], [0.5, -0.5], [0.5, 0.5], [-0.5, 0.5]]) + rng.uniform(-0.06, 0.06, (4, 2))
-    corners = unit @ rotation.T * side + np.asarray(center)
-    homography = cv2.getPerspectiveTransform(source, (corners * 4 + 1.5).astype(np.float32))
-    large = cv2.warpPerspective(padded, homography, (width * 4, height * 4), borderValue=255)
-    image = cv2.resize(large, (width, height), interpolation=cv2.INTER_AREA).astype(np.float32)
-    if blur_sigma > 0:
-        image = cv2.GaussianBlur(image, (0, 0), blur_sigma)
-    image = image * 0.8 + 20 + rng.normal(0.0, noise_sigma, image.shape)
-    return np.clip(image, 0, 255).astype(np.uint8), corners
-
-
-def run_corner_accuracy(*, seed: int = 2468, threads: int = 1) -> dict[str, object]:
-    """Score detected corners against exact ground truth on seeded sub-pixel renders.
-
-    AprilTag reports corners with a +0.5 px origin and its own corner order; its corners are
-    shifted by -0.5 px and aligned to OpenCV order before scoring, so only real error counts.
-    """
-
-    rng = np.random.default_rng(seed)
-    adapters: dict[str, Callable[[np.ndarray], list[tuple[int, np.ndarray]]]] = {}
-    if native_available():
-        native = NapaDetector()
-        adapters["napa-native"] = lambda image: [(o.tag_id, o.corners) for o in native.detect(image)]
-    opencv = OpenCVArucoFiducialDetector()
-    adapters["opencv-aruco"] = lambda image: [(o.tag_id, o.corners) for o in opencv.detect(image)]
-    try:
-        from robotpy_apriltag import AprilTagDetector
-    except ImportError:
-        pass
-    else:
-        for decimate in (1.0, 2.0):
-            detector = AprilTagDetector()
-            detector.addFamily("tag36h11", 2)
-            config = detector.getConfig()
-            config.numThreads = threads
-            config.quadDecimate = decimate
-            detector.setConfig(config)
-
-            def apriltag(image: np.ndarray, detector=detector) -> list[tuple[int, np.ndarray]]:
-                return [
-                    (int(d.getId()), np.array([[d.getCorner(i).x, d.getCorner(i).y] for i in range(4)]) - 0.5)
-                    for d in detector.detect(image)
-                ]
-
-            adapters[f"apriltag3-robotpy-decimate-{int(decimate)}"] = apriltag
-    errors: dict[str, dict[int, list[float]]] = {name: defaultdict(list) for name in adapters}
-    scenes = 0
-    for side in CORNER_TAG_SIDES:
-        for pose in range(CORNER_POSES_PER_SIDE):
-            tag_id = int(rng.integers(0, 587))
-            image, truth = corner_accuracy_scene(
-                tag_id,
-                float(side),
-                float(rng.uniform(0, 2 * np.pi)),
-                (float(rng.uniform(300, 980)), float(rng.uniform(250, 470))),
-                (0.0, 0.8)[pose % 2],
-                2.0,
-                rng,
             )
-            scenes += 1
-            for name, detect in adapters.items():
-                for found_id, corners in detect(image):
-                    if found_id != tag_id:
-                        continue
-                    if name.startswith("apriltag3"):
-                        corners = min(
-                            (np.roll(order, shift, 0) for order in (corners, corners[::-1]) for shift in range(4)),
-                            key=lambda candidate: float(np.abs(candidate - truth).max()),
-                        )
-                    errors[name][side].append(float(np.linalg.norm(corners - truth, axis=1).max()))
-                    break
-    report: dict[str, object] = {
-        "scope": (
-            "Worst corner's Euclidean error per detected tag, against exact homography ground truth, on 1280x720 "
-            "renders supersampled 4x with mild perspective, sigma 0/0.8 blur and sigma 2 noise. AprilTag corners "
-            "are shifted -0.5 px to OpenCV's pixel-centre convention and re-ordered before scoring."
-        ),
-        "scenes": scenes,
-        "tag_sides_px": list(CORNER_TAG_SIDES),
-        "backends": {},
-    }
-    for name, by_side in errors.items():
-        values = [value for side in CORNER_TAG_SIDES for value in by_side[side]]
-        report["backends"][name] = {
-            "found": len(values),
-            "median_px": float(np.median(values)) if values else None,
-            "p95_px": float(np.percentile(values, 95)) if values else None,
-            "max_px": float(np.max(values)) if values else None,
-            "by_side": {
-                str(side): {
-                    "found": len(by_side[side]),
-                    "median_px": float(np.median(by_side[side])) if by_side[side] else None,
-                }
-                for side in CORNER_TAG_SIDES
-            },
-        }
-    return report
+        if progress is not None:
+            progress(count)
+    return lifecycle, rows
 
 
-def _raw_opencv_detector(
-    dictionary: cv2.aruco.Dictionary, parameters: cv2.aruco.DetectorParameters
-) -> Callable[[np.ndarray], list[int]]:
-    detector = cv2.aruco.ArucoDetector(dictionary, parameters)
+def aggregate(rows: Sequence[dict[str, object]], *, baseline: str = "napa") -> dict[str, object]:
+    """Fold per-frame rows into per-(scenario, resolution, backend) results and per-frame speedups."""
 
-    def detect(image: np.ndarray) -> list[int]:
-        _corners, ids, _rejected = detector.detectMarkers(image)
-        return [] if ids is None else [int(tag_id) for tag_id in ids.reshape(-1)]
-
-    return detect
-
-
-def _napa_native_detector() -> Callable[[np.ndarray], list[int]]:
-    detector = NapaDetector()
-    return lambda image: [observation.tag_id for observation in detector.detect(image)]
-
-
-def _napa_default_detector() -> Callable[[np.ndarray], list[int]]:
-    detector = OpenCVArucoFiducialDetector()
-    return lambda image: [observation.tag_id for observation in detector.detect(image)]
-
-
-def _napa_aruco3_detector() -> Callable[[np.ndarray], list[int]]:
-    detector = make_apriltag_detector("aruco3")
-    return lambda image: [observation.tag_id for observation in detector.detect(image)]
-
-
-def _napa_skip_scan_detector() -> Callable[[np.ndarray], list[int]]:
-    detector = OpenCVArucoFiducialDetector(prefilter=BlockSkipPrefilter(SkipScanConfig(enabled=True)))
-    return lambda image: [observation.tag_id for observation in detector.detect(image)]
-
-
-def _napa_layout_detector(tag_ids: Sequence[int]) -> Callable[[np.ndarray], list[int]]:
-    detector = make_apriltag_detector("layout-restricted", layout_tag_ids=tag_ids)
-    return lambda image: [observation.tag_id for observation in detector.detect(image)]
-
-
-def _robotpy_detector(
-    *,
-    threads: int,
-    quad_decimate: float,
-    recorded_config: dict[str, object],
-) -> Callable[[np.ndarray], list[int]]:
-    from robotpy_apriltag import AprilTagDetector
-
-    detector = AprilTagDetector()
-    if not detector.addFamily("tag36h11", 2):
-        raise RuntimeError("RobotPy AprilTagDetector could not load tag36h11")
-    config = detector.getConfig()
-    config.numThreads = threads
-    config.quadDecimate = quad_decimate
-    detector.setConfig(config)
-    applied = detector.getConfig()
-    if applied.numThreads != threads or applied.quadDecimate != quad_decimate:
-        raise RuntimeError("RobotPy AprilTagDetector did not apply requested thread or decimate configuration")
-    recorded_config["applied_config"] = {
-        "debug": bool(applied.debug),
-        "decode_sharpening": float(applied.decodeSharpening),
-        "num_threads": int(applied.numThreads),
-        "quad_decimate": float(applied.quadDecimate),
-        "quad_sigma": float(applied.quadSigma),
-        "refine_edges": bool(applied.refineEdges),
-    }
-    return lambda image: [int(detection.getId()) for detection in detector.detect(image)]
-
-
-def _robust_detector(*, max_erased_bits: int) -> Callable[[np.ndarray], list[int]]:
-    _ensure_repository_root_on_path()
-    from experiments.occlusion_detector.robust_apriltag import Robust36h11Detector
-
-    detector = Robust36h11Detector(refine_pose=False, max_erased_bits=max_erased_bits)
-    return lambda image: [int(detection.id) for detection in detector.detect(image)]
-
-
-def _ensure_repository_root_on_path() -> None:
-    repository_root = Path(__file__).resolve().parents[1]
-    if str(repository_root) not in sys.path:
-        sys.path.insert(0, str(repository_root))
-
-
-def _opencv_parameters(parameters: cv2.aruco.DetectorParameters) -> dict[str, object]:
-    names = (
-        "useAruco3Detection",
-        "minMarkerLengthRatioOriginalImg",
-        "cornerRefinementMethod",
-        "markerBorderBits",
-        "errorCorrectionRate",
-    )
-    return {name: getattr(parameters, name) for name in names if hasattr(parameters, name)}
-
-
-def _aruco3_parameters() -> cv2.aruco.DetectorParameters:
-    parameters = cv2.aruco.DetectorParameters()
-    if not hasattr(parameters, "useAruco3Detection"):
-        raise RuntimeError("This OpenCV build does not support ArUco3 detection")
-    parameters.useAruco3Detection = True
-    parameters.minMarkerLengthRatioOriginalImg = 0.0
-    return parameters
-
-
-def _dictionary_config(dictionary: cv2.aruco.Dictionary) -> dict[str, int]:
-    return {
-        "marker_size": int(dictionary.markerSize),
-        "max_correction_bits": int(dictionary.maxCorrectionBits),
-    }
-
-
-def _napa_config(
-    candidate: str,
-    dictionary: cv2.aruco.Dictionary,
-    parameters: cv2.aruco.DetectorParameters,
-    open_cv_threads: int,
-    **extra: object,
-) -> dict[str, object]:
-    return {
-        "wrapper": "OpenCVArucoFiducialDetector",
-        "candidate": candidate,
-        "dictionary": "DICT_APRILTAG_36h11",
-        "dictionary_config": _dictionary_config(dictionary),
-        "parameters": _opencv_parameters(parameters),
-        "opencv_threads_effective": open_cv_threads,
-        **extra,
-    }
-
-
-def _metrics_dict(metrics: IdMetrics) -> dict[str, float | int | None]:
-    return {
-        "true_positive": metrics.true_positive,
-        "false_positive": metrics.false_positive,
-        "false_negative": metrics.false_negative,
-        "precision": metrics.precision,
-        "recall": metrics.recall,
-    }
-
-
-def _add_metrics(left: IdMetrics, right: IdMetrics) -> IdMetrics:
-    return IdMetrics(
-        left.true_positive + right.true_positive,
-        left.false_positive + right.false_positive,
-        left.false_negative + right.false_negative,
-    )
-
-
-def _corpus_summary(frames: Sequence[BenchmarkFrame]) -> dict[str, object]:
-    return {
-        "frames": len(frames),
-        "resolutions": sorted({f"{frame.resolution[0]}x{frame.resolution[1]}" for frame in frames}),
-        "scenarios": sorted({frame.scenario for frame in frames}),
-        "expected_ids": sorted({tag_id for frame in frames for tag_id in frame.expected_ids}),
-        "in_memory": True,
-        "image_dtype": "uint8",
-        "image_channels": 1,
-    }
-
-
-def _scenario_report(
-    totals: dict[tuple[str, str, str], IdMetrics],
-    latency: dict[tuple[str, str, str], list[int]],
-) -> list[dict[str, object]]:
-    return [
-        {
-            "backend": backend,
-            "scenario": scenario,
-            "resolution": resolution,
-            "latency": summarize_latency(latency[(backend, scenario, resolution)]),
-            "id_metrics": _metrics_dict(metrics),
-        }
-        for (backend, scenario, resolution), metrics in sorted(totals.items())
-    ]
-
-
-def _occlusion_report(
-    totals: dict[tuple[str, str, str, float, str, int], IdMetrics],
-    samples: Sequence[dict[str, object]],
-) -> list[dict[str, object]]:
-    area_values: dict[tuple[object, ...], dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
-    area_names = ("geometric_fraction", "raster_fraction", "changed_pixel_fraction")
-    for sample in samples:
-        if sample.get("stage") != "occlusion":
-            continue
-        key = (
-            sample["backend"],
-            sample["resolution"],
-            sample["occlusion_region"],
-            float(sample["occlusion_requested_fraction"]),
-            str(sample["occlusion_mask_value"]),
-            int(sample["tag_side_px"]),
+    groups: dict[tuple[str, str, str], list[dict[str, object]]] = defaultdict(list)
+    for row in rows:
+        groups[(str(row["scenario"]), str(row["resolution"]), str(row["backend"]))].append(row)
+    results = []
+    for (scenario, resolution, backend), members in sorted(groups.items()):
+        samples = [int(value) for row in members for value in str(row["samples_ns"]).split(";")]
+        errors = [float(value) for row in members for value in str(row["corner_errors_px"]).split(";") if value]
+        tags = sum(int(row["tags"]) for row in members)
+        found = sum(int(row["true_positive"]) for row in members)
+        results.append(
+            {
+                "scenario": scenario,
+                "resolution": resolution,
+                "backend": backend,
+                "frames": len(members),
+                "tags": tags,
+                "found": found,
+                "recall": found / tags if tags else None,
+                "false_positives": sum(int(row["false_positive"]) for row in members),
+                "frames_with_false_positive": sum(1 for row in members if int(row["false_positive"])),
+                "latency": summarize_latency(samples),
+                "frame_median_ms": summarize_latency([round(float(row["median_ms"]) * 1e6) for row in members]),
+                "corner_error": _error_summary(errors),
+            }
         )
-        for name in area_names:
-            value = sample.get(f"occlusion_{name}")
-            if value is not None and value != "":
-                area_values[key][name].append(float(value))
-    report: list[dict[str, object]] = []
-    for (backend, resolution, region, fraction, mask_value, tag_side_px), metrics in sorted(totals.items()):
+    speedups = _speedups(rows, baseline)
+    return {"results": results, "speedups": speedups}
+
+
+def _speedups(rows: Sequence[dict[str, object]], baseline: str) -> list[dict[str, object]]:
+    """Per-frame ratio of each backend's median time to the baseline's, on the same frame."""
+
+    by_frame: dict[str, dict[str, dict[str, object]]] = defaultdict(dict)
+    for row in rows:
+        by_frame[str(row["frame"])][str(row["backend"])] = row
+    ratios: dict[tuple[str, str, str], list[float]] = defaultdict(list)
+    for backends in by_frame.values():
+        base = backends.get(baseline)
+        if base is None:
+            continue
+        for name, row in backends.items():
+            if name == baseline:
+                continue
+            ratio = float(row["median_ms"]) / max(float(base["median_ms"]), 1e-9)
+            ratios[(str(row["scenario"]), str(row["resolution"]), name)].append(ratio)
+            ratios[("all", "all", name)].append(ratio)
+    report = []
+    for (scenario, resolution, versus), values in sorted(ratios.items()):
+        array = np.asarray(values)
         report.append(
             {
-                "backend": backend,
+                "scenario": scenario,
                 "resolution": resolution,
-                "region": region,
-                "requested_fraction": fraction,
-                "mask_value": mask_value,
-                "tag_side_px": tag_side_px,
-                "area_fractions": {
-                    name: {"min": min(values), "mean": float(np.mean(values)), "max": max(values)}
-                    for name, values in area_values[
-                        (backend, resolution, region, fraction, mask_value, tag_side_px)
-                    ].items()
-                },
-                "id_metrics": _metrics_dict(metrics),
+                "versus": versus,
+                "frames": len(values),
+                "median_speedup": float(np.median(array)),
+                "p5_speedup": float(np.percentile(array, 5)),
+                "min_speedup": float(array.min()),
+                "frames_baseline_slower": int(np.count_nonzero(array < 1.0)),
             }
         )
     return report
+
+
+def occlusion_report(rows: Sequence[dict[str, object]]) -> list[dict[str, object]]:
+    groups: dict[tuple[str, str, float, int], list[int]] = defaultdict(list)
+    for row in rows:
+        key = (
+            str(row["backend"]),
+            str(row["detail_region"]),
+            float(row["detail_fraction"]),
+            int(row["detail_mask_value"]),
+        )
+        groups[key].append(int(row["true_positive"]))
+    return [
+        {
+            "backend": backend,
+            "region": region,
+            "fraction": fraction,
+            "mask_value": value,
+            "cases": len(found),
+            "found": sum(found),
+        }
+        for (backend, region, fraction, value), found in sorted(groups.items())
+    ]
+
+
+# ----------------------------------------------------------------------------------------- report
+
+
+def markdown_summary(report: dict[str, object], *, baseline: str = "napa", versus: str = "apriltag") -> str:
+    """Tables in the README's format: one row per scenario at each resolution."""
+
+    results = {(r["scenario"], r["resolution"], r["backend"]): r for r in report["results"]}
+    speedups = {(s["scenario"], s["resolution"], s["versus"]): s for s in report["speedups"]}
+    resolutions = sorted({r["resolution"] for r in report["results"]}, key=lambda s: int(s.split("x")[0]))
+    lines: list[str] = []
+    for resolution in resolutions:
+        lines += [
+            f"\n#### {resolution}\n",
+            f"| Scene | Frames | Tags | {versus} p50 | {baseline} p50 | Speedup (median / worst frame) "
+            f"| Found ({versus} → {baseline}) | False IDs |",
+            "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        ]
+        for scenario in report["scenarios"]:
+            ours = results.get((scenario, resolution, baseline))
+            theirs = results.get((scenario, resolution, versus))
+            speed = speedups.get((scenario, resolution, versus))
+            if ours is None or theirs is None or speed is None:
+                continue
+            found = "—" if not ours["tags"] else f"{theirs['found']}/{theirs['tags']} → {ours['found']}/{ours['tags']}"
+            lines.append(
+                f"| {scenario} | {ours['frames']} | {ours['tags']} | {theirs['latency']['p50_ms']:.2f} ms "
+                f"| {ours['latency']['p50_ms']:.2f} ms | {speed['median_speedup']:.1f}× / {speed['min_speedup']:.1f}× "
+                f"| {found} | {theirs['false_positives']} → {ours['false_positives']} |"
+            )
+    return "\n".join(lines) + "\n"
+
+
+def write_reports(report: dict[str, object], rows: Sequence[dict[str, object]], output: Path, csv_output: Path) -> None:
+    _atomic_write(output, lambda file: json.dump(report, file, indent=2, sort_keys=True, allow_nan=False))
+    fieldnames = sorted({key for row in rows for key in row})
+
+    def write_csv(file) -> None:
+        writer = csv.DictWriter(file, fieldnames=fieldnames, lineterminator="\n")
+        writer.writeheader()
+        writer.writerows(rows)
+
+    _atomic_write(csv_output, write_csv)
+
+
+def _atomic_write(path: Path, write: Callable[[object], None]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary: str | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w", newline="", encoding="utf-8", dir=path.parent, prefix=f".{path.name}.", suffix=".tmp", delete=False
+        ) as file:
+            temporary = file.name
+            write(file)
+            file.write("\n")
+        os.replace(temporary, path)
+    except BaseException:
+        if temporary is not None:
+            Path(temporary).unlink(missing_ok=True)
+        raise
 
 
 def _metadata() -> dict[str, object]:
     return {
         "platform": platform.platform(),
         "machine": platform.machine(),
-        "processor": platform.processor(),
         "cpu_model": _cpu_model(),
         "cpu_count": os.cpu_count(),
+        "cpu_affinity": sorted(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else None,
         "python": sys.version,
-        "opencv_version": cv2.__version__,
-        "opencv_build": cv2.getBuildInformation(),
         "dependencies": {
             name: _package_version(name)
-            for name in (
-                "numpy",
-                "opencv-python",
-                "opencv-python-headless",
-                "opencv-contrib-python",
-                "robotpy-apriltag",
-            )
+            for name in ("numpy", "opencv-python", "opencv-python-headless", "robotpy-apriltag", "napa-vision")
         },
     }
 
@@ -1168,26 +1144,114 @@ def _package_version(name: str) -> str | None:
         return None
 
 
-def _write_csv_atomically(rows: Sequence[dict[str, object]], path: Path) -> None:
-    fieldnames = sorted({key for row in rows for key in row})
-    if not fieldnames:
-        raise ValueError("CSV rows must not be empty")
-    temporary_name: str | None = None
+# -------------------------------------------------------------------------------------------- CLI
+
+
+def build_parser() -> argparse.ArgumentParser:
+    today = datetime.now().date().isoformat()
+    parser = argparse.ArgumentParser(
+        description="Benchmark Napa against standard AprilTag on distinct synthetic frames"
+    )
+    parser.add_argument("--output", type=Path, default=Path(f"benchmarks/results/{today}_detector_matrix.json"))
+    parser.add_argument("--samples-csv", type=Path, help="Per-frame results CSV (defaults beside --output)")
+    parser.add_argument("--seed", type=int, default=2468)
+    parser.add_argument(
+        "--frames", type=_positive_int, default=DEFAULT_FRAMES_PER_SCENARIO, help="Frames per scenario and resolution"
+    )
+    parser.add_argument(
+        "--occlusion-cases",
+        type=_nonnegative_int,
+        default=DEFAULT_OCCLUSION_CASES,
+        help="Tags per occlusion region, fraction, and patch colour (0 to skip)",
+    )
+    parser.add_argument("--repetitions", type=_positive_int, default=10, help="Timed calls per backend per frame")
+    parser.add_argument("--warmup", type=_nonnegative_int, default=1, help="Untimed calls per backend per frame")
+    parser.add_argument("--threads", type=_positive_int, default=1, help="AprilTag worker threads")
+    parser.add_argument(
+        "--resolutions", type=_resolution_list, default=DEFAULT_RESOLUTIONS, help="Comma-separated WIDTHxHEIGHT values"
+    )
+    parser.add_argument(
+        "--scenarios",
+        type=_name_list,
+        default=SCENARIO_NAMES,
+        help=f"Comma-separated subset of: {','.join(SCENARIO_NAMES)}",
+    )
+    parser.add_argument(
+        "--backends",
+        type=_name_list,
+        default=("napa", "apriltag", "apriltag-full-res"),
+        help="Comma-separated: napa, apriltag, apriltag-full-res, opencv-aruco",
+    )
+    parser.add_argument("--quiet", action="store_true", help="Don't print progress or the summary tables")
+    return parser
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
     try:
-        with tempfile.NamedTemporaryFile(
-            "w", newline="", encoding="utf-8", dir=path.parent, prefix=f".{path.name}.", suffix=".tmp", delete=False
-        ) as file:
-            temporary_name = file.name
-            writer = csv.DictWriter(file, fieldnames=fieldnames, extrasaction="raise", lineterminator="\n")
-            writer.writeheader()
-            writer.writerows(rows)
-            file.flush()
-            os.fsync(file.fileno())
-        os.replace(temporary_name, path)
-    except BaseException:
-        if temporary_name is not None:
-            Path(temporary_name).unlink(missing_ok=True)
-        raise
+        backends, skipped = build_backends(args.backends, threads=args.threads)
+        cv2.setNumThreads(1)
+        total = len(args.scenarios) * len(args.resolutions) * args.frames
+
+        def progress(done: int) -> None:
+            if not args.quiet and (done % 50 == 0 or done == total):
+                print(f"\r{done}/{total} frames", end="", file=sys.stderr, flush=True)
+
+        frames = iter_frames(
+            scenarios=args.scenarios, resolutions=args.resolutions, frames_per_scenario=args.frames, seed=args.seed
+        )
+        lifecycle, rows = run_matrix(
+            frames,
+            backends=backends,
+            repetitions=args.repetitions,
+            warmup=args.warmup,
+            seed=args.seed,
+            progress=progress,
+        )
+        if not args.quiet:
+            print(file=sys.stderr)
+        occlusion_rows: list[dict[str, object]] = []
+        if args.occlusion_cases:
+            smallest = min(args.resolutions, key=lambda r: r[0] * r[1])
+            occlusion_frames = iter_occlusion_frames(resolution=smallest, cases=args.occlusion_cases, seed=args.seed)
+            _, occlusion_rows = run_matrix(occlusion_frames, backends=backends, repetitions=1, warmup=0, seed=args.seed)
+        summary = aggregate(rows)
+        report = {
+            "schema_version": REPORT_SCHEMA_VERSION,
+            "generated_at_utc": datetime.now(UTC).isoformat(),
+            "scope": (
+                "Detector call only, on pre-rendered uint8 grayscale frames. Every frame is distinct. Corner error is "
+                "the worst corner's Euclidean distance from exact ground truth; AprilTag corners are shifted -0.5 px "
+                "to the pixel-centre convention and re-ordered to the truth before scoring."
+            ),
+            "metadata": _metadata(),
+            "run_config": {
+                "seed": args.seed,
+                "frames_per_scenario": args.frames,
+                "repetitions": args.repetitions,
+                "warmup": args.warmup,
+                "threads": args.threads,
+                "resolutions": [f"{w}x{h}" for w, h in args.resolutions],
+                "occlusion_cases": args.occlusion_cases,
+            },
+            "scenarios": list(args.scenarios),
+            "scenario_descriptions": {s.name: s.description for s in SCENARIOS if s.name in args.scenarios},
+            "backends": {b.name: {"config": b.config, "lifecycle": lifecycle[b.name]} for b in backends},
+            "skipped_backends": skipped,
+            "frames": len(rows) // max(1, len(backends)),
+            "tags": sum(int(row["tags"]) for row in rows) // max(1, len(backends)),
+            **summary,
+            "occlusion": occlusion_report(occlusion_rows),
+        }
+        csv_output = args.samples_csv or args.output.with_suffix(".csv")
+        write_reports(report, rows + occlusion_rows, args.output, csv_output)
+        if not args.quiet:
+            print(markdown_summary(report))
+        print(json.dumps({"report": str(args.output), "samples_csv": str(csv_output)}, indent=2))
+    except (ImportError, OSError, RuntimeError, ValueError) as exc:
+        print(f"performance-matrix: error: {exc}", file=sys.stderr)
+        return 2
+    return 0
 
 
 def _resolution_list(value: str) -> tuple[tuple[int, int], ...]:
@@ -1198,19 +1262,17 @@ def _resolution_list(value: str) -> tuple[tuple[int, int], ...]:
             width, height = int(width_text), int(height_text)
         except ValueError as exc:
             raise argparse.ArgumentTypeError("resolutions must use WIDTHxHEIGHT, separated by commas") from exc
-        if width < 160 or height < 120:
-            raise argparse.ArgumentTypeError("resolutions must be at least 160x120")
+        if width < 320 or height < 240:
+            raise argparse.ArgumentTypeError("resolutions must be at least 320x240")
         resolutions.append((width, height))
-    if not resolutions:
-        raise argparse.ArgumentTypeError("at least one resolution is required")
     return tuple(resolutions)
 
 
-def _positive_int_list(value: str) -> tuple[int, ...]:
-    values = tuple(_positive_int(item) for item in value.split(","))
-    if not values:
-        raise argparse.ArgumentTypeError("at least one positive integer is required")
-    return values
+def _name_list(value: str) -> tuple[str, ...]:
+    names = tuple(item.strip() for item in value.split(",") if item.strip())
+    if not names:
+        raise argparse.ArgumentTypeError("at least one name is required")
+    return names
 
 
 def _positive_int(value: str) -> int:
