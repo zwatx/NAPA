@@ -93,6 +93,7 @@ jobs:
       - run: python -m venv /tmp/napa-sdist
       - run: /tmp/napa-sdist/bin/python -m pip install --no-deps dist/*.tar.gz
       - run: /tmp/napa-sdist/bin/python -c 'import importlib.metadata; assert importlib.metadata.version("napa-vision")'
+      - run: /tmp/napa-sdist/bin/python -m pip install numpy
       - run: cd /tmp && /tmp/napa-sdist/bin/python -c 'import napa_vision; assert napa_vision.native_available()'
       - uses: actions/upload-artifact@v4
         with:
