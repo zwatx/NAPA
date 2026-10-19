@@ -17,7 +17,6 @@ from napa_vision.benchmark import (
     load_corpus_manifest,
     main,
     run_replay_benchmark,
-    run_replay_detector_comparison,
     write_benchmark_summary,
 )
 
@@ -82,65 +81,6 @@ def test_replay_benchmark_reports_accuracy_percentiles_and_bounded_failures(tmp_
         assert timing["samples"] == 3
         assert 0 <= timing["p50_ms"] <= timing["p95_ms"] <= timing["p99_ms"] <= timing["max_ms"]
     json.dumps(summary)
-
-
-def test_replay_detector_comparison_reuses_one_decoded_frame_cache(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    cv2.imwrite(str(tmp_path / "tag9.png"), _marker_scene(9))
-    manifest_path = _write_manifest(tmp_path, [{"path": "tag9.png", "expected_tag_ids": [9]}])
-    decode_calls = 0
-    original_decode = benchmark_module._decode_image
-
-    def counted_decode(frame: benchmark_module.CorpusFrame) -> np.ndarray:
-        nonlocal decode_calls
-        decode_calls += 1
-        return original_decode(frame)
-
-    monkeypatch.setattr(benchmark_module, "_decode_image", counted_decode)
-    summary = run_replay_detector_comparison(
-        manifest_path,
-        candidates=("aruco3", "layout-restricted"),
-        layout_tag_ids=(2, 9),
-        options=BenchmarkOptions(repetitions=2, warmup_passes=1),
-    )
-
-    assert decode_calls == 1
-    assert summary["run"]["frame_source"] == "decoded-cache"
-    assert summary["comparison_run"] == {
-        "execution_order": ["baseline", "aruco3", "layout-restricted"],
-        "shared_decoded_frames": True,
-        "max_decoded_cache_bytes": benchmark_module.DEFAULT_COMPARISON_CACHE_BYTES,
-        "production_default_changed": False,
-        "requires_physical_hardware_validation": True,
-    }
-    assert summary["detector_comparisons"]["aruco3"]["assessment"]["accuracy_equal"] is True
-    restricted = summary["detector_comparisons"]["layout-restricted"]["results"]
-    assert restricted["accuracy"] == summary["accuracy"]
-    assert restricted["memory"]["cached_decoded_image_bytes"] > 0
-
-
-def test_replay_detector_comparison_enforces_decoded_cache_limit(tmp_path: Path) -> None:
-    cv2.imwrite(str(tmp_path / "tag9.png"), _marker_scene(9))
-    manifest_path = _write_manifest(tmp_path, [{"path": "tag9.png", "expected_tag_ids": [9]}])
-
-    with pytest.raises(ValueError, match="decoded comparison cache exceeds"):
-        run_replay_detector_comparison(
-            manifest_path,
-            options=BenchmarkOptions(warmup_passes=0),
-            max_decoded_cache_bytes=1,
-        )
-
-
-def test_replay_detector_comparison_handles_zero_candidate_timing() -> None:
-    baseline = {"timing": {"detect_ms": {"p50_ms": 1.0, "p95_ms": 2.0}}, "accuracy": {"recall": 1.0}}
-    candidate = {"timing": {"detect_ms": {"p50_ms": 0.0, "p95_ms": 0.0}}, "accuracy": {"recall": 1.0}}
-
-    assessment = benchmark_module._detector_comparison(baseline, candidate)
-
-    assert assessment["detect_p50_speedup"] is None
-    assert assessment["detect_p95_speedup"] is None
-    assert assessment["eligible_for_physical_validation"] is False
 
 
 def test_manifest_integrity_hash_is_enforced(tmp_path: Path) -> None:

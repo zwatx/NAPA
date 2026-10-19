@@ -2,45 +2,19 @@ from __future__ import annotations
 
 import math
 
-import cv2
 import numpy as np
 import pytest
+from conftest import example_profile, project_field_tag
 
-from napa_vision.config import load_profile
 from napa_vision.geometry import (
-    invert_transform,
-    tag_field_corners,
     transform_matrix,
-    transform_points,
-    wpilib_points_to_opencv,
 )
 from napa_vision.solvers import CameraPoseSolver
 from napa_vision.types import CameraPoseBounds, FiducialImageObservation
 
 
-def _project_tag(
-    field_to_camera: np.ndarray,
-    field_to_tag: np.ndarray,
-    tag_size_m: float,
-    camera_matrix: np.ndarray,
-    distortion: np.ndarray,
-) -> np.ndarray:
-    camera_to_field = invert_transform(field_to_camera)
-    field_corners = tag_field_corners(field_to_tag, tag_size_m)
-    camera_corners = transform_points(camera_to_field, field_corners)
-    opencv_corners = wpilib_points_to_opencv(camera_corners)
-    projected, _ = cv2.projectPoints(
-        opencv_corners,
-        np.zeros((3, 1), dtype=np.float64),
-        np.zeros((3, 1), dtype=np.float64),
-        camera_matrix,
-        distortion,
-    )
-    return projected.reshape(4, 2)
-
-
 def _scene() -> tuple[object, np.ndarray, dict[int, np.ndarray], list[FiducialImageObservation]]:
-    profile = load_profile("laptop")
+    profile = example_profile()
     expected = transform_matrix([0.4, 1.0, 1.0], [0.0, 0.0, 0.0])
     layout = {
         1: transform_matrix([3.0, 0.25, 0.7], [0.0, 0.0, math.pi]),
@@ -51,7 +25,7 @@ def _scene() -> tuple[object, np.ndarray, dict[int, np.ndarray], list[FiducialIm
     observations = [
         FiducialImageObservation(
             tag_id,
-            _project_tag(
+            project_field_tag(
                 expected,
                 field_to_tag,
                 profile.tag_size_m,

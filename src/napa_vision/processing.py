@@ -10,9 +10,9 @@ from time import perf_counter
 import numpy as np
 
 from .calibration import CameraCalibration
-from .fiducials import FiducialDetector, default_detector
+from .napa_detector import NapaDetector
 from .solvers import CameraPoseSolver, SingleTagPoseSolver, TagAngleSolver
-from .types import CameraPoseBounds, FrameResult
+from .types import CameraPoseBounds, FiducialDetector, FrameResult
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,8 +38,9 @@ class VisionProcessor:
     """Process caller-owned images; use one instance per camera stream.
 
     Without calibration, return IDs and corners only. Calibrated processing also
-    requires the physical tag size. Field layouts are optional; poses
-    use the existing OpenCV/WPILib conventions, never a device SDK's world frame.
+    requires the physical tag size. A tag layout (tag ID to world-to-tag transform)
+    is optional and enables a camera pose; poses use the conventions documented in
+    ``geometry``, never a device SDK's world frame.
     Calls are synchronous and must not overlap on one instance. The caller owns
     capture, pixel-format conversion, clocks, scheduling, and result delivery.
     """
@@ -91,7 +92,7 @@ class VisionProcessor:
             ransac_iterations=ransac_iterations,
         )
         self._angle_solver = TagAngleSolver()
-        self.detector = detector if detector is not None else default_detector()
+        self.detector = detector if detector is not None else NapaDetector()
 
     def process(
         self,

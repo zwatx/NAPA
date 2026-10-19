@@ -48,14 +48,13 @@ class ProjectedDetector:
         return [FiducialImageObservation(42, self.corners.reshape(4, 2).copy())]
 
 
-def test_processor_import_does_not_load_capture_profiles_or_transports() -> None:
+def test_detector_works_without_opencv() -> None:
     subprocess.run(
         [
             sys.executable,
             "-c",
-            "from napa_vision import VisionProcessor; import sys; "
-            "assert not {'napa_vision.config', 'napa_vision.capture', "
-            "'napa_vision.output', 'napa_vision.recording', 'ntcore'} & sys.modules.keys()",
+            "import sys; sys.modules['cv2'] = None; import numpy as np; from napa_vision import NapaDetector; "
+            "assert NapaDetector().detect(np.zeros((64, 64, 3), np.uint8)) == []",
         ],
         check=True,
     )
@@ -77,7 +76,7 @@ def test_detection_only_accepts_strided_images_without_profile_or_calibration(ch
     assert np.min(result.image_observations[0].corners[:, 0]) == pytest.approx(80, abs=1)
     assert result.timestamp == 12.5 and result.capture_monotonic_s == 3.0
     assert result.single_tag_poses == [] and result.camera_pose is None and result.pose_diagnostics is None
-    assert result.tag_angles == [] and result.trig_poses == []
+    assert result.tag_angles == []
     assert set(result.health) == {"detection_ms", "solve_ms"}
     assert np.array_equal(backing, before)
 
@@ -94,7 +93,7 @@ def test_calibrated_processing_uses_custom_backend_without_field_layout() -> Non
     assert [pose.tag_id for pose in result.single_tag_poses] == [42]
     assert np.allclose(result.single_tag_poses[0].pose_0_tvec.reshape(3), [0.1, 0.05, 2.0], atol=1e-6)
     assert [angle.tag_id for angle in result.tag_angles] == [42]
-    assert result.camera_pose is None and result.trig_poses == []
+    assert result.camera_pose is None
     assert result.pose_diagnostics is not None
     assert result.pose_diagnostics.rejected_tag_reasons == {42: "tag is not present in the field layout"}
 
@@ -121,7 +120,6 @@ def test_optional_field_solving_preserves_prior_results() -> None:
         opencv_pose_to_wpilib_transform(np.array([0.2, -0.1, 0.1]), np.array([0.1, 0.05, 2.0]))
     )
     assert np.allclose(first.camera_pose.field_to_camera_0, expected_pose, atol=1e-6)
-    assert first.trig_poses == [] and second.trig_poses == []
     assert first.pose_diagnostics is not second.pose_diagnostics
     assert first.timestamp == 1.0
 

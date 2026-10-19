@@ -1,4 +1,4 @@
-"""Napa: modular AprilTag perception and pose processing."""
+"""Napa: a fast tag36h11 AprilTag detector with optional pose processing."""
 
 from __future__ import annotations
 
@@ -9,51 +9,35 @@ from typing import Any
 from ._version import __version__
 
 _OPENCV_INSTALL_HINT = (
-    "OpenCV is not installed; install napa-vision[gui] for desktop display support "
-    "or napa-vision[headless] for servers and robots"
+    "OpenCV is not installed; pose processing and calibration need it. Install "
+    "napa-vision[headless] (or napa-vision[gui] for desktop display support)"
 )
 
 _EXPORT_MODULES = {
-    "AprilTagFieldLayout": "field_layout",
     "ArtifactProvenance": "provenance",
-    "BlockSkipPrefilter": "prefilter",
     "CalibrationError": "calibration",
     "CameraCalibration": "calibration",
-    "CameraConfig": "config",
     "CameraPoseBounds": "types",
     "CameraPoseObservation": "types",
     "CameraPoseSolver": "solvers",
     "CheckerboardSpec": "calibration",
-    "FieldLayoutError": "field_layout",
-    "FiducialDetector": "fiducials",
+    "FiducialDetector": "types",
     "FiducialImageObservation": "types",
     "FrameResult": "types",
-    "OpenCVArucoFiducialDetector": "fiducials",
-    "PlatformProfile": "config",
+    "NapaDetector": "napa_detector",
+    "NativeLibraryError": "napa_detector",
     "PoseSolveDiagnostics": "types",
-    "ProfileError": "config",
     "ProvenanceError": "provenance",
     "ProvenanceKind": "provenance",
-    "Roi": "prefilter",
     "SingleTagPoseObservation": "types",
     "SingleTagPoseSolver": "solvers",
-    "SkipScanConfig": "prefilter",
     "TagAngleObservation": "types",
     "TagAngleSolver": "solvers",
-    "TrigDistanceSolver": "solvers",
-    "TrigPoseObservation": "types",
     "VisionProcessor": "processing",
-    "available_profiles": "config",
     "calibrate_checkerboard_images": "calibration",
     "discover_checkerboard_images": "calibration",
     "load_calibration_data": "calibration",
-    "load_profile": "config",
-    "load_wpilib_apriltag_layout": "field_layout",
-    "NapaDetector": "napa_detector",
-    "NativeLibraryError": "napa_detector",
-    "default_detector": "fiducials",
     "native_available": "napa_detector",
-    "require_production_artifacts": "provenance",
     "save_calibration_data": "calibration",
 }
 

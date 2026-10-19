@@ -18,8 +18,9 @@ src/napa_vision/_native/*.so
 src/napa_vision/_native/*.pyd
 src/napa_vision/_native/*.dylib
 
-# Private working files: plans, reports, research
+# Private working files: plans, reports, research, and local developer docs
 .plans/
+local-docs/
 *.html
 experiments/
 benchmarks/notes/
@@ -28,4 +29,4 @@ benchmarks/notes/
 *.md
 !README.md
 !benchmarks/README.md
-!docs/operations.md
+!docs/guide.md

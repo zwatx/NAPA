@@ -1,26 +1,31 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Protocol
 
 import numpy as np
 
 
-def health_state_fields(health: Mapping[str, Any]) -> dict[str, Any]:
-    """Return top-level health fields that represent immediate state transitions."""
-
-    return {
-        key: value
-        for key, value in health.items()
-        if key in {"connected", "state"} or key.endswith(("_available", "_connected", "_error", "_timed_out"))
-    }
-
-
 @dataclass(slots=True)
 class FiducialImageObservation:
+    """One detected tag: its ID and four corners in pixel-centre coordinates, OpenCV corner order.
+
+    ``hamming`` is the number of payload bits corrected (0 is a perfect read) and
+    ``decision_margin`` the smaller of the white and black payload bits' mean distance from the
+    decision threshold, in grey levels; both as in upstream AprilTag. Both are ``None`` for
+    observations not produced by a detector that reports them.
+    """
+
     tag_id: int
     corners: np.ndarray
+    hamming: int | None = None
+    decision_margin: float | None = None
+
+
+class FiducialDetector(Protocol):
+    """Detect tags in uint8 grayscale, BGR, or BGRA images, in the caller's pixel coordinates."""
+
+    def detect(self, image: np.ndarray) -> list[FiducialImageObservation]: ...
 
 
 @dataclass(slots=True)
@@ -129,14 +134,6 @@ class TagAngleObservation:
 
 
 @dataclass(slots=True)
-class TrigPoseObservation:
-    tag_id: int
-    robot_pose: np.ndarray
-    camera_to_tag_translation: np.ndarray
-    distance: float
-
-
-@dataclass(slots=True)
 class FrameResult:
     timestamp: float
     capture_monotonic_s: float | None = None
@@ -145,5 +142,4 @@ class FrameResult:
     camera_pose: CameraPoseObservation | None = None
     pose_diagnostics: PoseSolveDiagnostics | None = None
     tag_angles: list[TagAngleObservation] = field(default_factory=list)
-    trig_poses: list[TrigPoseObservation] = field(default_factory=list)
     health: dict[str, Any] = field(default_factory=dict)

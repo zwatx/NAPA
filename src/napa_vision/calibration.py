@@ -278,30 +278,6 @@ def save_calibration_data(path: str | Path, calibration: CameraCalibration) -> N
         raise CalibrationError(f"could not write calibration {destination}: {exc}") from exc
 
 
-def load_calibration(path: str | Path) -> tuple[np.ndarray, np.ndarray]:
-    """Load camera arrays from a legacy or versioned calibration file."""
-
-    calibration = load_calibration_data(path)
-    return calibration.camera_matrix.copy(), calibration.distortion_coefficients.copy()
-
-
-def save_calibration(path: str | Path, camera_matrix: np.ndarray, distortion_coefficients: np.ndarray) -> None:
-    """Save camera arrays as an explicitly non-production example artifact."""
-
-    save_calibration_data(
-        path,
-        CameraCalibration(
-            camera_matrix=camera_matrix,
-            distortion_coefficients=distortion_coefficients,
-            image_size=None,
-            provenance=ArtifactProvenance(
-                ProvenanceKind.EXAMPLE,
-                "legacy save_calibration call without measurement metadata",
-            ),
-        ),
-    )
-
-
 def discover_checkerboard_images(directory: str | Path) -> tuple[Path, ...]:
     """Return common image files in deterministic order for calibration."""
 

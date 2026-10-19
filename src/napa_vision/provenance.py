@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Protocol
 
 
 class ProvenanceError(ValueError):
@@ -10,7 +9,7 @@ class ProvenanceError(ValueError):
 
 
 class ProvenanceKind(StrEnum):
-    """Trust level for calibration and field-layout artifacts."""
+    """Trust level for a calibration file."""
 
     EXAMPLE = "example"
     IMPORTED = "imported"
@@ -20,12 +19,11 @@ class ProvenanceKind(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class ArtifactProvenance:
-    """Describe where a deployable vision artifact came from.
+    """Describe where a calibration came from.
 
     ``IMPORTED`` deliberately remains unverified: reading a file successfully
-    does not prove that it was measured for the installed camera or published
-    by WPILib. Callers must explicitly mark measured camera data or an official
-    field layout before a production readiness check can pass.
+    does not prove that it was measured for the installed camera. Only measured
+    data (or an explicitly official artifact) passes a production readiness check.
     """
 
     kind: ProvenanceKind
@@ -87,16 +85,3 @@ class ArtifactProvenance:
         if notes is not None and not isinstance(notes, str):
             raise ProvenanceError("provenance.notes must be a string or null")
         return cls(kind, source.strip(), notes)
-
-
-class ProvenancedArtifact(Protocol):
-    provenance: ArtifactProvenance
-
-    def require_production(self) -> None: ...
-
-
-def require_production_artifacts(**artifacts: ProvenancedArtifact) -> None:
-    """Reject example/unverified artifacts before enabling production output."""
-
-    for artifact in artifacts.values():
-        artifact.require_production()

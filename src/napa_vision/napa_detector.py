@@ -43,10 +43,12 @@ class NativeLibraryError(RuntimeError):
 @cache
 def _library() -> ctypes.CDLL:
     override = os.environ.get(_LIBRARY_ENV)
-    candidates = [Path(override)] if override else []
     native_dir = Path(__file__).resolve().parent / "_native"
-    for pattern in _LIBRARY_PATTERNS:
-        candidates.extend(sorted(native_dir.glob(pattern)))
+    if override:
+        # An explicit override is used or fails loudly; falling back would hide a broken build.
+        candidates = [Path(override)]
+    else:
+        candidates = [path for pattern in _LIBRARY_PATTERNS for path in sorted(native_dir.glob(pattern))]
     errors: list[str] = []
     for candidate in candidates:
         try:
@@ -110,8 +112,8 @@ class NapaDetector:
         sharpening: float = 0.25,
         max_detections: int = 64,
     ) -> None:
-        if isinstance(min_tag_px, bool) or not isinstance(min_tag_px, int) or min_tag_px < 8:
-            raise ValueError("min_tag_px must be an integer of at least 8")
+        if isinstance(min_tag_px, bool) or not isinstance(min_tag_px, int) or not 8 <= min_tag_px <= _MAX_SIDE:
+            raise ValueError(f"min_tag_px must be an integer from 8 to {_MAX_SIDE}")
         if isinstance(max_hamming, bool) or not isinstance(max_hamming, int) or not 0 <= max_hamming <= 3:
             raise ValueError("max_hamming must be an integer from 0 to 3")
         if isinstance(min_contrast, bool) or not isinstance(min_contrast, int) or not 1 <= min_contrast <= 255:
@@ -139,6 +141,8 @@ class NapaDetector:
         self.max_hamming = max_hamming
 
     def detect(self, image: np.ndarray) -> list[FiducialImageObservation]:
+        if not self._finalizer.alive:
+            raise RuntimeError("NapaDetector.detect() called after close()")
         gray = _grayscale(image)
         if gray.shape[0] > _MAX_SIDE or gray.shape[1] > _MAX_SIDE:
             raise ValueError(f"frames larger than {_MAX_SIDE} pixels per side are not supported")
@@ -159,7 +163,11 @@ class NapaDetector:
         observations: list[FiducialImageObservation] = []
         for result in self._results[:count]:
             corners = np.array(result.corners, dtype=np.float64).reshape(4, 2)
-            observations.append(FiducialImageObservation(int(result.id), corners))
+            observations.append(
+                FiducialImageObservation(
+                    int(result.id), corners, hamming=int(result.hamming), decision_margin=float(result.decision_margin)
+                )
+            )
         return observations
 
     def close(self) -> None:
@@ -173,13 +181,21 @@ def _grayscale(image: np.ndarray) -> np.ndarray:
     if image.dtype != np.uint8:
         raise ValueError("AprilTag detection requires an 8-bit image")
     if image.ndim == 3 and image.shape[2] in {3, 4}:
-        from . import _import_cv2
-
-        cv2 = _import_cv2()
-        conversion = cv2.COLOR_BGRA2GRAY if image.shape[2] == 4 else cv2.COLOR_BGR2GRAY
-        image = cv2.cvtColor(image, conversion)
+        image = _bgr_to_gray(image)
     elif image.ndim != 2:
         raise ValueError("AprilTag detection requires a grayscale, BGR, or BGRA image")
     if image.strides[1] != 1 or image.strides[0] < image.shape[1]:
         image = np.ascontiguousarray(image)
     return image
+
+
+def _bgr_to_gray(image: np.ndarray) -> np.ndarray:
+    """BGR(A) to grayscale with BT.601 weights (within one grey level of OpenCV, which is used when installed)."""
+
+    try:
+        import cv2
+    except ImportError:
+        b, g, r = (image[..., channel].astype(np.uint32) for channel in range(3))
+        return ((b * 1868 + g * 9617 + r * 4899 + (1 << 13)) >> 14).astype(np.uint8)
+    conversion = cv2.COLOR_BGRA2GRAY if image.shape[2] == 4 else cv2.COLOR_BGR2GRAY
+    return cv2.cvtColor(np.ascontiguousarray(image), conversion)
