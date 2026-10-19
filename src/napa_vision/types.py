@@ -5,7 +5,8 @@ from typing import Any, Protocol
 
 import numpy as np
 
-from .geometry import tag_homography
+from .covariance import PoseWithCovariance, change_basis
+from .geometry import OPENCV_TO_WPILIB_ROTATION, opencv_pose_to_wpilib_transform, tag_homography
 
 
 @dataclass(slots=True)
@@ -51,9 +52,21 @@ class FiducialDetector(Protocol):
     def detect(self, image: np.ndarray) -> list[FiducialImageObservation]: ...
 
 
+def _solution(solution: int) -> int:
+    if solution not in (0, 1) or isinstance(solution, bool):
+        raise ValueError("solution must be 0 or 1")
+    return solution
+
+
 @dataclass(slots=True)
 class SingleTagPoseObservation:
-    """Two planar IPPE solutions for a tag, expressed in OpenCV coordinates."""
+    """Two planar IPPE solutions for a tag, expressed in OpenCV coordinates.
+
+    Each ``rvec``/``tvec`` maps tag-local points into the OpenCV camera frame (+X right, +Y down, +Z forward).
+    ``error_*`` is the solution's RMS corner reprojection error in pixels; solution 0 has the lower error.
+    ``covariance_*`` is the 6x6 covariance of that camera-to-tag pose in the OpenCV camera frame (see
+    ``napa_vision.covariance``), or ``None`` when it wasn't computed.
+    """
 
     tag_id: int
     pose_0_rvec: np.ndarray
@@ -63,6 +76,36 @@ class SingleTagPoseObservation:
     pose_1_tvec: np.ndarray | None
     error_1: float | None
     distance: float
+    covariance_0: np.ndarray | None = None
+    covariance_1: np.ndarray | None = None
+
+    @property
+    def ambiguity(self) -> float | None:
+        """``error_0 / error_1``, as PhotonVision and Limelight report it: near 1 means the two solutions fit
+        equally well and solution 0 may be the wrong one. ``None`` without a second solution."""
+
+        if self.error_1 is None:
+            return None
+        return self.error_0 / self.error_1 if self.error_1 > 0.0 else 1.0
+
+    def camera_to_tag(self, solution: int = 0) -> PoseWithCovariance:
+        """The tag's pose in WPILib camera axes (+X forward, +Y left, +Z up), with its covariance.
+
+        The tag frame is WPILib's: its face lies in its local Y/Z plane and +X is the face normal.
+        """
+
+        rvec, tvec, covariance = (
+            (self.pose_0_rvec, self.pose_0_tvec, self.covariance_0)
+            if _solution(solution) == 0
+            else (self.pose_1_rvec, self.pose_1_tvec, self.covariance_1)
+        )
+        if rvec is None or tvec is None:
+            raise ValueError(f"solution {solution} is unavailable")
+        if covariance is None:
+            raise ValueError(f"solution {solution} has no covariance")
+        return PoseWithCovariance(
+            opencv_pose_to_wpilib_transform(rvec, tvec), change_basis(covariance, OPENCV_TO_WPILIB_ROTATION)
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,7 +177,11 @@ class PoseSolveDiagnostics:
 
 @dataclass(slots=True)
 class CameraPoseObservation:
-    """One or two candidate WPILib camera poses in the field frame."""
+    """One or two candidate WPILib camera poses in the field frame.
+
+    ``covariance_*`` is the 6x6 covariance of ``field_to_camera_*`` in the field frame (see
+    ``napa_vision.covariance``), or ``None`` when it wasn't computed.
+    """
 
     tag_ids: list[int]
     field_to_camera_0: np.ndarray
@@ -144,16 +191,49 @@ class CameraPoseObservation:
     average_tag_distance: float
     confidence: float
     diagnostics: PoseSolveDiagnostics | None = None
+    covariance_0: np.ndarray | None = None
+    covariance_1: np.ndarray | None = None
+
+    @property
+    def ambiguity(self) -> float | None:
+        """``error_0 / error_1`` for a single-tag pose; ``None`` for a multi-tag pose, which has one solution."""
+
+        if self.error_1 is None:
+            return None
+        return self.error_0 / self.error_1 if self.error_1 > 0.0 else 1.0
+
+    def field_to_camera(self, solution: int = 0) -> PoseWithCovariance:
+        """The camera's pose in the field, with its covariance, ready for a filter or ``transform_by``."""
+
+        transform, covariance = (
+            (self.field_to_camera_0, self.covariance_0)
+            if _solution(solution) == 0
+            else (self.field_to_camera_1, self.covariance_1)
+        )
+        if transform is None:
+            raise ValueError(f"solution {solution} is unavailable")
+        if covariance is None:
+            raise ValueError(f"solution {solution} has no covariance")
+        return PoseWithCovariance(transform, covariance)
 
 
 @dataclass(slots=True)
 class TagAngleObservation:
+    """Viewing angles of a tag, in radians from the optical axis, corrected for lens distortion.
+
+    ``corner_angles`` is 4x2, ``(horizontal, vertical)`` per corner, positive right and down (OpenCV's image axes).
+    ``center_tx``/``center_ty`` are the corners' mean angles. ``center_covariance`` is their 2x2 covariance in
+    radians squared, or ``None`` when it wasn't computed. ``distance`` is the camera-to-tag distance in metres
+    from solution 0, and ``camera_to_tag_translation`` that solution's translation in WPILib camera axes.
+    """
+
     tag_id: int
     corner_angles: np.ndarray
     center_tx: float
     center_ty: float
     distance: float
     camera_to_tag_translation: np.ndarray
+    center_covariance: np.ndarray | None = None
 
 
 @dataclass(slots=True)

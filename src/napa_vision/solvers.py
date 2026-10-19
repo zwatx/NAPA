@@ -7,10 +7,22 @@ import cv2
 import numpy as np
 
 from .calibration import undistorted_corner_angles
+from .covariance import (
+    DEFAULT_CORNER_NOISE_PX,
+    PoseWithCovariance,
+    ambiguity_covariances,
+    cap_correlations,
+    center_angle_covariances,
+    reprojection_covariances,
+    reprojection_ssr,
+    validate_corner_noise,
+)
 from .geometry import (
+    WPILIB_TO_OPENCV_ROTATION,
     invert_transform,
     opencv_pose_to_wpilib_transform,
     opencv_translation_to_wpilib,
+    rvec_tvec_to_transform,
     tag_field_corners,
     tag_object_points,
     wpilib_points_to_opencv,
@@ -64,8 +76,13 @@ def _valid_solution(rvec: np.ndarray, tvec: np.ndarray, error: float, max_error:
 
 
 class SingleTagPoseSolver:
-    def __init__(self, max_reprojection_error_px: float = 5.0) -> None:
+    """Solve each tag's two planar (IPPE) poses, with covariances for ``corner_noise_px`` of corner noise."""
+
+    def __init__(
+        self, max_reprojection_error_px: float = 5.0, *, corner_noise_px: float = DEFAULT_CORNER_NOISE_PX
+    ) -> None:
         self.max_reprojection_error_px = max_reprojection_error_px
+        self.corner_noise_px = validate_corner_noise(corner_noise_px)
 
     def solve(
         self,
@@ -73,10 +90,75 @@ class SingleTagPoseSolver:
         camera: CameraGeometry,
         tag_size_m: float,
     ) -> SingleTagPoseObservation | None:
+        """Return the tag's pose, or ``None`` when no solution is in front of the camera within the error limit."""
+
+        return self.solve_many([observation], camera, tag_size_m)[0]
+
+    def solve_many(
+        self,
+        observations: Sequence[FiducialImageObservation],
+        camera: CameraGeometry,
+        tag_size_m: float,
+    ) -> list[SingleTagPoseObservation | None]:
+        """Solve every tag, computing all covariances in one batch. Results match ``observations`` by index."""
+
         object_points = tag_object_points(tag_size_m)
+        solved = [self._ippe_solutions(observation, camera, object_points) for observation in observations]
+        transforms = [rvec_tvec_to_transform(rvec, tvec) for solutions in solved for rvec, tvec, _ in solutions]
+        if not transforms:
+            return [None] * len(observations)
+        stacked = np.stack(transforms)
+        image_points = np.stack(
+            [
+                np.asarray(observation.corners, dtype=np.float64)
+                for observation, solutions in zip(observations, solved, strict=True)
+                for _ in solutions
+            ]
+        )
+        intrinsics = (camera.calibration_matrix, camera.distortion_coefficients)
+        covariances = iter(reprojection_covariances(stacked, object_points, *intrinsics, self.corner_noise_px))
+        squared_residuals = iter(reprojection_ssr(stacked, object_points, image_points, *intrinsics))
+        poses = iter(transforms)
+        results: list[SingleTagPoseObservation | None] = []
+        for observation, solutions in zip(observations, solved, strict=True):
+            if not solutions:
+                results.append(None)
+                continue
+            (pose_0_rvec, pose_0_tvec, error_0), *alternative = solutions
+            pose_0, covariance_0, ssr_0 = next(poses), next(covariances), next(squared_residuals)
+            pose_1_rvec = pose_1_tvec = error_1 = covariance_1 = None
+            if alternative:
+                pose_1_rvec, pose_1_tvec, error_1 = alternative[0]
+                covariance_0, covariance_1 = ambiguity_covariances(
+                    (pose_0, next(poses)),
+                    (covariance_0, next(covariances)),
+                    (ssr_0, next(squared_residuals)),
+                    self.corner_noise_px,
+                )
+            results.append(
+                SingleTagPoseObservation(
+                    tag_id=observation.tag_id,
+                    pose_0_rvec=pose_0_rvec,
+                    pose_0_tvec=pose_0_tvec,
+                    error_0=error_0,
+                    pose_1_rvec=pose_1_rvec,
+                    pose_1_tvec=pose_1_tvec,
+                    error_1=error_1,
+                    distance=float(np.linalg.norm(pose_0_tvec)),
+                    covariance_0=cap_correlations(covariance_0),
+                    covariance_1=cap_correlations(covariance_1),
+                )
+            )
+        return results
+
+    def _ippe_solutions(
+        self, observation: FiducialImageObservation, camera: CameraGeometry, object_points: np.ndarray
+    ) -> list[tuple[np.ndarray, np.ndarray, float]]:
+        """Up to two valid IPPE solutions, best first; empty when the tag can't be solved."""
+
         corners = np.asarray(observation.corners, dtype=np.float64)
         if corners.shape != (4, 2) or not np.all(np.isfinite(corners)):
-            return None
+            return []
         try:
             ok, rvecs, tvecs, errors = cv2.solvePnPGeneric(
                 object_points,
@@ -86,35 +168,19 @@ class SingleTagPoseSolver:
                 flags=cv2.SOLVEPNP_IPPE_SQUARE,
             )
         except cv2.error:
-            return None
+            return []
         if not ok or len(rvecs) == 0:
-            return None
+            return []
 
         solutions: list[tuple[np.ndarray, np.ndarray, float]] = []
         for index, (rvec, tvec) in enumerate(zip(rvecs, tvecs, strict=False)):
             error = _solution_error(errors, index, object_points, corners, rvec, tvec, camera)
             if _valid_solution(rvec, tvec, error, float("inf")) and float(tvec[2][0]) > 0.0:
                 solutions.append((rvec, tvec, error))
-        if not solutions:
-            return None
         solutions.sort(key=lambda item: item[2])
-        if solutions[0][2] > self.max_reprojection_error_px:
-            return None
-        pose_0_rvec, pose_0_tvec, error_0 = solutions[0]
-        pose_1_rvec = pose_1_tvec = None
-        error_1 = None
-        if len(solutions) > 1:
-            pose_1_rvec, pose_1_tvec, error_1 = solutions[1]
-        return SingleTagPoseObservation(
-            tag_id=observation.tag_id,
-            pose_0_rvec=pose_0_rvec,
-            pose_0_tvec=pose_0_tvec,
-            error_0=error_0,
-            pose_1_rvec=pose_1_rvec,
-            pose_1_tvec=pose_1_tvec,
-            error_1=error_1,
-            distance=float(np.linalg.norm(pose_0_tvec)),
-        )
+        if not solutions or solutions[0][2] > self.max_reprojection_error_px:
+            return []
+        return solutions[:2]
 
 
 class CameraPoseSolver:
@@ -128,6 +194,7 @@ class CameraPoseSolver:
         bounds: CameraPoseBounds | None = None,
         max_outlier_iterations: int = 8,
         ransac_iterations: int = 100,
+        corner_noise_px: float = DEFAULT_CORNER_NOISE_PX,
     ) -> None:
         if not np.isfinite(max_reprojection_error_px) or max_reprojection_error_px <= 0.0:
             raise ValueError("max_reprojection_error_px must be finite and greater than zero")
@@ -145,6 +212,7 @@ class CameraPoseSolver:
         self.bounds = bounds
         self.max_outlier_iterations = max_outlier_iterations
         self.ransac_iterations = ransac_iterations
+        self.corner_noise_px = validate_corner_noise(corner_noise_px)
         self.last_diagnostics = PoseSolveDiagnostics()
         self._field_corner_cache: dict[int, tuple[float, np.ndarray, np.ndarray]] = {}
 
@@ -185,6 +253,8 @@ class CameraPoseSolver:
             return self._solve_single(
                 known[0],
                 single_by_id.get(known[0].tag_id),
+                camera,
+                tag_size_m,
                 tag_layout,
                 diagnostics,
             )
@@ -194,6 +264,8 @@ class CameraPoseSolver:
         self,
         observation: FiducialImageObservation,
         single: SingleTagPoseObservation | None,
+        camera: CameraGeometry,
+        tag_size_m: float,
         tag_layout: dict[int, np.ndarray],
         diagnostics: PoseSolveDiagnostics,
     ) -> CameraPoseObservation | None:
@@ -224,6 +296,12 @@ class CameraPoseSolver:
         diagnostics.accepted_tag_ids = [observation.tag_id]
         diagnostics.iterations = 1
         confidence = 1.0 / (1.0 + single.error_0 + 0.1 * single.distance)
+        covariance_0, covariance_1 = self._field_to_camera_covariances(
+            (field_to_camera_0, field_to_camera_1),
+            tag_field_corners(field_to_tag, tag_size_m),
+            np.asarray(observation.corners, dtype=np.float64),
+            camera,
+        )
         return CameraPoseObservation(
             tag_ids=[observation.tag_id],
             field_to_camera_0=field_to_camera_0,
@@ -233,7 +311,90 @@ class CameraPoseSolver:
             average_tag_distance=single.distance,
             confidence=confidence,
             diagnostics=diagnostics,
+            covariance_0=covariance_0,
+            covariance_1=covariance_1,
         )
+
+    def _field_to_camera_covariances(
+        self,
+        field_to_cameras: Sequence[np.ndarray],
+        field_points: np.ndarray,
+        image_points: np.ndarray,
+        camera: CameraGeometry,
+    ) -> tuple[np.ndarray | None, np.ndarray | None]:
+        """Covariances of one pose, or of two planar-ambiguity solutions widened to cover each other."""
+
+        camera_to_fields = np.stack([invert_transform(pose) for pose in field_to_cameras])
+        intrinsics = (camera.calibration_matrix, camera.distortion_coefficients)
+        covariances = [
+            None if covariance is None else PoseWithCovariance(pose, covariance).inverse().covariance
+            for pose, covariance in zip(
+                camera_to_fields,
+                reprojection_covariances(
+                    camera_to_fields,
+                    field_points,
+                    *intrinsics,
+                    self.corner_noise_px,
+                    opencv_from_camera=WPILIB_TO_OPENCV_ROTATION,
+                ),
+                strict=True,
+            )
+        ]
+        if len(covariances) == 1:
+            return cap_correlations(covariances[0]), None
+        squared_residuals = reprojection_ssr(
+            camera_to_fields, field_points, image_points, *intrinsics, opencv_from_camera=WPILIB_TO_OPENCV_ROTATION
+        )
+        covariance_0, covariance_1 = ambiguity_covariances(
+            field_to_cameras, covariances, squared_residuals, self.corner_noise_px
+        )
+        return cap_correlations(covariance_0), cap_correlations(covariance_1)
+
+    @staticmethod
+    def _planar_alternative(
+        object_points: np.ndarray,
+        image_points: np.ndarray,
+        rvec: np.ndarray,
+        tvec: np.ndarray,
+        camera: CameraGeometry,
+    ) -> tuple[np.ndarray, np.ndarray] | None:
+        """The mirror solution of a (nearly) planar target's pose, as an OpenCV ``rvec``/``tvec``.
+
+        Tags on one wall form one plane, which has the same two-fold ambiguity as a single tag. IPPE on the plane
+        gives both candidates, and the one farther from the solved pose is returned. They are deliberately not
+        refined: near head-on the two minima merge, and refining would collapse the spread the covariance needs.
+        """
+
+        centroid = object_points.mean(axis=0)
+        _, singular_values, plane = np.linalg.svd(object_points - centroid)
+        if singular_values[2] > 0.1 * singular_values[0]:
+            return None  # Depth across the target breaks the ambiguity.
+        if np.linalg.det(plane) < 0.0:
+            plane[2] *= -1.0
+        plane_points = (object_points - centroid) @ plane.T
+        plane_points[:, 2] = 0.0
+        intrinsics = (camera.calibration_matrix, camera.distortion_coefficients)
+        try:
+            ok, rvecs, tvecs, _ = cv2.solvePnPGeneric(plane_points, image_points, *intrinsics, flags=cv2.SOLVEPNP_IPPE)
+        except cv2.error:
+            return None
+        if not ok:
+            return None
+        rotation, _ = cv2.Rodrigues(rvec)
+        best: tuple[float, np.ndarray, np.ndarray] | None = None
+        for plane_rvec, plane_tvec in zip(rvecs, tvecs, strict=False):
+            candidate_rotation = cv2.Rodrigues(plane_rvec)[0] @ plane
+            candidate_rvec = cv2.Rodrigues(candidate_rotation)[0]
+            candidate_tvec = (plane_tvec.reshape(3) - candidate_rotation @ centroid).reshape(3, 1)
+            if not _valid_solution(candidate_rvec, candidate_tvec, 0.0, 0.0):
+                continue
+            if not CameraPoseSolver._points_in_front(object_points, candidate_rvec, candidate_tvec):
+                continue
+            relative = cv2.Rodrigues(candidate_rvec)[0] @ rotation.T
+            angle = float(np.arccos(np.clip((np.trace(relative) - 1.0) / 2.0, -1.0, 1.0)))
+            if best is None or angle > best[0]:
+                best = (angle, candidate_rvec, candidate_tvec)
+        return None if best is None else (best[1], best[2])
 
     def _multi_points(
         self,
@@ -422,6 +583,13 @@ class CameraPoseSolver:
                 distances = [float(np.linalg.norm(tag_layout[obs.tag_id][:3, 3] - camera_position)) for obs in active]
                 average_distance = float(np.mean(distances))
                 confidence = 1.0 / (1.0 + error + 0.1 * average_distance)
+                candidates = [field_to_camera]
+                alternative = self._planar_alternative(object_points, image_points, rvec, tvec, camera)
+                if alternative is not None:
+                    candidates.append(invert_transform(opencv_pose_to_wpilib_transform(*alternative)))
+                covariance, _ = self._field_to_camera_covariances(
+                    candidates, object_points @ WPILIB_TO_OPENCV_ROTATION, image_points, camera
+                )
                 diagnostics.accepted_tag_ids = [obs.tag_id for obs in active]
                 return CameraPoseObservation(
                     tag_ids=diagnostics.accepted_tag_ids.copy(),
@@ -432,6 +600,7 @@ class CameraPoseSolver:
                     average_tag_distance=average_distance,
                     confidence=confidence,
                     diagnostics=diagnostics,
+                    covariance_0=covariance,
                 )
 
             if len(active) <= 2 or outlier_iterations >= self.max_outlier_iterations:
@@ -458,25 +627,18 @@ class CameraPoseSolver:
 
 
 class TagAngleSolver:
+    """Per-tag viewing angles, with the centre angles' covariance for ``corner_noise_px`` of corner noise."""
+
+    def __init__(self, *, corner_noise_px: float = DEFAULT_CORNER_NOISE_PX) -> None:
+        self.corner_noise_px = validate_corner_noise(corner_noise_px)
+
     def solve(
         self,
         observation: FiducialImageObservation,
         camera: CameraGeometry,
         single_tag_pose: SingleTagPoseObservation,
     ) -> TagAngleObservation:
-        corner_angles = undistorted_corner_angles(
-            observation.corners,
-            camera.calibration_matrix,
-            camera.distortion_coefficients,
-        )
-        return TagAngleObservation(
-            tag_id=observation.tag_id,
-            corner_angles=corner_angles,
-            center_tx=float(np.mean(corner_angles[:, 0])),
-            center_ty=float(np.mean(corner_angles[:, 1])),
-            distance=single_tag_pose.distance,
-            camera_to_tag_translation=opencv_translation_to_wpilib(single_tag_pose.pose_0_tvec),
-        )
+        return self.solve_many([observation], camera, [single_tag_pose])[0]
 
     def solve_many(
         self,
@@ -503,6 +665,9 @@ class TagAngleSolver:
             camera.calibration_matrix,
             camera.distortion_coefficients,
         ).reshape(len(observations), 4, 2)
+        covariances = center_angle_covariances(
+            all_angles, camera.calibration_matrix, camera.distortion_coefficients, self.corner_noise_px
+        )
         return [
             TagAngleObservation(
                 tag_id=observation.tag_id,
@@ -511,6 +676,9 @@ class TagAngleSolver:
                 center_ty=float(np.mean(corner_angles[:, 1])),
                 distance=single.distance,
                 camera_to_tag_translation=opencv_translation_to_wpilib(single.pose_0_tvec),
+                center_covariance=covariance,
             )
-            for observation, single, corner_angles in zip(observations, single_tag_poses, all_angles, strict=True)
+            for observation, single, corner_angles, covariance in zip(
+                observations, single_tag_poses, all_angles, covariances, strict=True
+            )
         ]
