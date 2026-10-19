@@ -59,7 +59,7 @@ smallest of those ratios, so a single slow frame can't hide behind a good median
 ```bash
 python -m pip install -e ".[headless,dev,benchmark]"
 
-# Pin to one idle core so other processes don't skew timings (Linux shown). About 45 minutes.
+# Pin to one idle core so other processes don't skew timings (Linux shown). About 90 minutes.
 taskset -c 2 python benchmarks/performance_matrix.py --output benchmarks/results/$(date +%F)_detector_matrix.json
 ```
 
@@ -81,83 +81,86 @@ The script prints the summary tables used in the main README and writes two file
 
 ## Latest results
 
-Standard AprilTag (`quad_decimate=2`) against Napa, from the checked-in 2026-10-18 runs on one pinned core of an
-Intel i7-12700H. p50 is the median detector call across all frames and repetitions in a row.
+Standard AprilTag (`quad_decimate=2`) against Napa, from the checked-in run on one pinned core of an Intel i7-12700H.
+p50 is the median detector call across all frames and repetitions in a row.
 
 #### 640x480
 
 | Scene | Frames | Tags | AprilTag p50 | Napa p50 | Speedup (median / worst frame) | Found (AprilTag → Napa) | False IDs (AprilTag → Napa) |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| empty | 50 | 0 | 5.39 ms | 0.05 ms | 87.1× / 9.1× | — | 0 → 0 |
-| clutter-only | 50 | 0 | 3.65 ms | 0.27 ms | 11.9× / 4.8× | — | 0 → 0 |
-| decoys | 50 | 0 | 3.97 ms | 0.22 ms | 16.6× / 4.9× | — | 0 → 1 |
-| one-tag | 50 | 50 | 4.70 ms | 0.14 ms | 34.1× / 22.6× | 46/50 → 50/50 | 0 → 0 |
-| many-tags | 50 | 249 | 3.42 ms | 0.31 ms | 11.3× / 4.9× | 178/249 → 239/249 | 0 → 0 |
-| small-tags | 50 | 131 | 4.18 ms | 0.33 ms | 11.6× / 6.1× | 0/131 → 131/131 | 0 → 0 |
-| large-tags | 50 | 50 | 3.41 ms | 0.25 ms | 14.2× / 5.9× | 50/50 → 50/50 | 0 → 0 |
-| steep-angle | 50 | 109 | 4.03 ms | 0.28 ms | 12.5× / 5.4× | 71/109 → 81/109 | 0 → 0 |
-| blur | 50 | 96 | 3.55 ms | 0.27 ms | 11.3× / 5.4× | 82/96 → 95/96 | 0 → 0 |
-| motion-blur | 50 | 110 | 3.77 ms | 0.27 ms | 12.4× / 5.6× | 86/110 → 108/110 | 0 → 0 |
-| noise | 50 | 110 | 4.06 ms | 0.34 ms | 12.0× / 5.0× | 94/110 → 107/110 | 0 → 0 |
-| uneven-light | 50 | 98 | 3.68 ms | 0.30 ms | 12.0× / 5.9× | 82/98 → 95/98 | 0 → 0 |
-| low-contrast | 50 | 96 | 4.89 ms | 0.15 ms | 34.6× / 17.5× | 70/96 → 84/96 | 0 → 0 |
-| underexposed | 50 | 110 | 3.80 ms | 0.28 ms | 13.1× / 7.8× | 96/110 → 107/110 | 0 → 0 |
-| overexposed | 50 | 100 | 1.27 ms | 0.23 ms | 5.0× / 3.5× | 82/100 → 98/100 | 0 → 0 |
-| jpeg | 50 | 104 | 1.39 ms | 0.30 ms | 5.2× / 3.2× | 92/104 → 101/104 | 0 → 0 |
-| busy-background | 50 | 102 | 3.84 ms | 0.30 ms | 12.1× / 6.1× | 89/102 → 97/102 | 0 → 0 |
-| frame-edge | 50 | 102 | 3.51 ms | 0.23 ms | 14.3× / 6.3× | 74/102 → 98/102 | 0 → 0 |
-| noise-free | 50 | 98 | 0.68 ms | 0.15 ms | 4.6× / 3.4× | 83/98 → 98/98 | 0 → 0 |
+| empty | 50 | 0 | 5.34 ms | 0.03 ms | 148.1× / 15.6× | — | 0 → 0 |
+| clutter-only | 50 | 0 | 3.84 ms | 0.17 ms | 18.0× / 6.5× | — | 0 → 0 |
+| decoys | 50 | 0 | 3.79 ms | 0.15 ms | 25.1× / 7.2× | — | 0 → 1 |
+| one-tag | 50 | 50 | 4.82 ms | 0.13 ms | 37.6× / 26.2× | 46/50 → 50/50 | 0 → 0 |
+| many-tags | 50 | 249 | 3.67 ms | 0.34 ms | 11.2× / 6.3× | 178/249 → 249/249 | 0 → 0 |
+| small-tags | 50 | 131 | 3.83 ms | 0.21 ms | 17.8× / 8.9× | 0/131 → 131/131 | 0 → 0 |
+| large-tags | 50 | 50 | 3.53 ms | 0.18 ms | 19.4× / 8.1× | 50/50 → 50/50 | 0 → 0 |
+| steep-angle | 50 | 109 | 3.93 ms | 0.22 ms | 17.1× / 7.2× | 71/109 → 104/109 | 0 → 0 |
+| blur | 50 | 96 | 3.50 ms | 0.22 ms | 14.6× / 6.5× | 82/96 → 96/96 | 0 → 0 |
+| motion-blur | 50 | 110 | 3.65 ms | 0.23 ms | 13.7× / 6.8× | 86/110 → 109/110 | 0 → 0 |
+| noise | 50 | 110 | 3.84 ms | 0.30 ms | 12.2× / 4.1× | 94/110 → 110/110 | 0 → 0 |
+| uneven-light | 50 | 98 | 3.68 ms | 0.23 ms | 14.9× / 7.5× | 82/98 → 98/98 | 0 → 0 |
+| low-contrast | 50 | 96 | 5.14 ms | 0.16 ms | 33.3× / 20.1× | 70/96 → 95/96 | 0 → 0 |
+| underexposed | 50 | 110 | 3.87 ms | 0.24 ms | 15.9× / 9.3× | 96/110 → 110/110 | 0 → 0 |
+| overexposed | 50 | 100 | 1.31 ms | 0.20 ms | 5.2× / 3.6× | 82/100 → 100/100 | 0 → 0 |
+| jpeg | 50 | 104 | 1.32 ms | 0.21 ms | 6.8× / 3.5× | 92/104 → 104/104 | 0 → 0 |
+| busy-background | 50 | 102 | 3.66 ms | 0.22 ms | 15.9× / 6.1× | 89/102 → 102/102 | 0 → 0 |
+| frame-edge | 50 | 102 | 3.54 ms | 0.19 ms | 17.1× / 8.9× | 74/102 → 102/102 | 0 → 0 |
+| noise-free | 50 | 98 | 0.61 ms | 0.12 ms | 5.4× / 4.4× | 83/98 → 98/98 | 0 → 0 |
+| dark-background | 50 | 96 | 3.60 ms | 0.22 ms | 17.4× / 7.7× | 71/96 → 96/96 | 0 → 0 |
 
 #### 1280x720
 
 | Scene | Frames | Tags | AprilTag p50 | Napa p50 | Speedup (median / worst frame) | Found (AprilTag → Napa) | False IDs (AprilTag → Napa) |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| empty | 50 | 0 | 17.28 ms | 0.17 ms | 100.3× / 7.0× | — | 0 → 0 |
-| clutter-only | 50 | 0 | 11.18 ms | 0.79 ms | 13.3× / 4.0× | — | 0 → 0 |
-| decoys | 50 | 0 | 14.85 ms | 0.37 ms | 38.8× / 5.3× | — | 0 → 0 |
-| one-tag | 50 | 50 | 15.43 ms | 0.27 ms | 55.8× / 39.1× | 50/50 → 50/50 | 0 → 0 |
-| many-tags | 50 | 354 | 11.35 ms | 0.77 ms | 15.2× / 6.2× | 354/354 → 342/354 | 0 → 0 |
-| small-tags | 50 | 120 | 13.61 ms | 0.48 ms | 27.9× / 6.7× | 0/120 → 120/120 | 0 → 0 |
-| large-tags | 50 | 50 | 11.80 ms | 0.54 ms | 21.3× / 7.3× | 50/50 → 50/50 | 0 → 0 |
-| steep-angle | 50 | 112 | 12.10 ms | 0.59 ms | 20.0× / 6.9× | 109/112 → 80/112 | 0 → 0 |
-| blur | 50 | 89 | 11.51 ms | 0.56 ms | 20.0× / 6.4× | 89/89 → 87/89 | 0 → 0 |
-| motion-blur | 50 | 94 | 11.35 ms | 0.88 ms | 12.0× / 6.7× | 94/94 → 93/94 | 0 → 0 |
-| noise | 50 | 104 | 10.93 ms | 0.82 ms | 15.2× / 6.1× | 104/104 → 101/104 | 0 → 0 |
-| uneven-light | 50 | 103 | 12.46 ms | 0.64 ms | 18.7× / 7.3× | 103/103 → 99/103 | 0 → 0 |
-| low-contrast | 50 | 100 | 15.34 ms | 0.29 ms | 52.9× / 29.1× | 95/100 → 87/100 | 0 → 0 |
-| underexposed | 50 | 99 | 12.85 ms | 0.48 ms | 24.8× / 9.1× | 99/99 → 93/99 | 0 → 0 |
-| overexposed | 50 | 112 | 1.99 ms | 0.35 ms | 5.9× / 4.0× | 112/112 → 110/112 | 0 → 0 |
-| jpeg | 50 | 100 | 2.96 ms | 0.49 ms | 6.0× / 3.9× | 100/100 → 97/100 | 0 → 0 |
-| busy-background | 50 | 87 | 12.10 ms | 0.51 ms | 22.7× / 8.4× | 87/87 → 85/87 | 0 → 0 |
-| frame-edge | 50 | 105 | 12.35 ms | 0.57 ms | 19.2× / 7.0× | 103/105 → 102/105 | 0 → 0 |
-| noise-free | 50 | 104 | 1.54 ms | 0.27 ms | 5.9× / 4.5× | 104/104 → 104/104 | 0 → 0 |
+| empty | 50 | 0 | 17.25 ms | 0.09 ms | 164.2× / 20.7× | — | 0 → 0 |
+| clutter-only | 50 | 0 | 11.52 ms | 0.35 ms | 18.6× / 5.0× | — | 0 → 0 |
+| decoys | 50 | 0 | 15.06 ms | 0.26 ms | 54.3× / 9.2× | — | 0 → 0 |
+| one-tag | 50 | 50 | 15.20 ms | 0.19 ms | 77.6× / 58.6× | 50/50 → 50/50 | 0 → 0 |
+| many-tags | 50 | 354 | 11.24 ms | 0.61 ms | 18.3× / 7.3× | 354/354 → 354/354 | 0 → 0 |
+| small-tags | 50 | 120 | 13.60 ms | 0.30 ms | 45.0× / 11.5× | 0/120 → 120/120 | 0 → 0 |
+| large-tags | 50 | 50 | 12.34 ms | 0.38 ms | 41.9× / 13.8× | 50/50 → 50/50 | 0 → 0 |
+| steep-angle | 50 | 112 | 12.14 ms | 0.35 ms | 33.2× / 11.8× | 109/112 → 108/112 | 0 → 0 |
+| blur | 50 | 89 | 11.53 ms | 0.33 ms | 32.6× / 8.7× | 89/89 → 89/89 | 0 → 0 |
+| motion-blur | 50 | 94 | 11.30 ms | 0.43 ms | 16.9× / 8.6× | 94/94 → 94/94 | 0 → 0 |
+| noise | 50 | 104 | 10.95 ms | 0.65 ms | 19.3× / 5.3× | 104/104 → 104/104 | 0 → 0 |
+| uneven-light | 50 | 103 | 12.53 ms | 0.40 ms | 32.1× / 11.6× | 103/103 → 103/103 | 0 → 0 |
+| low-contrast | 50 | 100 | 15.43 ms | 0.22 ms | 70.0× / 43.6× | 95/100 → 99/100 | 0 → 0 |
+| underexposed | 50 | 99 | 12.48 ms | 0.33 ms | 39.1× / 13.1× | 99/99 → 99/99 | 0 → 0 |
+| overexposed | 50 | 112 | 2.08 ms | 0.26 ms | 7.4× / 4.9× | 112/112 → 112/112 | 0 → 0 |
+| jpeg | 50 | 100 | 2.99 ms | 0.29 ms | 8.5× / 4.0× | 100/100 → 100/100 | 0 → 0 |
+| busy-background | 50 | 87 | 12.14 ms | 0.31 ms | 40.5× / 10.7× | 87/87 → 87/87 | 0 → 0 |
+| frame-edge | 50 | 105 | 12.17 ms | 0.32 ms | 37.0× / 12.2× | 103/105 → 105/105 | 0 → 0 |
+| noise-free | 50 | 104 | 1.58 ms | 0.19 ms | 8.6× / 7.0× | 104/104 → 104/104 | 0 → 0 |
+| dark-background | 50 | 105 | 11.96 ms | 0.27 ms | 44.4× / 12.5× | 91/105 → 105/105 | 0 → 0 |
 
 #### 1920x1080
 
 | Scene | Frames | Tags | AprilTag p50 | Napa p50 | Speedup (median / worst frame) | Found (AprilTag → Napa) | False IDs (AprilTag → Napa) |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| empty | 50 | 0 | 44.17 ms | 0.35 ms | 119.1× / 9.1× | — | 0 → 0 |
-| clutter-only | 50 | 0 | 29.05 ms | 0.83 ms | 23.8× / 4.5× | — | 0 → 0 |
-| decoys | 50 | 0 | 38.08 ms | 0.60 ms | 60.4× / 6.7× | — | 0 → 0 |
-| one-tag | 50 | 50 | 37.09 ms | 0.49 ms | 73.9× / 53.5× | 50/50 → 50/50 | 0 → 0 |
-| many-tags | 50 | 303 | 26.48 ms | 1.28 ms | 22.3× / 6.8× | 303/303 → 289/303 | 0 → 0 |
-| small-tags | 50 | 122 | 30.31 ms | 0.87 ms | 35.9× / 8.0× | 0/122 → 121/122 | 0 → 0 |
-| large-tags | 50 | 50 | 29.82 ms | 0.89 ms | 35.3× / 8.9× | 50/50 → 50/50 | 0 → 0 |
-| steep-angle | 50 | 96 | 31.05 ms | 0.99 ms | 32.2× / 7.5× | 88/96 → 73/96 | 0 → 0 |
-| blur | 50 | 97 | 28.94 ms | 0.98 ms | 29.5× / 7.1× | 97/97 → 95/97 | 0 → 0 |
-| motion-blur | 50 | 95 | 30.78 ms | 0.93 ms | 35.0× / 7.3× | 95/95 → 94/95 | 0 → 0 |
-| noise | 50 | 100 | 30.10 ms | 1.93 ms | 16.3× / 6.6× | 100/100 → 97/100 | 0 → 0 |
-| uneven-light | 50 | 101 | 30.34 ms | 1.06 ms | 28.9× / 8.5× | 101/101 → 99/101 | 0 → 0 |
-| low-contrast | 50 | 113 | 37.58 ms | 0.62 ms | 59.9× / 43.1× | 108/113 → 94/113 | 0 → 0 |
-| underexposed | 50 | 95 | 37.59 ms | 0.82 ms | 44.4× / 10.4× | 95/95 → 89/95 | 0 → 0 |
-| overexposed | 50 | 100 | 9.53 ms | 0.92 ms | 6.8× / 4.1× | 100/100 → 99/100 | 0 → 0 |
-| jpeg | 50 | 100 | 8.12 ms | 1.07 ms | 6.0× / 3.8× | 100/100 → 96/100 | 0 → 0 |
-| busy-background | 50 | 97 | 30.99 ms | 0.98 ms | 31.3× / 11.0× | 97/97 → 96/97 | 0 → 0 |
-| frame-edge | 50 | 88 | 31.73 ms | 0.81 ms | 42.6× / 7.3× | 88/88 → 85/88 | 0 → 0 |
-| noise-free | 50 | 108 | 3.33 ms | 0.55 ms | 6.1× / 4.8× | 108/108 → 108/108 | 0 → 0 |
+| empty | 50 | 0 | 43.40 ms | 0.16 ms | 240.8× / 19.3× | — | 0 → 0 |
+| clutter-only | 50 | 0 | 28.67 ms | 0.34 ms | 52.3× / 5.6× | — | 0 → 0 |
+| decoys | 50 | 0 | 38.06 ms | 0.37 ms | 89.5× / 10.4× | — | 0 → 0 |
+| one-tag | 50 | 50 | 37.66 ms | 0.30 ms | 119.8× / 93.3× | 50/50 → 50/50 | 0 → 0 |
+| many-tags | 50 | 303 | 26.57 ms | 0.92 ms | 33.1× / 11.2× | 303/303 → 303/303 | 0 → 0 |
+| small-tags | 50 | 122 | 30.36 ms | 0.48 ms | 67.5× / 13.4× | 0/122 → 121/122 | 0 → 0 |
+| large-tags | 50 | 50 | 30.35 ms | 0.46 ms | 69.0× / 14.5× | 50/50 → 50/50 | 0 → 0 |
+| steep-angle | 50 | 96 | 30.19 ms | 0.52 ms | 59.3× / 13.1× | 88/96 → 94/96 | 0 → 0 |
+| blur | 50 | 97 | 29.45 ms | 0.56 ms | 52.4× / 9.3× | 97/97 → 97/97 | 0 → 0 |
+| motion-blur | 50 | 95 | 31.04 ms | 0.54 ms | 62.4× / 10.7× | 95/95 → 95/95 | 0 → 0 |
+| noise | 50 | 100 | 30.73 ms | 1.68 ms | 18.8× / 6.2× | 100/100 → 100/100 | 0 → 0 |
+| uneven-light | 50 | 101 | 30.67 ms | 0.66 ms | 50.9× / 14.3× | 101/101 → 101/101 | 0 → 0 |
+| low-contrast | 50 | 113 | 36.86 ms | 0.41 ms | 90.4× / 62.7× | 108/113 → 111/113 | 0 → 0 |
+| underexposed | 50 | 95 | 35.30 ms | 0.49 ms | 74.6× / 14.6× | 95/95 → 95/95 | 0 → 0 |
+| overexposed | 50 | 100 | 9.44 ms | 0.54 ms | 8.8× / 4.6× | 100/100 → 100/100 | 0 → 0 |
+| jpeg | 50 | 100 | 8.15 ms | 0.57 ms | 9.6× / 4.0× | 100/100 → 100/100 | 0 → 0 |
+| busy-background | 50 | 97 | 30.52 ms | 0.52 ms | 59.8× / 12.9× | 97/97 → 97/97 | 0 → 0 |
+| frame-edge | 50 | 88 | 31.28 ms | 0.49 ms | 63.9× / 11.8× | 88/88 → 88/88 | 0 → 0 |
+| noise-free | 50 | 108 | 3.22 ms | 0.31 ms | 10.4× / 9.1× | 108/108 → 108/108 | 0 → 0 |
+| dark-background | 50 | 107 | 30.84 ms | 0.46 ms | 70.1× / 15.6× | 89/107 → 107/107 | 0 → 0 |
 
-The JSON reports also hold full-resolution AprilTag (`quad_decimate=1`), the 95th/99th percentiles, corner error
-by scene, and the obstruction sweep.
+The JSON report also holds full-resolution AprilTag (`quad_decimate=1`), the 95th/99th percentiles, corner error by
+scene, and the obstruction sweep.
 
 ## Reading the results
 

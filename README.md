@@ -13,55 +13,59 @@ The detector is a small C library with no dependencies, plus a Python binding th
 "Standard AprilTag" here means the upstream AprilTag 3 library at its default settings (`quad_decimate=2`). Both
 detectors ran single-threaded on one pinned core of an Intel i7-12700H, taking turns on the same grayscale frames.
 
-The benchmark has **2,850 distinct frames holding 5,213 tags**. Every frame is rendered separately, with random tag
+The benchmark has **3,000 distinct frames holding 5,521 tags**. Every frame is rendered separately, with random tag
 IDs, positions, sizes, angles, 3D tilt, backgrounds, and camera degradations, and every tag has exact sub-pixel
 ground truth. [The benchmark guide](benchmarks/README.md) describes each scene.
 
-**Speed.** Napa was faster on every one of the 2,850 frames:
+**Tags found.** Napa found **99.7%** of tags. Standard AprilTag found 86.2%, and AprilTag at full resolution
+(`quad_decimate=1`) 99.4%. Napa finds the small tags that standard AprilTag's decimation loses, and of the 60
+scene and resolution combinations, standard AprilTag found more tags than Napa in just one, by a single tag.
 
-- **Noise-free frames: 4.6× to 6.1× faster** (median per frame, by resolution). The slowest single frame was still
-  3.4× faster.
-- **Realistic frames: about 18× faster** (median). Every other scene includes at least light sensor noise
+**Speed.** Napa was faster on every one of the 3,000 frames:
+
+- **Noise-free frames: 5.4× to 10× faster** (median per frame, by resolution). The slowest single frame was still
+  4.4× faster.
+- **Realistic frames: about 22× faster** (median). Every other scene includes at least light sensor noise
   (σ ≈ 1.5 grey levels), which a real sensor always has. Standard AprilTag's time climbs steeply with noise: on a
   1280×720 frame it takes about 1.2 ms with none, 8 ms at σ = 1, and 13 ms at σ = 1.5. Napa stays near 0.2 ms.
-  The slowest single frame here was 3.2× faster.
-- Against AprilTag at full resolution (`quad_decimate=1`), Napa was 74× faster (median) and at least 10× faster on
-  every frame.
+  The slowest single frame here was 3.5× faster.
+- Against AprilTag at full resolution, Napa was 98× faster (median) and at least 10× faster on every frame.
 
-**Tags found.** Napa found **95.4%** of tags, standard AprilTag 86.5%, and full-resolution AprilTag 99.3%. Napa
-finds small tags that standard AprilTag's decimation loses, but it misses more tags than AprilTag in a few hard
-scenes. These are the 1280×720 results; the guide has every resolution:
+These are the 1280×720 results; the guide has every resolution:
 
 | Scene, 1280×720 | Tags | AprilTag | Napa | Speedup (median) | Slowest frame | Tags found (AprilTag → Napa) |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Noise-free | 104 | 1.54 ms | 0.27 ms | 5.9× | 4.5× | 104 → 104 |
-| One tag | 50 | 15.4 ms | 0.27 ms | 56× | 39× | 50 → 50 |
-| 2–12 tags | 354 | 11.4 ms | 0.77 ms | 15× | 6.2× | 354 → 342 |
-| Small tags (32–53 px) | 120 | 13.6 ms | 0.48 ms | 28× | 6.7× | 0 → 120 |
-| Large tags | 50 | 11.8 ms | 0.54 ms | 21× | 7.3× | 50 → 50 |
-| Steep angle (40–65°) | 112 | 12.1 ms | 0.59 ms | 20× | 6.9× | 109 → 80 |
-| Defocus blur | 89 | 11.5 ms | 0.56 ms | 20× | 6.4× | 89 → 87 |
-| Motion blur | 94 | 11.4 ms | 0.88 ms | 12× | 6.7× | 94 → 93 |
-| Heavy noise (σ 4–14) | 104 | 10.9 ms | 0.82 ms | 15× | 6.1× | 104 → 101 |
-| Uneven lighting | 103 | 12.5 ms | 0.64 ms | 19× | 7.3× | 103 → 99 |
-| Low contrast | 100 | 15.3 ms | 0.29 ms | 53× | 29× | 95 → 87 |
-| Underexposed | 99 | 12.9 ms | 0.48 ms | 25× | 9.1× | 99 → 93 |
-| Overexposed | 112 | 1.99 ms | 0.35 ms | 6× | 4.0× | 112 → 110 |
-| JPEG artefacts | 100 | 2.96 ms | 0.49 ms | 6× | 3.9× | 100 → 97 |
-| Busy background | 87 | 12.1 ms | 0.51 ms | 23× | 8.4× | 87 → 85 |
-| At the frame edge | 105 | 12.4 ms | 0.57 ms | 19× | 7.0× | 103 → 102 |
-| No tag: empty / clutter / decoys | — | 11–17 ms | 0.17–0.79 ms | 13–100× | 4.0× | — |
+| Noise-free | 104 | 1.58 ms | 0.19 ms | 9× | 7.0× | 104 → 104 |
+| One tag | 50 | 15.2 ms | 0.19 ms | 78× | 59× | 50 → 50 |
+| 2–12 tags | 354 | 11.2 ms | 0.61 ms | 18× | 7.3× | 354 → 354 |
+| Small tags (32–53 px) | 120 | 13.6 ms | 0.30 ms | 45× | 11.5× | 0 → 120 |
+| Large tags | 50 | 12.3 ms | 0.38 ms | 42× | 13.8× | 50 → 50 |
+| Steep angle (40–65°) | 112 | 12.1 ms | 0.35 ms | 33× | 11.8× | 109 → 108 |
+| Defocus blur | 89 | 11.5 ms | 0.33 ms | 33× | 8.7× | 89 → 89 |
+| Motion blur | 94 | 11.3 ms | 0.43 ms | 17× | 8.6× | 94 → 94 |
+| Heavy noise (σ 4–14) | 104 | 10.9 ms | 0.65 ms | 19× | 5.3× | 104 → 104 |
+| Uneven lighting | 103 | 12.5 ms | 0.40 ms | 32× | 11.6× | 103 → 103 |
+| Low contrast | 100 | 15.4 ms | 0.22 ms | 70× | 44× | 95 → 99 |
+| Underexposed | 99 | 12.5 ms | 0.33 ms | 39× | 13.1× | 99 → 99 |
+| Overexposed | 112 | 2.08 ms | 0.26 ms | 7× | 4.9× | 112 → 112 |
+| JPEG artefacts | 100 | 2.99 ms | 0.29 ms | 9× | 4.0× | 100 → 100 |
+| Busy background | 87 | 12.1 ms | 0.31 ms | 40× | 10.7× | 87 → 87 |
+| At the frame edge | 105 | 12.2 ms | 0.32 ms | 37× | 12.2× | 103 → 105 |
+| Dark background | 105 | 12.0 ms | 0.27 ms | 44× | 12.5× | 91 → 105 |
+| No tag: empty / clutter / decoys | — | 11–17 ms | 0.09–0.35 ms | 19–164× | 5.0× | — |
 
 Times are the median detector call. Speedups are per frame: AprilTag's time divided by Napa's on the same frame.
 "Slowest frame" is the smallest of those ratios.
 
-**False detections.** Napa reported one wrong ID in 2,850 frames: a tag-shaped decoy whose random payload happened
-to fall within Napa's 3-bit error correction of a real code. Standard AprilTag, which corrects 2 bits, reported none.
+**Corners.** For each tag, the benchmark measured the worst corner's distance from the true corner. On the 4,750
+tags both detectors found, Napa's median error was **0.019 px** against AprilTag's 0.099 px, and its 95th percentile
+**0.088 px** against 0.302 px. Napa was more accurate at the median and 95th percentile in every scene. The exception
+is the single worst case under heavy motion blur: with 11 px of blur on a tag about 50 px across, one of Napa's
+corners was 2.5 px off, where AprilTag's worst in that scene was 0.98 px.
 
-**Corners.** For every tag found, the benchmark measured the worst corner's distance from the true corner. Napa's
-median error was **0.063 px**, against 0.10 px for AprilTag. At the 95th percentile the two were level (0.38 px).
-Napa has the worse outliers: in one low-contrast frame it fitted a side to the edge of the tag's white margin
-instead of its black border, putting a corner 41 px off. AprilTag's worst was 7.6 px.
+**False detections.** In 3,000 frames, Napa reported one wrong ID: a tag-shaped decoy whose random payload happened
+to fall within 2 bits of a real code, the same tolerance standard AprilTag uses. Standard AprilTag reported none,
+and full-resolution AprilTag 3. On a separate test of 80,000 such decoys, Napa reported none.
 
 These are synthetic frames on a desktop CPU. Measure on your own camera and hardware before relying on a specific
 number: `napa-benchmark` scores Napa on your own annotated images (see [the guide](docs/guide.md)).
@@ -79,8 +83,12 @@ land on the border of every tag above a minimum size, so skipping the pixels in 
 
 Napa drags a "rake" across the frame, taking one sample every ¾ of the smallest cell in each direction. Blur greys a
 cell's edges but leaves its core dark, and ¾-cell spacing always puts a sample in that core. For the default 32 px
-minimum tag, that's one pixel in nine. Coarser copies of the rake (2×, 4×, 8×, …) catch larger tags and add only a
-third again to the cost.
+minimum tag, that's one pixel in nine. Coarser copies of the rake (2×, 4×, 8×, …) catch larger tags; each is built
+from the one before, not from the image, and together they add only a third again to the cost.
+
+Each tag is handled at the level where it's between about 16 and 64 samples across. Below that, its one-cell white
+margin can fall between samples and the tag merges with a dark background; above it, the middle of its border is
+too far from any white to stand out. Every tag size has such a level.
 
 ### 2. String search on a matrix: skip what can't match
 
@@ -99,27 +107,43 @@ one, instead of all 2,348.
 
 ### 3. Old-school vector math
 
-Every pass over the samples is a straight loop over contiguous rows: fixed-width tiles, minimums, maximums, and
-comparisons. Compilers turn those loops into SIMD instructions (SSE/AVX on x86, NEON on ARM), so each instruction
-handles many pixels. It's the classic Apple AltiVec/vDSP approach. Blob labelling avoids unpredictable branches, so
-noisy frames don't stall the CPU.
+Every pass over the samples is written as whole-row vector operations, the classic Apple AltiVec/vDSP approach. One
+SSE2 or NEON instruction compares 16 samples with their thresholds and packs the results into a bit mask. Runs of
+dark samples then fall out of the masks with a count-trailing-zeros instruction per run, not a test per pixel.
+Runs that touch from row to row are joined into blobs with union-find, so the cost follows the number of runs, not
+the number of dark pixels. Gathering every third pixel uses a byte shuffle (SSSE3, chosen at run time) or NEON's
+de-interleaving load.
 
-### What happens to a candidate
+### 4. Reject early, measure carefully
 
-Each dark blob of plausible size gets a rough quadrilateral from its extreme points. Then Napa:
+Each blob of plausible size gets a rough quadrilateral from its extreme points. A blob can't be a tag if it's darker
+overall than any real code allows: every tag36h11 code has at least 10 white cells. Then Napa:
 
-1. Fits each side to the strongest edge at full resolution, searching outward from the blob.
-2. Decodes straight away with a loose tolerance. This throws out text and texture before any expensive refinement.
-3. Refines each side to the centre of its edge gradient, which is exact for real, pixel-integrated edges at any blur.
+1. Fits each side to its edge at full resolution.
+2. Decodes straight away with a loose tolerance, reading the border first. Text, texture, and checkerboards are
+   thrown out here, before any expensive refinement.
+3. Refines each side coarse to fine, then with a final pass that measures the edge every 1.5 px along it. Each
+   measurement is the centre of the edge's gradient, which is exact for real, pixel-integrated edges. Where blur is
+   wider than about half a cell, the edge is located instead where the image crosses halfway between the black and
+   white on either side.
 4. Intersects the four lines to get the corners, and decodes the payload.
 
-In short: rake, skip flat tiles, find blobs, fit and reject early, refine, decode.
+Some images fool a plain edge fit, so Napa checks for them:
+
+- **A grey quiet zone on a bright background** makes the margin look dark, so the first outline is the margin's.
+  If the decode fails, Napa tries the outline's inner 8/10, where the black square would be.
+- **A side fitted one cell out**, on the margin's outer edge, shows up as border cells that read white. Napa moves
+  that side in by a cell and refits it.
+- **Clipped (saturated) exposure** shrinks every black region by the same amount. The black border must be exactly
+  one cell wide, so Napa measures that shrinkage on the tag itself and undoes it.
 
 ## Obstructions
 
 Napa corrects up to 3 wrong payload bits (standard AprilTag defaults to 2), so a hand, cable, or glare spot over part
-of a tag often still decodes. In the benchmark's obstruction sweep (864 tags, each partly covered by a white or grey
-patch), Napa recovered 369 tags and standard AprilTag 330.
+of a tag often still decodes. It accepts a third corrected bit only when the three wrong cells touch, as they do
+under a real obstruction: a random pattern that happens to fall within three bits of a code has its errors
+scattered, so this keeps chance matches out. In the benchmark's obstruction sweep (864 tags, each partly covered by
+a white or grey patch), Napa recovered 356 tags and standard AprilTag 330.
 
 No AprilTag detector can find a tag whose black border or corners are hidden, because the border is found before any
 bits are read. Obstruction tolerance is best-effort, with no guaranteed percentage.
@@ -127,14 +151,10 @@ bits are read. Obstruction tolerance is best-effort, with no guaranteed percenta
 ## Limits
 
 - Tags smaller than `min_tag_px` (default 32 px across the black square) may be missed. Lower it to find smaller tags,
-  at some cost in speed.
-- Steeply tilted tags are Napa's weakest case: at 40–65° of tilt it found 71–76% of tags at 720p and 1080p, where
-  standard AprilTag found 92–97%.
-- In low light and low contrast, Napa finds a few percent fewer tags than standard AprilTag.
-- Tags need their white quiet zone, as printed tags have. If the margin is darker than the background around it,
-  Napa can mistake the margin's outer edge for the tag's.
-- On heavily blurred tags near the minimum size (σ ≈ 1.2 px at 32 px), corner error grows to about 0.2 px median,
-  because the border is barely wider than the blur.
+  at some cost in speed. A steeply tilted tag counts by its narrowest side.
+- Tags need their white quiet zone, as printed tags have.
+- Motion blur longer than a cell (an eighth of the tag) is the hardest case for corner accuracy: most corners stay
+  within a tenth of a pixel, but the worst can be off by a few pixels.
 - Installing needs a C99 compiler, since Napa is its C core.
 
 ## Quick start
