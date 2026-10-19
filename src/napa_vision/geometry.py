@@ -101,6 +101,34 @@ def tag_object_points(tag_size_m: float) -> np.ndarray:
     return points
 
 
+# Upstream AprilTag's tag coordinates for each of Napa's corners. Napa returns corners in OpenCV's order, which is
+# upstream's p[1], p[0], p[3], p[2]; upstream maps p[0..3] from (-1, 1), (1, 1), (1, -1), (-1, -1).
+_HOMOGRAPHY_TAG_POINTS = np.array([[1.0, 1.0], [-1.0, 1.0], [-1.0, -1.0], [1.0, -1.0]])
+
+
+def tag_homography(corners: np.ndarray) -> np.ndarray:
+    """Return the 3x3 homography from upstream AprilTag's tag coordinates to these image corners.
+
+    Tag coordinates span ``[-1, 1]`` across the black square, as in upstream AprilTag's ``H``, with
+    ``H[2, 2] == 1``. The image coordinates are the corners' own (Napa's are pixel-centre).
+    """
+
+    points = np.asarray(corners, dtype=np.float64)
+    if points.shape != (4, 2) or not np.all(np.isfinite(points)):
+        raise ValueError("corners must be a finite 4x2 array")
+    u, v = _HOMOGRAPHY_TAG_POINTS[:, 0], _HOMOGRAPHY_TAG_POINTS[:, 1]
+    x, y = points[:, 0], points[:, 1]
+    zeros, ones = np.zeros(4), np.ones(4)
+    system = np.empty((8, 8), dtype=np.float64)
+    system[0::2] = np.column_stack((u, v, ones, zeros, zeros, zeros, -u * x, -v * x))
+    system[1::2] = np.column_stack((zeros, zeros, zeros, u, v, ones, -u * y, -v * y))
+    try:
+        solution = np.linalg.solve(system, points.reshape(8))
+    except np.linalg.LinAlgError:
+        raise ValueError("corners do not form a quadrilateral") from None
+    return np.append(solution, 1.0).reshape(3, 3)
+
+
 def tag_field_corners(field_to_tag: np.ndarray, tag_size_m: float) -> np.ndarray:
     """Return tag corners in the WPILib field basis.
 

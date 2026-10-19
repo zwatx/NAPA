@@ -5,6 +5,8 @@ from typing import Any, Protocol
 
 import numpy as np
 
+from .geometry import tag_homography
+
 
 @dataclass(slots=True)
 class FiducialImageObservation:
@@ -14,12 +16,33 @@ class FiducialImageObservation:
     ``decision_margin`` the smaller of the white and black payload bits' mean distance from the
     decision threshold, in grey levels; both as in upstream AprilTag. Both are ``None`` for
     observations not produced by a detector that reports them.
+
+    ``homography`` and ``center`` are computed from the corners on each access.
     """
 
     tag_id: int
     corners: np.ndarray
     hamming: int | None = None
     decision_margin: float | None = None
+
+    @property
+    def homography(self) -> np.ndarray:
+        """3x3 map from upstream AprilTag's tag coordinates (``[-1, 1]`` across the black square) to pixels.
+
+        As upstream's ``H``: ``H[2, 2] == 1`` and the tag centre is ``H @ (0, 0, 1)``. Pixels are in the
+        same coordinates as ``corners``.
+        """
+
+        return tag_homography(self.corners)
+
+    @property
+    def center(self) -> np.ndarray:
+        """The tag centre in pixels, ``(x, y)``: the homography's image of the tag origin, as upstream's ``c``.
+
+        This is where the square's diagonals cross, which under perspective differs from the corners' mean.
+        """
+
+        return self.homography[:2, 2].copy()
 
 
 class FiducialDetector(Protocol):
