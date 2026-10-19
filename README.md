@@ -76,6 +76,10 @@ Standard AprilTag treats each frame as a large image-processing job. It threshol
 image into regions, and fits quadrilaterals to every region's boundary before it asks whether anything is a tag.
 Napa asks that question as early and as cheaply as it can.
 
+![Napa on one frame, stage by stage: the rake keeps every third pixel, flat tiles are skipped, dark samples become runs and blobs, shapes that can't be tags are dropped, and only the tags get edge fitting and decoding at full resolution.](docs/napa-pipeline.webp)
+
+*One synthetic frame, stage by stage. Every overlay is computed from the frame by a port of Napa's pipeline.*
+
 ### 1. The rake: sample sparsely, with a guarantee
 
 A tag's black border is one cell wide, and a tag is 8 cells across. Sample every few pixels and you're guaranteed to
