@@ -132,6 +132,11 @@ Installing from source compiles the C core (`src/napa_vision/_native`), so it ne
 install fails rather than leaving you without a detector. To use a library you built yourself, set
 `NAPA_CORE_LIBRARY` to its path.
 
+Wheels need no compiler. Python loads the core with `ctypes` rather than as an extension module, so each wheel is
+tagged `py3-none-<platform>` and serves every Python 3 version. The Wheels workflow builds and tests them with
+cibuildwheel on native Linux x86-64 and ARM64, macOS ARM and Intel, and Windows x64 runners. It runs on version tags
+or by hand, and uploads the wheels and sdist as artifacts; it doesn't publish them.
+
 ```bash
 python -m pip install -e '.[headless,dev]'
 ruff format --check . && ruff check .

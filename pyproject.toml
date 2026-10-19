@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=69", "wheel"]
+requires = ["setuptools>=70.1"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -57,6 +57,17 @@ napa_vision = ["py.typed"]
 
 [tool.setuptools.dynamic]
 version = { attr = "napa_vision._version.__version__" }
+
+[tool.cibuildwheel]
+# Wheels are py3-none-<platform> (see setup.py), so one CPython build per platform covers every Python 3.
+build = "cp311-*"
+skip = "*-musllinux_*"
+test-requires = ["pytest", "opencv-python-headless"]
+test-sources = ["tests"]
+test-command = "pytest tests/test_napa_detector.py"
+
+[tool.cibuildwheel.windows]
+archs = ["AMD64"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
