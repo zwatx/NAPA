@@ -34,7 +34,7 @@ import numpy as np
 
 from napa_vision.napa_detector import NapaDetector, native_available
 
-REPORT_SCHEMA_VERSION = 3
+REPORT_SCHEMA_VERSION = 4
 DEFAULT_RESOLUTIONS = ((640, 480), (1280, 720), (1920, 1080))
 DEFAULT_FRAMES_PER_SCENARIO = 50
 DEFAULT_OCCLUSION_CASES = 24
@@ -43,6 +43,8 @@ SUPERSAMPLE = 4
 OCCLUSION_FRACTIONS = (0.0, 0.05, 0.10, 0.20, 0.30, 0.40)
 OCCLUSION_REGIONS = ("payload-center", "border-strip", "corner")
 OCCLUSION_VALUES = (255, 127)
+DEFAULT_RANGE_CASES = 50
+RANGE_SIDES_PX = (12, 14, 16, 20, 24, 28, 32, 40, 48, 64, 96)
 
 Corners = np.ndarray  # (4, 2) float64, black-square corners in OpenCV order, pixel-centre coordinates
 Detection = tuple[int, Corners]
@@ -732,6 +734,34 @@ def render_occlusion_frame(
     return Frame("occlusion", index, resolution, _to_uint8(add_noise(rng, image, 1.5)), [tag], details)
 
 
+# ------------------------------------------------------------------------------------------ range
+
+
+def iter_range_frames(
+    *, resolution: tuple[int, int] = (640, 480), cases: int = DEFAULT_RANGE_CASES, seed: int = 2468
+) -> Iterator[Frame]:
+    """One tag per frame at each fixed size in ``RANGE_SIDES_PX``: how far away each detector still sees a tag."""
+
+    for index in range(len(RANGE_SIDES_PX) * cases):
+        yield render_range_frame(index, resolution=resolution, cases=cases, seed=seed)
+
+
+def render_range_frame(
+    index: int, *, resolution: tuple[int, int] = (640, 480), cases: int = DEFAULT_RANGE_CASES, seed: int = 2468
+) -> Frame:
+    """Range frame ``index``, in size, case order: a random ID and angle, up to 15° of tilt, and light noise."""
+
+    width, height = resolution
+    case = index % cases
+    side_index = index // cases
+    side = float(RANGE_SIDES_PX[side_index])
+    rng = np.random.default_rng((seed, 777, side_index, case))
+    image = _uniform(rng, width, height)
+    (tag,) = place_tags(rng, width, height, 1, (side, side), max_tilt_deg=15)
+    render_tag(image, tag.tag_id, tag.corners, black=rng.uniform(15, 60), white=rng.uniform(200, 250))
+    return Frame("range", index, resolution, _to_uint8(add_noise(rng, image, 1.5)), [tag], {"side_px": side})
+
+
 # ---------------------------------------------------------------------------------------- scoring
 
 
@@ -1051,6 +1081,32 @@ def occlusion_report(rows: Sequence[dict[str, object]]) -> list[dict[str, object
     ]
 
 
+def range_report(rows: Sequence[dict[str, object]]) -> list[dict[str, object]]:
+    groups: dict[tuple[str, float], list[int]] = defaultdict(list)
+    for row in rows:
+        groups[(str(row["backend"]), float(row["detail_side_px"]))].append(int(row["true_positive"]))
+    return [
+        {"backend": backend, "side_px": side, "cases": len(found), "found": sum(found)}
+        for (backend, side), found in sorted(groups.items())
+    ]
+
+
+def range_summary(entries: Sequence[dict[str, object]]) -> str:
+    """Tags found at each black-square size, one row per backend."""
+
+    sides = sorted({float(entry["side_px"]) for entry in entries})
+    found = {(entry["backend"], float(entry["side_px"])): entry for entry in entries}
+    lines = [
+        "\n#### Range: tags found by black-square size\n",
+        "| Backend | " + " | ".join(f"{side:g} px" for side in sides) + " |",
+        "| --- |" + " ---: |" * len(sides),
+    ]
+    for backend in dict.fromkeys(entry["backend"] for entry in entries):
+        cells = [f"{found[(backend, side)]['found']}/{found[(backend, side)]['cases']}" for side in sides]
+        lines.append(f"| {backend} | " + " | ".join(cells) + " |")
+    return "\n".join(lines) + "\n"
+
+
 # ----------------------------------------------------------------------------------------- report
 
 
@@ -1156,13 +1212,22 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--samples-csv", type=Path, help="Per-frame results CSV (defaults beside --output)")
     parser.add_argument("--seed", type=int, default=2468)
     parser.add_argument(
-        "--frames", type=_positive_int, default=DEFAULT_FRAMES_PER_SCENARIO, help="Frames per scenario and resolution"
+        "--frames",
+        type=_nonnegative_int,
+        default=DEFAULT_FRAMES_PER_SCENARIO,
+        help="Frames per scenario and resolution (0 to run only the sweeps)",
     )
     parser.add_argument(
         "--occlusion-cases",
         type=_nonnegative_int,
         default=DEFAULT_OCCLUSION_CASES,
         help="Tags per occlusion region, fraction, and patch colour (0 to skip)",
+    )
+    parser.add_argument(
+        "--range-cases",
+        type=_nonnegative_int,
+        default=DEFAULT_RANGE_CASES,
+        help=f"Tags at each size in {', '.join(map(str, RANGE_SIDES_PX))} px (0 to skip)",
     )
     parser.add_argument("--repetitions", type=_positive_int, default=10, help="Timed calls per backend per frame")
     parser.add_argument("--warmup", type=_nonnegative_int, default=1, help="Untimed calls per backend per frame")
@@ -1215,6 +1280,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             smallest = min(args.resolutions, key=lambda r: r[0] * r[1])
             occlusion_frames = iter_occlusion_frames(resolution=smallest, cases=args.occlusion_cases, seed=args.seed)
             _, occlusion_rows = run_matrix(occlusion_frames, backends=backends, repetitions=1, warmup=0, seed=args.seed)
+        range_rows: list[dict[str, object]] = []
+        if args.range_cases:
+            smallest = min(args.resolutions, key=lambda r: r[0] * r[1])
+            range_frames = iter_range_frames(resolution=smallest, cases=args.range_cases, seed=args.seed)
+            _, range_rows = run_matrix(range_frames, backends=backends, repetitions=1, warmup=0, seed=args.seed)
         summary = aggregate(rows)
         report = {
             "schema_version": REPORT_SCHEMA_VERSION,
@@ -1233,6 +1303,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "threads": args.threads,
                 "resolutions": [f"{w}x{h}" for w, h in args.resolutions],
                 "occlusion_cases": args.occlusion_cases,
+                "range_cases": args.range_cases,
             },
             "scenarios": list(args.scenarios),
             "scenario_descriptions": {s.name: s.description for s in SCENARIOS if s.name in args.scenarios},
@@ -1242,11 +1313,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             "tags": sum(int(row["tags"]) for row in rows) // max(1, len(backends)),
             **summary,
             "occlusion": occlusion_report(occlusion_rows),
+            "range": range_report(range_rows),
         }
         csv_output = args.samples_csv or args.output.with_suffix(".csv")
-        write_reports(report, rows + occlusion_rows, args.output, csv_output)
+        write_reports(report, rows + occlusion_rows + range_rows, args.output, csv_output)
         if not args.quiet:
             print(markdown_summary(report))
+            if report["range"]:
+                print(range_summary(report["range"]))
         print(json.dumps({"report": str(args.output), "samples_csv": str(csv_output)}, indent=2))
     except (ImportError, OSError, RuntimeError, ValueError) as exc:
         print(f"performance-matrix: error: {exc}", file=sys.stderr)
