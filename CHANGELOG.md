@@ -2,6 +2,11 @@
 
 ## Unreleased — 0.3.0
 
+- Added Napa's native detector: a dependency-free C core loaded with ctypes that samples the frame sparsely, skips
+  flat and noise-only tiles, fits corners at full resolution, and decodes with multi-index hashing. It is the default
+  detector when the core is built; installs without a C compiler fall back to OpenCV's ArUco detector.
+- Added `NapaDetector`, `default_detector()`, `native_available()`, and the `napa` replay-comparison candidate.
+- Added noisy, lighting-gradient, motion-blur, and cluttered scenes plus ground-truth corner accuracy to the detector matrix.
 - Renamed the project to Napa, the Python package to `napa_vision`, and the command prefix to `napa-`.
 - Renamed the camera service class to `NapaVisionService`; explicit device IDs and the Northstar observation packet remain compatible.
 - Added a reproducible detector/occlusion matrix with RobotPy AprilTag 3 baselines, raw timings, and explicit ID-only accuracy scoring.

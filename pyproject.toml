@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "napa-vision"
 dynamic = ["version"]
-description = "Modular AprilTag perception and pose processing by Team 2468 Appreciate"
+description = "Fast, camera-agnostic AprilTag detection and pose processing"
 readme = "README.md"
 requires-python = ">=3.11"
 keywords = ["apriltag", "computer-vision", "frc", "networktables", "robotics"]

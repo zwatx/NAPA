@@ -19,7 +19,7 @@ from typing import Any, Protocol
 import cv2
 import numpy as np
 
-from .fiducials import OpenCVArucoFiducialDetector, make_apriltag_detector
+from .fiducials import default_detector, make_apriltag_detector
 from .types import FiducialImageObservation
 
 CORPUS_SCHEMA_VERSION = 1
@@ -207,7 +207,7 @@ def run_replay_benchmark(
     if not isinstance(manifest, CorpusManifest):
         manifest = load_corpus_manifest(manifest)
     options = options or BenchmarkOptions()
-    detector = detector or OpenCVArucoFiducialDetector()
+    detector = detector or default_detector()
     corpus_sha256 = _verify_corpus(manifest) if options.verify_integrity else None
     return _run_replay_benchmark(manifest, detector, options, corpus_sha256=corpus_sha256)
 
@@ -564,8 +564,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--compare-detectors",
         nargs="+",
-        choices=("aruco3", "layout-restricted"),
-        help="Compare opt-in candidates against baseline on the same decoded frames",
+        choices=("napa", "aruco3", "layout-restricted"),
+        help="Compare candidates against the OpenCV baseline on the same decoded frames",
     )
     parser.add_argument(
         "--layout-tag-ids",

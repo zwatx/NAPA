@@ -10,7 +10,7 @@ from time import perf_counter
 import numpy as np
 
 from .calibration import CameraCalibration
-from .fiducials import FiducialDetector, OpenCVArucoFiducialDetector
+from .fiducials import FiducialDetector, default_detector
 from .solvers import CameraPoseSolver, SingleTagPoseSolver, TagAngleSolver
 from .types import CameraPoseBounds, FrameResult
 
@@ -91,7 +91,7 @@ class VisionProcessor:
             ransac_iterations=ransac_iterations,
         )
         self._angle_solver = TagAngleSolver()
-        self.detector = detector if detector is not None else OpenCVArucoFiducialDetector()
+        self.detector = detector if detector is not None else default_detector()
 
     def process(
         self,

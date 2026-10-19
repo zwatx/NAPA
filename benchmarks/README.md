@@ -16,18 +16,30 @@ Report recall and false positives with speed: skipping work can also skip a tag.
 when the allowed tag IDs are known in advance. The archived custom detector is an ID-only experiment, not a
 calibrated pose backend. No supplied corners are used in end-to-end comparisons.
 
+Pin the run to one idle core so other processes don't skew timings (Linux shown):
+
 ```bash
-python benchmarks/performance_matrix.py \
+taskset -c 2 python benchmarks/performance_matrix.py \
   --repetitions 100 --occlusion-repetitions 1 --warmup 1 --threads 1 \
   --resolutions 640x480,1280x720,1920x1080 --tag-side-pixels 96,160 \
   --include-robust-erased10 --output benchmarks/results/2026-10-18_detector_matrix.json
 ```
 
-The matrix has 54 main frames and 864 obstruction cases. Obstructions use IDs 1, 42, and 314 at all four rotations,
+The matrix has 78 main frames and 864 obstruction cases. Obstructions use IDs 1, 42, and 314 at all four rotations,
 both marker sizes, white and grey patches, and six requested covered fractions from 0 to 40%. They run only at the
 smallest frame resolution to keep the in-memory corpus bounded. At a fixed marker size, changing the surrounding
 frame resolution mainly changes search cost. Main scenes also include four distinct tag IDs, two negative scenes,
-small tags, blur, and perspective. The four-tag scene caps marker size where necessary to keep tags separated.
+small tags, blur, perspective, and four camera-like degradations of one tag: Gaussian noise (sigma 6), a 0.35-1.0
+lighting gradient, 7-pixel horizontal motion blur, and text clutter around a tag that keeps its white quiet zone. The
+four-tag scene caps marker size where necessary to keep tags separated.
+
+`napa-native` is Napa's C core. The `napa-default`, `napa-aruco3`, `napa-skip-scan`, and `napa-layout-restricted`
+rows are the earlier OpenCV-based wrappers, kept for comparison.
+
+The report's `corner_accuracy` section scores corners against exact ground truth on 120 seeded 1280x720 renders
+(tag sides 32-240 px, any rotation, mild perspective, sigma 0/0.8 blur, sigma 2 noise), supersampled 4x and
+area-averaged like a sensor. AprilTag reports corners with a +0.5 px origin and its own corner order; the report
+shifts and re-orders them before scoring, so the comparison counts only real error.
 
 Each reported detector-call time includes its adapter's ID extraction as well as the selected detector's own
 wrapper work. Initialization measures object construction after imports, and the separately recorded first call

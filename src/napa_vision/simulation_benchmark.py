@@ -10,7 +10,7 @@ import cv2
 import numpy as np
 
 from .config import PlatformProfile
-from .fiducials import FiducialDetector, OpenCVArucoFiducialDetector
+from .fiducials import FiducialDetector
 from .service import NapaVisionService
 from .simulation import RenderedFrame, SyntheticFrameSource
 from .simulation_artifacts import SIMULATION_LIMITATIONS
@@ -127,7 +127,7 @@ def run_simulation(
         service_profile,
         scorer,
         frame_source=SyntheticFrameSource(measured_source),
-        detector=detector or OpenCVArucoFiducialDetector(),
+        detector=detector,
     )
     service.run()
     summary = {

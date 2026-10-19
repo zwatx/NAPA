@@ -28,9 +28,10 @@ import numpy as np
 
 from napa_vision.benchmark import write_benchmark_summary
 from napa_vision.fiducials import OpenCVArucoFiducialDetector, make_apriltag_detector
+from napa_vision.napa_detector import NapaDetector, native_available
 from napa_vision.prefilter import BlockSkipPrefilter, SkipScanConfig
 
-REPORT_SCHEMA_VERSION = 1
+REPORT_SCHEMA_VERSION = 2
 DEFAULT_RESOLUTIONS = ((640, 480), (1280, 720), (1920, 1080))
 DEFAULT_TAG_SIDES = (96, 160)
 TAG_IDS = (1, 42, 314)
@@ -38,6 +39,9 @@ LAYOUT_TAG_IDS = (1, 42, 200, 314)
 OCCLUSION_FRACTIONS = (0.0, 0.05, 0.10, 0.20, 0.30, 0.40)
 OCCLUSION_REGIONS = ("payload-center", "border-strip", "corner")
 OCCLUSION_VALUES = (255, 127)
+STRESS_TAG_ID = 200
+CORNER_TAG_SIDES = (32, 48, 64, 96, 160, 240)
+CORNER_POSES_PER_SIDE = 20
 
 
 @dataclass(frozen=True, slots=True)
@@ -156,6 +160,7 @@ def build_corpus(
                 )
             )
             frames.append(_perspective_frame(width, height, side))
+            frames.extend(_stress_frames(width, height, side, rng))
             # Hold ID and rotation fixed across every obstruction fraction.
             # Payload sampling depends on tag size, so test both sizes at the
             # smallest frame resolution rather than retaining gigabytes of copies.
@@ -227,7 +232,25 @@ def build_backends(*, threads: int, include_robust_erased10: bool = False) -> tu
         "wrapper": "none",
         "opencv_threads_effective": open_cv_threads,
     }
-    backends = [
+    backends = []
+    skipped: dict[str, str] = {}
+    if native_available():
+        native = NapaDetector()
+        backends.append(
+            Backend(
+                "napa-native",
+                _napa_native_detector,
+                {
+                    "min_tag_px": native.min_tag_px,
+                    "max_hamming": native.max_hamming,
+                    "implementation": "portable C core via ctypes",
+                },
+            )
+        )
+        native.close()
+    else:
+        skipped["napa-native"] = "unavailable: the Napa core library is not built"
+    backends += [
         Backend("opencv-aruco-raw", lambda: _raw_opencv_detector(dictionary, raw_params), raw_config),
         Backend(
             "napa-default",
@@ -262,7 +285,6 @@ def build_backends(*, threads: int, include_robust_erased10: bool = False) -> tu
             ),
         ),
     ]
-    skipped: dict[str, str] = {}
     try:
         import robotpy_apriltag  # noqa: F401
     except ImportError as exc:
@@ -433,8 +455,8 @@ def run_matrix(
         "generated_at_utc": datetime.now(UTC).isoformat(),
         "measurement_scope": {
             "quality": (
-                "Exact-ID precision/recall for ALL backends. Corner and pose accuracy are excluded; "
-                "see the separate calibrated simulator."
+                "Exact-ID precision/recall for ALL backends. Corner accuracy against exact ground truth is "
+                "reported separately in corner_accuracy; pose accuracy is in the calibrated simulator."
             ),
             "included": "Detector call, selected wrapper conversion/uniformity gate, and per-backend ID extraction.",
             "excluded": "Synthetic rendering, file I/O, report writing, ID scoring, and module imports.",
@@ -463,6 +485,7 @@ def run_matrix(
         "skipped_backends": skipped,
         "occlusion": _occlusion_report(occlusion_totals, raw_samples),
         "decoder_microbenchmark": run_decoder_microbenchmark(),
+        "corner_accuracy": run_corner_accuracy(seed=seed, threads=threads),
     }
     return report, raw_samples
 
@@ -736,6 +759,161 @@ def _textured_negative(width: int, height: int, rng: np.random.Generator) -> np.
     return image
 
 
+def _stress_frames(width: int, height: int, side: int, rng: np.random.Generator) -> list[BenchmarkFrame]:
+    """Camera-like degradations of one tag, each a separate scenario."""
+
+    resolution = (width, height)
+    base = _single_tag_frame(
+        name="stress", width=width, height=height, tag_id=STRESS_TAG_ID, side=side, rotation=3, scenario="stress"
+    ).image.astype(np.float32)
+    noisy = base + rng.normal(0.0, 6.0, base.shape)
+    gradient = base * np.linspace(0.35, 1.0, width, dtype=np.float32)[None, :]
+    kernel = np.zeros((7, 7), np.float32)
+    kernel[3, :] = 1.0 / 7.0
+    motion = cv2.filter2D(base, -1, kernel)
+    clutter = np.full((height, width), 225, np.uint8)
+    for _ in range(max(6, (width * height) // 40_000)):
+        origin = (int(rng.integers(0, max(1, width - 240))), int(rng.integers(24, height)))
+        cv2.putText(clutter, "NAPA 2468 ##", origin, cv2.FONT_HERSHEY_SIMPLEX, 1.0, int(rng.integers(0, 90)), 2)
+    # The tag keeps its one-cell white quiet zone, as a printed tag does.
+    margin = side // 8 + 2
+    x = (width - side) // 2
+    y = (height - side) // 2
+    clutter[y - margin : y + side + margin, x - margin : x + side + margin] = 255
+    clutter[y : y + side, x : x + side] = base[y : y + side, x : x + side].astype(np.uint8)
+    scenes = (("noisy", noisy), ("lighting-gradient", gradient), ("motion-blur", motion), ("cluttered", clutter))
+    return [
+        BenchmarkFrame(
+            f"{scenario}-id{STRESS_TAG_ID}-s{side}",
+            np.clip(image, 0, 255).astype(np.uint8),
+            (STRESS_TAG_ID,),
+            resolution,
+            scenario,
+            3,
+            side,
+        )
+        for scenario, image in scenes
+    ]
+
+
+def corner_accuracy_scene(
+    tag_id: int,
+    side: float,
+    angle_rad: float,
+    center: tuple[float, float],
+    blur_sigma: float,
+    noise_sigma: float,
+    rng: np.random.Generator,
+    size: tuple[int, int] = (1280, 720),
+) -> tuple[np.ndarray, np.ndarray]:
+    """Render a tag with exact sub-pixel corners: supersample 4x, then area-average like a sensor."""
+
+    width, height = size
+    cells = 10
+    padded = np.full((10 * cells, 10 * cells), 255, np.uint8)
+    padded[cells : 9 * cells, cells : 9 * cells] = _marker(tag_id, 8 * cells, 0)
+    source = np.array([[cells, cells], [9 * cells, cells], [9 * cells, 9 * cells], [cells, 9 * cells]], np.float32)
+    source -= 0.5
+    rotation = np.array([[np.cos(angle_rad), -np.sin(angle_rad)], [np.sin(angle_rad), np.cos(angle_rad)]])
+    unit = np.array([[-0.5, -0.5], [0.5, -0.5], [0.5, 0.5], [-0.5, 0.5]]) + rng.uniform(-0.06, 0.06, (4, 2))
+    corners = unit @ rotation.T * side + np.asarray(center)
+    homography = cv2.getPerspectiveTransform(source, (corners * 4 + 1.5).astype(np.float32))
+    large = cv2.warpPerspective(padded, homography, (width * 4, height * 4), borderValue=255)
+    image = cv2.resize(large, (width, height), interpolation=cv2.INTER_AREA).astype(np.float32)
+    if blur_sigma > 0:
+        image = cv2.GaussianBlur(image, (0, 0), blur_sigma)
+    image = image * 0.8 + 20 + rng.normal(0.0, noise_sigma, image.shape)
+    return np.clip(image, 0, 255).astype(np.uint8), corners
+
+
+def run_corner_accuracy(*, seed: int = 2468, threads: int = 1) -> dict[str, object]:
+    """Score detected corners against exact ground truth on seeded sub-pixel renders.
+
+    AprilTag reports corners with a +0.5 px origin and its own corner order; its corners are
+    shifted by -0.5 px and aligned to OpenCV order before scoring, so only real error counts.
+    """
+
+    rng = np.random.default_rng(seed)
+    adapters: dict[str, Callable[[np.ndarray], list[tuple[int, np.ndarray]]]] = {}
+    if native_available():
+        native = NapaDetector()
+        adapters["napa-native"] = lambda image: [(o.tag_id, o.corners) for o in native.detect(image)]
+    opencv = OpenCVArucoFiducialDetector()
+    adapters["opencv-aruco"] = lambda image: [(o.tag_id, o.corners) for o in opencv.detect(image)]
+    try:
+        from robotpy_apriltag import AprilTagDetector
+    except ImportError:
+        pass
+    else:
+        for decimate in (1.0, 2.0):
+            detector = AprilTagDetector()
+            detector.addFamily("tag36h11", 2)
+            config = detector.getConfig()
+            config.numThreads = threads
+            config.quadDecimate = decimate
+            detector.setConfig(config)
+
+            def apriltag(image: np.ndarray, detector=detector) -> list[tuple[int, np.ndarray]]:
+                return [
+                    (int(d.getId()), np.array([[d.getCorner(i).x, d.getCorner(i).y] for i in range(4)]) - 0.5)
+                    for d in detector.detect(image)
+                ]
+
+            adapters[f"apriltag3-robotpy-decimate-{int(decimate)}"] = apriltag
+    errors: dict[str, dict[int, list[float]]] = {name: defaultdict(list) for name in adapters}
+    scenes = 0
+    for side in CORNER_TAG_SIDES:
+        for pose in range(CORNER_POSES_PER_SIDE):
+            tag_id = int(rng.integers(0, 587))
+            image, truth = corner_accuracy_scene(
+                tag_id,
+                float(side),
+                float(rng.uniform(0, 2 * np.pi)),
+                (float(rng.uniform(300, 980)), float(rng.uniform(250, 470))),
+                (0.0, 0.8)[pose % 2],
+                2.0,
+                rng,
+            )
+            scenes += 1
+            for name, detect in adapters.items():
+                for found_id, corners in detect(image):
+                    if found_id != tag_id:
+                        continue
+                    if name.startswith("apriltag3"):
+                        corners = min(
+                            (np.roll(order, shift, 0) for order in (corners, corners[::-1]) for shift in range(4)),
+                            key=lambda candidate: float(np.abs(candidate - truth).max()),
+                        )
+                    errors[name][side].append(float(np.linalg.norm(corners - truth, axis=1).max()))
+                    break
+    report: dict[str, object] = {
+        "scope": (
+            "Worst corner's Euclidean error per detected tag, against exact homography ground truth, on 1280x720 "
+            "renders supersampled 4x with mild perspective, sigma 0/0.8 blur and sigma 2 noise. AprilTag corners "
+            "are shifted -0.5 px to OpenCV's pixel-centre convention and re-ordered before scoring."
+        ),
+        "scenes": scenes,
+        "tag_sides_px": list(CORNER_TAG_SIDES),
+        "backends": {},
+    }
+    for name, by_side in errors.items():
+        values = [value for side in CORNER_TAG_SIDES for value in by_side[side]]
+        report["backends"][name] = {
+            "found": len(values),
+            "median_px": float(np.median(values)) if values else None,
+            "p95_px": float(np.percentile(values, 95)) if values else None,
+            "max_px": float(np.max(values)) if values else None,
+            "by_side": {
+                str(side): {
+                    "found": len(by_side[side]),
+                    "median_px": float(np.median(by_side[side])) if by_side[side] else None,
+                }
+                for side in CORNER_TAG_SIDES
+            },
+        }
+    return report
+
+
 def _raw_opencv_detector(
     dictionary: cv2.aruco.Dictionary, parameters: cv2.aruco.DetectorParameters
 ) -> Callable[[np.ndarray], list[int]]:
@@ -746,6 +924,11 @@ def _raw_opencv_detector(
         return [] if ids is None else [int(tag_id) for tag_id in ids.reshape(-1)]
 
     return detect
+
+
+def _napa_native_detector() -> Callable[[np.ndarray], list[int]]:
+    detector = NapaDetector()
+    return lambda image: [observation.tag_id for observation in detector.detect(image)]
 
 
 def _napa_default_detector() -> Callable[[np.ndarray], list[int]]:

@@ -49,6 +49,10 @@ _EXPORT_MODULES = {
     "load_calibration_data": "calibration",
     "load_profile": "config",
     "load_wpilib_apriltag_layout": "field_layout",
+    "NapaDetector": "napa_detector",
+    "NativeLibraryError": "napa_detector",
+    "default_detector": "fiducials",
+    "native_available": "napa_detector",
     "require_production_artifacts": "provenance",
     "save_calibration_data": "calibration",
 }

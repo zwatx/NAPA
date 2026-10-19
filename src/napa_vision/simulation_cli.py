@@ -12,7 +12,7 @@ import cv2
 
 from .benchmark import serialize_benchmark_summary, write_benchmark_summary_text
 from .config import PlatformProfile, ProfileError, load_profile
-from .fiducials import OpenCVArucoFiducialDetector, make_apriltag_detector
+from .fiducials import FiducialDetector, OpenCVArucoFiducialDetector, make_apriltag_detector
 from .prefilter import BlockSkipPrefilter
 from .simulation_artifacts import write_simulation_corpus
 from .simulation_benchmark import run_simulation
@@ -72,7 +72,7 @@ def _candidate_detector(
     candidate: str,
     *,
     layout_tag_ids: Sequence[int] | None = None,
-) -> OpenCVArucoFiducialDetector:
+) -> FiducialDetector:
     if candidate in {"aruco3", "layout-restricted"}:
         return make_apriltag_detector(candidate, layout_tag_ids=layout_tag_ids)
     if candidate == "subpixel-corners":

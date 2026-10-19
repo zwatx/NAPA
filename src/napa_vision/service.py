@@ -8,7 +8,7 @@ import cv2
 from .calibration import CameraCalibration
 from .capture import FrameSource, make_frame_source
 from .config import PlatformProfile
-from .fiducials import FiducialDetector, OpenCVArucoFiducialDetector
+from .fiducials import FiducialDetector, OpenCVArucoFiducialDetector, default_detector
 from .orientation import RobotYawSource, StaticRobotYawSource
 from .output import OutputPublisher
 from .overlay import draw_overlay
@@ -43,7 +43,7 @@ class NapaVisionService:
         prefilter = BlockSkipPrefilter(profile.skip_scan) if profile.skip_scan.enabled else None
         camera = profile.camera
         self.processor = VisionProcessor(
-            detector=detector if detector is not None else OpenCVArucoFiducialDetector(prefilter=prefilter),
+            detector=detector if detector is not None else _service_detector(prefilter),
             calibration=CameraCalibration(
                 camera_matrix=camera.calibration_matrix,
                 distortion_coefficients=camera.distortion_coefficients,
@@ -211,3 +211,10 @@ class NapaVisionService:
             "used_ransac": diagnostics.used_ransac,
             "rejection_reason": diagnostics.rejection_reason,
         }
+
+
+def _service_detector(prefilter: BlockSkipPrefilter | None) -> FiducialDetector:
+    # The legacy skip-scan prefilter wraps OpenCV's detector; Napa's core does its own sampling.
+    if prefilter is not None:
+        return OpenCVArucoFiducialDetector(prefilter=prefilter)
+    return default_detector()

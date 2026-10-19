@@ -93,15 +93,29 @@ class OpenCVArucoFiducialDetector:
         return observations
 
 
+def default_detector() -> FiducialDetector:
+    """Return Napa's native detector, or OpenCV's ArUco detector where the core isn't built."""
+
+    from .napa_detector import NapaDetector, native_available
+
+    if native_available():
+        return NapaDetector()
+    return OpenCVArucoFiducialDetector()
+
+
 def make_apriltag_detector(
     candidate: str = "baseline",
     *,
     layout_tag_ids: Iterable[int] | None = None,
-) -> OpenCVArucoFiducialDetector:
-    """Build an opt-in detector candidate without changing runtime defaults."""
+) -> FiducialDetector:
+    """Build a named detector for comparisons; "baseline" is OpenCV's ArUco detector."""
 
     if candidate == "baseline":
         return OpenCVArucoFiducialDetector()
+    if candidate == "napa":
+        from .napa_detector import NapaDetector
+
+        return NapaDetector()
     if candidate == "aruco3":
         parameters = cv2.aruco.DetectorParameters()
         if not hasattr(parameters, "useAruco3Detection"):

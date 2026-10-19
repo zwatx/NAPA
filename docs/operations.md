@@ -193,14 +193,15 @@ napa-benchmark benchmarks/pi-corpus.json \
   --output reports/pi-benchmark.json --pretty
 ```
 
-An input/configuration error exits `2`; a failed performance/accuracy gate exits `1`. Keep skip-scan disabled unless a
-representative Raspberry Pi corpus shows recall parity and a useful percentile improvement over full-frame detection.
+An input/configuration error exits `2`; a failed performance/accuracy gate exits `1`. The legacy `skip_scan` profile
+option wraps OpenCV's detector and replaces Napa's native detector in the camera service, so leave it disabled.
 
-Use the opt-in replay comparison to evaluate ArUco3 or a field-layout-only dictionary on the same decoded images:
+Use the replay comparison to measure Napa's detector, ArUco3, or a field-layout-only dictionary against the OpenCV
+baseline on the same decoded images. Run it on footage from your own camera before relying on synthetic speedups:
 
 ```bash
 napa-benchmark benchmarks/corpus.json \
-  --compare-detectors aruco3 layout-restricted \
+  --compare-detectors napa aruco3 layout-restricted \
   --layout-tag-ids 1,2,3,4 --max-decoded-cache-mib 256 \
   --repetitions 5 --warmup-passes 1 --output reports/detector-comparison.json
 ```
@@ -208,9 +209,13 @@ napa-benchmark benchmarks/corpus.json \
 The restricted candidate remaps compact dictionary rows back to the supplied original tag IDs and intentionally ignores
 all other tags. Comparison mode reports detection-only speedups, its fixed execution order, and retained decoded-cache
 bytes. The cache has a 256 MiB default ceiling; split a larger corpus into representative shards or raise the limit
-explicitly. Both candidates remain hardware-validation inputs and never alter the production detector default.
+explicitly. The OpenCV candidates remain hardware-validation inputs and never alter the production detector default.
 
 ## Development and packaging
+
+Installing from source compiles Napa's C core (`src/napa_vision/_native`), which needs a C99 compiler. Without one,
+the install still succeeds, `napa_vision.native_available()` returns `False`, and the default detector falls back to
+OpenCV's ArUco detector. Set `NAPA_CORE_LIBRARY` to load a separately built library.
 
 ```bash
 python -m pip install -e '.[headless,dev,nt]'
@@ -221,8 +226,9 @@ python -m build
 python -m twine check dist/*
 ```
 
-CI covers Python 3.11–3.14, OpenCV 4.7 on Python 3.11, the current OpenCV release, real local NetworkTables timestamp
-integration, the deterministic simulator, and fresh wheel/sdist command smoke tests. The package includes typed
+CI covers Python 3.11–3.14, OpenCV 4.7 on Python 3.11, the current OpenCV release, the native core on Linux, macOS,
+and Windows, real local NetworkTables timestamp integration, the deterministic simulator, and fresh wheel/sdist
+command smoke tests. The package includes typed
 source, bundled example profiles, and all five command entry points. The source archive also includes the benchmark
 manifest template and changelog.
 
