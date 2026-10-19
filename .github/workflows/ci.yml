@@ -22,7 +22,6 @@ jobs:
       - run: ruff format --check .
       - run: ruff check .
       - run: pytest --cov=napa_vision
-      - run: pytest experiments/occlusion_detector/tests
 
   compatibility:
     runs-on: ubuntu-latest

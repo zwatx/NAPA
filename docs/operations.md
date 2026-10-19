@@ -230,10 +230,9 @@ CI covers Python 3.11–3.14, OpenCV 4.7 on Python 3.11, the current OpenCV rele
 and Windows, real local NetworkTables timestamp integration, the deterministic simulator, and fresh wheel/sdist
 command smoke tests. The package includes typed
 source, bundled example profiles, and all five command entry points. The source archive also includes the benchmark
-manifest template and changelog.
+manifest template.
 
-Unsupported occlusion-tolerant research remains under `experiments/occlusion_detector/` and is excluded from wheels
-and source distributions. Deprecated ArUco calls, legacy launchers, and the obsolete synchronous JSONL writer are not
+Deprecated ArUco calls, legacy launchers, and the obsolete synchronous JSONL writer are not
 part of the supported runtime.
 
 ## Remaining release gates

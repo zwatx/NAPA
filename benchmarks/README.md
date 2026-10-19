@@ -70,7 +70,7 @@ These stage timings include detection and pose processing, and must not be compa
 The standard simulator excludes its heavily blocked tag from expected detections. Use the dedicated matrix's
 occlusion sweep, which retains the hidden tag in the ground truth, to assess obstruction tolerance. Geometric
 covered area and pixels actually changed are different quantities, and neither equals the number of bad payload
-samples. Read the [source evidence](notes/apriltag_occlusion_sources.md) before interpreting an occlusion score.
+samples.
 
 Raw measurements and environment/configuration metadata are in [results](results). Timing-derived FPS is the
 reciprocal of processing latency for reused images; it is not a measured camera frame rate. Repetition counts
