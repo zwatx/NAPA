@@ -21,6 +21,19 @@ ground truth. [The benchmark guide](benchmarks/README.md) describes each scene.
 (`quad_decimate=1`) 99.4%. Napa finds the small tags that standard AprilTag's decimation loses, and of the 60
 scene and resolution combinations, standard AprilTag found more tags than Napa in just one, by a single tag.
 
+**Range.** Napa sees tags from much farther away. A tag looks smaller the farther it is, so the smallest tag a
+detector can find sets its range. A separate sweep rendered 50 tags at each of eleven sizes, from 12 to 96 px across
+the black square, with light noise and up to 15° of tilt, and counted what each detector found:
+
+| Smallest black square found | Standard AprilTag | AprilTag at full resolution | Napa |
+| --- | ---: | ---: | ---: |
+| Every tag | 96 px | 40 px | **24 px** |
+| Most tags | 64 px (36 of 50) | 32 px (39 of 50) | **20 px (46 of 50)** |
+
+That is **4× the range of standard AprilTag** and 1.7× the range of AprilTag at full resolution. For example, a
+6.5-inch FRC tag seen by a 1280×720 camera with a 70° field of view is 24 px across at 6.3 m, where standard
+AprilTag needs it within 1.6 m. To see farther still, lower `min_tag_px` (see [the guide](docs/guide.md#detection)).
+
 **Speed.** Napa was faster on every one of the 3,000 frames:
 
 - **Noise-free frames: 5.4× to 10× faster** (median per frame, by resolution). The slowest single frame was still

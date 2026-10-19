@@ -1,0 +1,322 @@
+{
+  "backends": {
+    "apriltag": {
+      "config": {
+        "bits_corrected": 2,
+        "corner_order": "aligned to truth",
+        "family": "tag36h11",
+        "library": "AprilTag 3 (robotpy-apriltag)",
+        "num_threads": 1,
+        "quad_decimate": 2.0,
+        "version": "2026.2.2"
+      },
+      "lifecycle": {
+        "init_ms": 3.998083
+      }
+    },
+    "apriltag-full-res": {
+      "config": {
+        "bits_corrected": 2,
+        "corner_order": "aligned to truth",
+        "family": "tag36h11",
+        "library": "AprilTag 3 (robotpy-apriltag)",
+        "num_threads": 1,
+        "quad_decimate": 1.0,
+        "version": "2026.2.2"
+      },
+      "lifecycle": {
+        "init_ms": 3.959334
+      }
+    },
+    "napa": {
+      "config": {
+        "corner_order": "native",
+        "max_hamming": 3,
+        "min_tag_px": 32
+      },
+      "lifecycle": {
+        "init_ms": 0.092
+      }
+    }
+  },
+  "frames": 0,
+  "generated_at_utc": "2026-10-19T18:54:47.576253+00:00",
+  "metadata": {
+    "cpu_affinity": null,
+    "cpu_count": 16,
+    "cpu_model": "arm",
+    "dependencies": {
+      "napa-vision": "0.3.0",
+      "numpy": "2.5.4",
+      "opencv-python": null,
+      "opencv-python-headless": "5.0.0.93",
+      "robotpy-apriltag": "2026.2.2"
+    },
+    "machine": "arm64",
+    "platform": "macOS-27.0.1-arm64-arm-64bit-Mach-O",
+    "python": "3.14.6 (main, Jun 10 2026, 10:03:53) [Clang 17.0.0 (clang-1700.6.4.2)]"
+  },
+  "occlusion": [],
+  "range": [
+    {
+      "backend": "apriltag",
+      "cases": 50,
+      "found": 0,
+      "side_px": 12.0
+    },
+    {
+      "backend": "apriltag",
+      "cases": 50,
+      "found": 0,
+      "side_px": 14.0
+    },
+    {
+      "backend": "apriltag",
+      "cases": 50,
+      "found": 0,
+      "side_px": 16.0
+    },
+    {
+      "backend": "apriltag",
+      "cases": 50,
+      "found": 0,
+      "side_px": 20.0
+    },
+    {
+      "backend": "apriltag",
+      "cases": 50,
+      "found": 0,
+      "side_px": 24.0
+    },
+    {
+      "backend": "apriltag",
+      "cases": 50,
+      "found": 0,
+      "side_px": 28.0
+    },
+    {
+      "backend": "apriltag",
+      "cases": 50,
+      "found": 0,
+      "side_px": 32.0
+    },
+    {
+      "backend": "apriltag",
+      "cases": 50,
+      "found": 0,
+      "side_px": 40.0
+    },
+    {
+      "backend": "apriltag",
+      "cases": 50,
+      "found": 0,
+      "side_px": 48.0
+    },
+    {
+      "backend": "apriltag",
+      "cases": 50,
+      "found": 36,
+      "side_px": 64.0
+    },
+    {
+      "backend": "apriltag",
+      "cases": 50,
+      "found": 50,
+      "side_px": 96.0
+    },
+    {
+      "backend": "apriltag-full-res",
+      "cases": 50,
+      "found": 0,
+      "side_px": 12.0
+    },
+    {
+      "backend": "apriltag-full-res",
+      "cases": 50,
+      "found": 0,
+      "side_px": 14.0
+    },
+    {
+      "backend": "apriltag-full-res",
+      "cases": 50,
+      "found": 0,
+      "side_px": 16.0
+    },
+    {
+      "backend": "apriltag-full-res",
+      "cases": 50,
+      "found": 0,
+      "side_px": 20.0
+    },
+    {
+      "backend": "apriltag-full-res",
+      "cases": 50,
+      "found": 0,
+      "side_px": 24.0
+    },
+    {
+      "backend": "apriltag-full-res",
+      "cases": 50,
+      "found": 17,
+      "side_px": 28.0
+    },
+    {
+      "backend": "apriltag-full-res",
+      "cases": 50,
+      "found": 39,
+      "side_px": 32.0
+    },
+    {
+      "backend": "apriltag-full-res",
+      "cases": 50,
+      "found": 50,
+      "side_px": 40.0
+    },
+    {
+      "backend": "apriltag-full-res",
+      "cases": 50,
+      "found": 50,
+      "side_px": 48.0
+    },
+    {
+      "backend": "apriltag-full-res",
+      "cases": 50,
+      "found": 50,
+      "side_px": 64.0
+    },
+    {
+      "backend": "apriltag-full-res",
+      "cases": 50,
+      "found": 50,
+      "side_px": 96.0
+    },
+    {
+      "backend": "napa",
+      "cases": 50,
+      "found": 0,
+      "side_px": 12.0
+    },
+    {
+      "backend": "napa",
+      "cases": 50,
+      "found": 0,
+      "side_px": 14.0
+    },
+    {
+      "backend": "napa",
+      "cases": 50,
+      "found": 14,
+      "side_px": 16.0
+    },
+    {
+      "backend": "napa",
+      "cases": 50,
+      "found": 46,
+      "side_px": 20.0
+    },
+    {
+      "backend": "napa",
+      "cases": 50,
+      "found": 50,
+      "side_px": 24.0
+    },
+    {
+      "backend": "napa",
+      "cases": 50,
+      "found": 50,
+      "side_px": 28.0
+    },
+    {
+      "backend": "napa",
+      "cases": 50,
+      "found": 50,
+      "side_px": 32.0
+    },
+    {
+      "backend": "napa",
+      "cases": 50,
+      "found": 50,
+      "side_px": 40.0
+    },
+    {
+      "backend": "napa",
+      "cases": 50,
+      "found": 50,
+      "side_px": 48.0
+    },
+    {
+      "backend": "napa",
+      "cases": 50,
+      "found": 50,
+      "side_px": 64.0
+    },
+    {
+      "backend": "napa",
+      "cases": 50,
+      "found": 50,
+      "side_px": 96.0
+    }
+  ],
+  "results": [],
+  "run_config": {
+    "frames_per_scenario": 0,
+    "occlusion_cases": 0,
+    "range_cases": 50,
+    "repetitions": 10,
+    "resolutions": [
+      "640x480"
+    ],
+    "seed": 2468,
+    "threads": 1,
+    "warmup": 1
+  },
+  "scenario_descriptions": {
+    "blur": "Gaussian defocus, sigma 0.8-2.0 px",
+    "busy-background": "1-3 tags on text, shapes, or checkerboards",
+    "clutter-only": "Shapes, text, checkerboards, or natural texture with no tag",
+    "dark-background": "1-3 tags on a dark or mid-grey background, 36-140 px",
+    "decoys": "Black-bordered squares with random payloads; none is a valid code",
+    "empty": "Uniform frame at a random brightness, light noise",
+    "frame-edge": "1-3 tags whose quiet zone touches the frame edge",
+    "jpeg": "JPEG compression at quality 25-70",
+    "large-tags": "One tag filling 45-80% of the frame height",
+    "low-contrast": "Black and white only 40-90 grey levels apart",
+    "many-tags": "2-12 tags of mixed sizes on mixed backgrounds",
+    "motion-blur": "Linear motion blur, 3-11 px (odd lengths) in any direction",
+    "noise": "Gaussian sensor noise, sigma 4-14 grey levels",
+    "noise-free": "1-3 tags on a plain background with no sensor noise at all",
+    "one-tag": "One tag, any angle, mild tilt, uniform background",
+    "overexposed": "Bright frame: gain 1.3-1.8 with clipping",
+    "small-tags": "1-4 tags with a 32-53 px black square",
+    "steep-angle": "1-3 tags tilted 40-65 degrees away from the camera",
+    "underexposed": "Dark frame: everything scaled to 15-35% brightness, then noise",
+    "uneven-light": "Lighting gradient (30-60% at the dark end) plus vignetting"
+  },
+  "scenarios": [
+    "empty",
+    "clutter-only",
+    "decoys",
+    "one-tag",
+    "many-tags",
+    "small-tags",
+    "large-tags",
+    "steep-angle",
+    "blur",
+    "motion-blur",
+    "noise",
+    "uneven-light",
+    "low-contrast",
+    "underexposed",
+    "overexposed",
+    "jpeg",
+    "busy-background",
+    "frame-edge",
+    "noise-free",
+    "dark-background"
+  ],
+  "schema_version": 4,
+  "scope": "Detector call only, on pre-rendered uint8 grayscale frames. Every frame is distinct. Corner error is the worst corner's Euclidean distance from exact ground truth; AprilTag corners are shifted -0.5 px to the pixel-centre convention and re-ordered to the truth before scoring.",
+  "skipped_backends": {},
+  "speedups": [],
+  "tags": 0
+}
