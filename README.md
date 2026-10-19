@@ -182,11 +182,15 @@ for tag in detector.detect(image):  # uint8 grayscale, BGR, or BGRA
     print(tag.tag_id, tag.corners)
 ```
 
-For metric poses, use `VisionProcessor(calibration=load_calibration_data("camera.json"), tag_size_m=...)`. Use one
+Each detection also has `tag.center` and `tag.homography`, as upstream AprilTag reports them.
+
+For metric poses, use `VisionProcessor(calibration=load_calibration_data("camera.json"), tag_size_m=...)`. Every pose
+comes with a covariance, so it can go straight into a Kalman filter, including WPILib's pose estimators. Use one
 detector per camera stream. The native call releases the GIL, so separate streams can run on separate threads.
 
 The C library has a plain C API (`src/napa_vision/_native/napa_core.h`), so other languages can call it directly.
-[The guide](docs/guide.md) covers tuning, poses, coordinate conventions, and calibration.
+[The guide](docs/guide.md) covers tuning, poses, Kalman filters, coordinate conventions, and calibration, and
+[the API reference](docs/api.md) lists every class, method, and field.
 
 ## Command-line tools
 
