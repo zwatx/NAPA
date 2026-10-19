@@ -7,12 +7,12 @@ from pathlib import Path
 
 import pytest
 
-from northstar_vision.recording import (
+from napa_vision.recording import (
     AsyncJsonlOutputPublisher,
     JsonlRecorderCloseTimeout,
     JsonlRecorderConfig,
 )
-from northstar_vision.types import FrameResult
+from napa_vision.types import FrameResult
 
 
 def _frame(index: int) -> FrameResult:

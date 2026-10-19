@@ -12,3 +12,20 @@ build/
 dist/
 *.jsonl
 simulation-output/
+
+# Native core built in place by editable installs
+src/napa_vision/_native/*.so
+src/napa_vision/_native/*.pyd
+src/napa_vision/_native/*.dylib
+
+# Private working files: plans, reports, research
+.plans/
+*.html
+experiments/
+benchmarks/notes/
+
+# Markdown is private except the published guides
+*.md
+!README.md
+!benchmarks/README.md
+!docs/operations.md

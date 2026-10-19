@@ -21,8 +21,7 @@ jobs:
       - run: python -m pip install -e '.[headless,test,nt]' ruff
       - run: ruff format --check .
       - run: ruff check .
-      - run: pytest --cov=northstar_vision
-      - run: pytest experiments/occlusion_detector/tests
+      - run: pytest --cov=napa_vision
 
   compatibility:
     runs-on: ubuntu-latest
@@ -48,6 +47,22 @@ jobs:
       - run: python -m pip install '${{ matrix.numpy }}' '${{ matrix.opencv }}' -e '.[test]'
       - run: pytest
 
+  native-core:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - run: python -m pip install -e ".[headless,test]"
+      - run: python -c "import napa_vision; assert napa_vision.native_available(), 'native core did not build'"
+      - run: pytest tests/test_napa_detector.py
+
   package-smoke:
     runs-on: ubuntu-latest
     steps:
@@ -65,19 +80,22 @@ jobs:
           archive=zipfile.ZipFile(wheel);
           metadata=email.message_from_bytes(archive.read(next(name for name in archive.namelist() if name.endswith("METADATA"))));
           assert {"gui", "headless"} <= set(metadata.get_all("Provides-Extra", []))'
-      - run: python -m venv /tmp/northstar-wheel
-      - run: /tmp/northstar-wheel/bin/python -m pip install opencv-python-headless dist/*.whl
-      - run: cd /tmp && /tmp/northstar-wheel/bin/northstar-vision --list-profiles
-      - run: cd /tmp && /tmp/northstar-wheel/bin/northstar-vision --profile laptop --check-config
-      - run: cd /tmp && /tmp/northstar-wheel/bin/northstar-benchmark --help
-      - run: cd /tmp && /tmp/northstar-wheel/bin/northstar-calibrate --help
-      - run: cd /tmp && /tmp/northstar-wheel/bin/northstar-layout --help
-      - run: cd /tmp && /tmp/northstar-wheel/bin/northstar-simulate --help
-      - run: cd /tmp && /tmp/northstar-wheel/bin/northstar-simulate --repetitions 1 --warmup-passes 0 --output-dir /tmp/northstar-sim
-      - run: python -m venv /tmp/northstar-sdist
-      - run: /tmp/northstar-sdist/bin/python -m pip install --no-deps dist/*.tar.gz
-      - run: /tmp/northstar-sdist/bin/python -c 'import importlib.metadata; assert importlib.metadata.version("northstar-vision")'
+      - run: python -m venv /tmp/napa-wheel
+      - run: /tmp/napa-wheel/bin/python -m pip install opencv-python-headless dist/*.whl
+      - run: cd /tmp && /tmp/napa-wheel/bin/python -c 'import napa_vision; assert napa_vision.native_available()'
+      - run: cd /tmp && /tmp/napa-wheel/bin/napa-vision --list-profiles
+      - run: cd /tmp && /tmp/napa-wheel/bin/napa-vision --profile laptop --check-config
+      - run: cd /tmp && /tmp/napa-wheel/bin/napa-benchmark --help
+      - run: cd /tmp && /tmp/napa-wheel/bin/napa-calibrate --help
+      - run: cd /tmp && /tmp/napa-wheel/bin/napa-layout --help
+      - run: cd /tmp && /tmp/napa-wheel/bin/napa-simulate --help
+      - run: cd /tmp && /tmp/napa-wheel/bin/napa-simulate --repetitions 1 --warmup-passes 0 --output-dir /tmp/napa-sim
+      - run: python -m venv /tmp/napa-sdist
+      - run: /tmp/napa-sdist/bin/python -m pip install --no-deps dist/*.tar.gz
+      - run: /tmp/napa-sdist/bin/python -c 'import importlib.metadata; assert importlib.metadata.version("napa-vision")'
+      - run: /tmp/napa-sdist/bin/python -m pip install numpy
+      - run: cd /tmp && /tmp/napa-sdist/bin/python -c 'import napa_vision; assert napa_vision.native_available()'
       - uses: actions/upload-artifact@v4
         with:
-          name: northstar-vision-dist
+          name: napa-vision-dist
           path: dist/*

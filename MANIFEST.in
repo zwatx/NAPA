@@ -1,2 +1,3 @@
-include CHANGELOG.md
 include benchmarks/corpus.example.json
+include docs/operations.md
+recursive-include src/napa_vision/_native *.c *.h

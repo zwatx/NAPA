@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import numpy as np
 
-from northstar_vision import load_profile
-from northstar_vision.capture import FrameSource
-from northstar_vision.orientation import RobotYawSource, YawBuffer, YawEstimate
-from northstar_vision.output import OutputPublisher
-from northstar_vision.service import NorthstarVisionService
-from northstar_vision.types import FiducialImageObservation, FrameResult
+from napa_vision import load_profile
+from napa_vision.capture import FrameSource
+from napa_vision.orientation import RobotYawSource, YawBuffer, YawEstimate
+from napa_vision.output import OutputPublisher
+from napa_vision.service import NapaVisionService
+from napa_vision.types import FiducialImageObservation, FrameResult
 
 
 class FrameSourceStub:
@@ -78,7 +78,7 @@ def test_service_uses_yaw_samples_that_arrive_during_detection() -> None:
     profile = load_profile("laptop")
     profile.camera.width = profile.camera.height = 1
     output = OutputStub()
-    service = NorthstarVisionService(
+    service = NapaVisionService(
         profile,
         output,
         frame_source=FrameSourceStub(),
@@ -97,7 +97,7 @@ def test_service_aligns_yaw_and_merges_source_health() -> None:
     source = FrameSourceStub()
     output = OutputStub()
     yaw = YawSourceStub()
-    service = NorthstarVisionService(profile, output, frame_source=source, yaw_source=yaw)
+    service = NapaVisionService(profile, output, frame_source=source, yaw_source=yaw)
     service.run(max_frames=1)
 
     assert yaw.requested_at == [10.0]
@@ -136,7 +136,7 @@ def test_service_reports_state_transition_before_detailed_health_refresh() -> No
     profile.camera.width = profile.camera.height = 1
     source = TransitionSource()
     output = OutputStub()
-    service = NorthstarVisionService(profile, output, frame_source=source)
+    service = NapaVisionService(profile, output, frame_source=source)
 
     service.run(max_frames=2)
 
@@ -166,7 +166,7 @@ def test_legacy_frame_source_health_transition_remains_immediate() -> None:
     profile.camera.width = profile.camera.height = 1
     source = LegacySource()
     output = OutputStub()
-    service = NorthstarVisionService(profile, output, frame_source=source)
+    service = NapaVisionService(profile, output, frame_source=source)
 
     assert service.process_next()
     service._next_health_refresh_s = float("inf")

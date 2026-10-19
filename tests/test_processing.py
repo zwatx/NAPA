@@ -7,7 +7,7 @@ import cv2
 import numpy as np
 import pytest
 
-from northstar_vision import (
+from napa_vision import (
     ArtifactProvenance,
     CalibrationError,
     CameraCalibration,
@@ -15,7 +15,7 @@ from northstar_vision import (
     ProvenanceKind,
     VisionProcessor,
 )
-from northstar_vision.geometry import invert_transform, opencv_pose_to_wpilib_transform, tag_object_points
+from napa_vision.geometry import invert_transform, opencv_pose_to_wpilib_transform, tag_object_points
 
 
 def _calibration() -> CameraCalibration:
@@ -53,9 +53,9 @@ def test_processor_import_does_not_load_capture_profiles_or_transports() -> None
         [
             sys.executable,
             "-c",
-            "from northstar_vision import VisionProcessor; import sys; "
-            "assert not {'northstar_vision.config', 'northstar_vision.capture', "
-            "'northstar_vision.output', 'northstar_vision.recording', 'ntcore'} & sys.modules.keys()",
+            "from napa_vision import VisionProcessor; import sys; "
+            "assert not {'napa_vision.config', 'napa_vision.capture', "
+            "'napa_vision.output', 'napa_vision.recording', 'ntcore'} & sys.modules.keys()",
         ],
         check=True,
     )

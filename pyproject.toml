@@ -3,9 +3,9 @@ requires = ["setuptools>=69", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "northstar-vision"
+name = "napa-vision"
 dynamic = ["version"]
-description = "AprilTag detection and Northstar-compatible pose publishing"
+description = "Fast, camera-agnostic AprilTag detection and pose processing"
 readme = "README.md"
 requires-python = ">=3.11"
 keywords = ["apriltag", "computer-vision", "frc", "networktables", "robotics"]
@@ -32,6 +32,7 @@ Issues = "https://github.com/Zw96042/apriltag-detector/issues"
 gui = ["opencv-python>=4.7"]
 headless = ["opencv-python-headless>=4.7"]
 nt = ["pyntcore>=2024"]
+benchmark = ["robotpy-apriltag==2026.2.2"]
 test = [
     "pytest>=8,<10",
     "pytest-cov>=5",
@@ -45,21 +46,21 @@ dev = [
 ]
 
 [project.scripts]
-northstar-vision = "northstar_vision.cli:main"
-northstar-benchmark = "northstar_vision.benchmark:main"
-northstar-calibrate = "northstar_vision.workflows:calibration_main"
-northstar-layout = "northstar_vision.workflows:layout_main"
-northstar-simulate = "northstar_vision.simulation_cli:main"
+napa-vision = "napa_vision.cli:main"
+napa-benchmark = "napa_vision.benchmark:main"
+napa-calibrate = "napa_vision.workflows:calibration_main"
+napa-layout = "napa_vision.workflows:layout_main"
+napa-simulate = "napa_vision.simulation_cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["northstar_vision*"]
+include = ["napa_vision*"]
 
 [tool.setuptools.package-data]
-northstar_vision = ["py.typed", "profiles/*.json"]
+napa_vision = ["py.typed", "profiles/*.json"]
 
 [tool.setuptools.dynamic]
-version = { attr = "northstar_vision._version.__version__" }
+version = { attr = "napa_vision._version.__version__" }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -75,7 +76,7 @@ select = ["B", "E", "F", "I", "UP"]
 
 [tool.coverage.run]
 branch = true
-source = ["northstar_vision"]
+source = ["napa_vision"]
 
 [tool.coverage.report]
 show_missing = true

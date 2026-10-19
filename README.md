@@ -1,377 +1,160 @@
-# Northstar Vision
+# Napa
 
-`northstar-vision` is an alpha AprilTag 36h11 service for FRC-style coprocessors. It keeps camera latency bounded with
-a latest-frame capture worker, detects tags with OpenCV, rejects weak field poses, publishes the upstream Northstar
-NetworkTables packet, and can record complete frame results without putting disk I/O on the processing path.
+**Not Another Pixel Algorithm**: Napa skips most of the pixels in each frame.
 
-Version 0.3.0 is an unreleased hardening release. The repository does not yet declare a redistribution license, so do
-not publish its wheel or source archive until the owner chooses one.
+Napa is a fast AprilTag (`tag36h11`) detector for any camera. Give it a frame and get back tag IDs and sub-pixel
+corners, plus poses if you provide calibration. It opens no cameras, starts no threads, and publishes nothing, so a
+webcam, a Raspberry Pi, a headset, recorded video, or a camera SDK can all feed it the same way.
 
-## Install
+The detector is a small, dependency-free C library with a Python binding. On the benchmark below it is **3.5× to 21×
+faster than standard AprilTag on every scene and resolution tested**. It finds more tags and returns corners about
+twice as accurate.
 
-Python 3.11 or newer and OpenCV 4.7 or newer are required.
+## Compared with standard AprilTag
 
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install '.[gui]'
-```
+Standard AprilTag means the upstream AprilTag 3 library at its default settings (`quad_decimate=2`). Both detectors
+ran on the same generated grayscale frames, interleaved, single-threaded, on one pinned core of an Intel
+i7-12700H. Times are median detector-call latency.
 
-For a coprocessor or CI host without a display server, install the mutually exclusive headless backend instead:
+| Scene, 1280×720 | AprilTag | Napa | Speedup | Tags found (AprilTag → Napa) |
+| --- | ---: | ---: | ---: | ---: |
+| Empty frame | 1.54 ms | 0.24 ms | 6.5× | — |
+| Textured, no tag | 4.81 ms | 0.39 ms | 12.3× | — |
+| One tag | 1.72 ms | 0.31 ms | 5.5× | 100% → 100% |
+| Four tags | 2.19 ms | 0.46 ms | 4.8× | 100% → 100% |
+| Small tags (32–53 px) | 1.56 ms | 0.29 ms | 5.3× | 0% → 100% |
+| Blurred | 1.75 ms | 0.31 ms | 5.7× | 100% → 100% |
+| Perspective | 1.75 ms | 0.32 ms | 5.4× | 100% → 100% |
+| Sensor noise | 5.29 ms | 0.34 ms | 15.4× | 100% → 100% |
+| Uneven lighting | 1.72 ms | 0.31 ms | 5.5× | 100% → 100% |
+| Motion blur | 1.71 ms | 0.31 ms | 5.6× | 100% → 100% |
+| Text clutter | 3.04 ms | 0.53 ms | 5.8× | 100% → 100% |
 
-```bash
-python -m pip install '.[headless]'
-```
+Across all 33 scene/resolution combinations (640×480 to 1920×1080), Napa's median and p95 latencies were never
+less than 3.5× faster. The smallest margin was four tags at 640×480; the largest were noise and uneven lighting
+(20–21×). Napa also beat AprilTag at full resolution (`quad_decimate=1`) by at least 9× on every combination.
+Neither detector reported a false ID.
 
-Choose exactly one OpenCV extra. The headless build supports detection, replay, calibration, and simulation, but not
-`northstar-vision --show`; use the `gui` extra anywhere the debug window is required.
+**Corners**, scored against exact ground truth on 120 sub-pixel renders (32–240 px tags, any rotation, mild
+perspective, blur, and noise). AprilTag's corners were shifted by its half-pixel origin before scoring.
 
-Install RobotPy NetworkTables support on a coprocessor with:
+| Worst corner per tag | Napa | AprilTag (decimate 1) | AprilTag (default) |
+| --- | ---: | ---: | ---: |
+| Tags found | 120 / 120 | 112 / 120 | 76 / 120 |
+| Median error | 0.037 px | 0.065 px | 0.060 px |
+| 95th percentile | 0.078 px | 0.139 px | 0.144 px |
+| Maximum | 0.102 px | 0.227 px | 0.181 px |
 
-```bash
-python -m pip install '.[gui,nt]'
-```
+See [the benchmark guide](benchmarks/README.md) for every scene, resolution, percentile, and raw sample, and how to
+reproduce them. These are synthetic frames on a desktop CPU; measure on your own camera and hardware before relying
+on a specific number.
 
-The package provides five commands:
+## Why it's faster
 
-```text
-northstar-vision      run the camera or replay service
-northstar-calibrate   measure intrinsics from checkerboard images
-northstar-layout      validate a WPILib AprilTag field layout
-northstar-benchmark   measure an annotated image corpus and enforce gates
-northstar-simulate    generate and score deterministic camera-free scenes
-```
+Standard AprilTag treats the frame as a big image-processing job. It thresholds every pixel, segments the whole
+image into regions, and fits quads to every region boundary before it ever asks whether something is a tag. Napa
+asks that question as early and as cheaply as possible.
+
+### 1. The rake: sample sparsely, with a guarantee
+
+A tag's black border is one cell wide (a tag is 8 cells across). If you sample every few pixels, you're guaranteed to
+hit the border of every tag above a minimum size, so you can't miss a tag by skipping the pixels in between.
+
+Napa drags a "rake" across the frame: one sample every ¾ of the smallest cell, in both directions. Blur turns a
+cell's edges grey but leaves its core dark, and ¾-cell spacing always lands a sample in that core. For the default
+32 px minimum tag, that's one pixel in nine. Coarser copies of the rake (2×, 4×, 8× …) handle large tags, and cost a
+third as much again in total.
+
+### 2. String search on a matrix: skip what can't match
+
+Fast string search (Boyer–Moore) doesn't compare every character. A single cheap check can prove a match can't
+start in the next several positions, so the search jumps past them.
+
+Napa applies the same idea to the image matrix. It splits the raked samples into small tiles and records each tile's
+darkest and brightest value. A tile with no contrast can't contain a tag edge, so it's skipped outright, and no work
+is done on its pixels. The contrast bar rises automatically with sensor noise, measured from the frame itself. In the
+benchmark, sensor noise added 7–13% to Napa's time and 2.5–3.4× to standard AprilTag's.
+
+The same idea decodes the tag. Its 36 payload bits are matched against 587 codes in 4 rotations, allowing up to 3
+wrong bits. Any code within 3 bits must match at least one of four 9-bit blocks of the payload *exactly* (the
+pigeonhole principle), so Napa looks up those blocks in a table and compares only the handful of codes that share
+one. It doesn't scan all 2,348.
+
+### 3. Old-school vector math
+
+Every pass over the samples is a straight loop over contiguous rows: fixed-width tiles, min/max, and compares. The
+compiler turns those loops into SIMD instructions (SSE/AVX on x86, NEON on ARM). This is the classic Apple
+AltiVec/vDSP approach: express the work as whole-row operations so each instruction handles many pixels. Blob
+labelling avoids unpredictable branches, so noisy frames don't stall the CPU.
+
+### What happens to a candidate
+
+Each dark blob of plausible size gets a rough quadrilateral from its extreme points. Napa then:
+
+1. Fits each side to the strongest edge at full resolution, searching outward from the blob.
+2. Decodes immediately with a loose tolerance, which discards text and texture before any refinement.
+3. Refines each side to the centre of its edge gradient, which is exact for real (pixel-integrated) edges at any blur.
+4. Intersects the four lines for corners and decodes the payload.
+
+The flow is: rake, then skip flat tiles, then find blobs, then fit and early-reject, then refine, then decode.
+
+## Obstructions
+
+Napa corrects up to 3 wrong payload bits (standard AprilTag defaults to 2), so a hand, cable, or glare spot over
+part of the payload often still decodes. In the benchmark's obstruction sweep, Napa recovered 410 of 864 obstructed
+tags versus 336 for standard AprilTag.
+
+No AprilTag detector can find a tag whose black border or corners are hidden, because that happens before any bits
+are read. Obstruction tolerance is best-effort; there's no guaranteed percentage.
+
+## Limits
+
+- Tags smaller than `min_tag_px` (default 32 px across the black square) may be missed. Lower it to find smaller tags
+  at some cost in speed.
+- Tags need their white quiet zone, as printed tags have.
+- On heavily blurred (σ ≈ 1.2 px), 32 px tags, corner error grows to about 0.2 px median, since the border is barely
+  wider than the blur.
+- The fast path needs a C compiler at install time. Without one, Napa installs anyway and falls back to OpenCV's
+  ArUco detector (`napa_vision.native_available()` reports which is active).
 
 ## Quick start
 
-Validate a profile without opening a camera:
+Requires Python 3.11 or newer and a C compiler.
 
 ```bash
-northstar-vision --list-profiles
-northstar-vision --profile laptop --check-config
+python -m pip install -e ".[headless]"
 ```
-
-Run a laptop camera with a debug window, or replay a video/image directory once:
-
-```bash
-northstar-vision --profile laptop --show
-northstar-vision --profile laptop --replay path/to/frames --output none
-```
-
-The `raspi` profile defaults to NetworkTables output:
-
-```bash
-northstar-vision --profile raspi
-```
-
-The bundled profiles are development examples. Their intrinsics, camera mount, and field layout are synthetic and
-must not be used for robot localization.
-
-## Runtime flow
-
-```mermaid
-flowchart LR
-    camera[Camera backend] --> capture[Capture worker]
-    capture -->|replace size-one slot| process[Detect and solve]
-    yaw[Timestamped robot yaw] --> process
-    process --> nt[NetworkTables]
-    process --> queue[Bounded recorder queue]
-    queue --> disk[Rotate, sync, retain]
-    capture --> health[Health telemetry]
-    process --> health
-    queue --> health
-```
-
-Only the capture worker owns `VideoCapture`. If processing falls behind, a new frame replaces the stale slot instead
-of growing a backlog. Failed opens and reads reconnect with bounded exponential backoff. Health includes captured,
-delivered, overwritten, disconnect, reconnect, requested-property, negotiated-property, backend, FourCC, and shutdown
-counters. A negotiated resolution that does not match the calibration is fatal.
-
-Some OpenCV camera backends can block inside their native `read()` implementation. Shutdown remains bounded from the
-caller's perspective and reports a timed-out worker, but Python cannot forcibly interrupt that native call; validate
-the chosen V4L2/backend behavior on the target camera.
-
-## Embedding in other systems
-
-`VisionProcessor` processes images supplied by your application, without opening cameras, reading a platform profile,
-publishing results, or starting threads. Use one instance per camera stream; the number of cameras is unrestricted.
-The existing camera service uses this same processor and owns capture, output, and device health separately.
 
 ```python
-from northstar_vision import VisionProcessor
+from napa_vision import VisionProcessor
 
-processor = VisionProcessor()
-# image is a caller-supplied NumPy uint8 grayscale, BGR, or BGRA frame.
-result = processor.process(image, timestamp=frame_timestamp_s)
+processor = VisionProcessor()  # uses Napa's native detector
+result = processor.process(image, timestamp=frame_timestamp_s)  # uint8 grayscale, BGR, or BGRA
 for tag in result.image_observations:
     print(tag.tag_id, tag.corners)
 ```
 
-Detection alone needs neither calibration nor a field layout. To enable metric poses, supply an existing calibration
-artifact and the physical tag size:
+For metric poses, pass `calibration=load_calibration_data("camera.json")` and `tag_size_m=` to `VisionProcessor`.
+To tune detection, pass `detector=NapaDetector(min_tag_px=24)`. Use one processor per camera stream; the native
+call releases the GIL, so separate streams can run on separate threads.
 
-```python
-from northstar_vision import load_calibration_data
+The C library has a plain C API (`src/napa_vision/_native/napa_core.h`), so other languages can call it directly.
 
-processor = VisionProcessor(
-    calibration=load_calibration_data("camera-calibration.json"),
-    tag_size_m=0.1651,
-)
-```
+## Command-line tools
 
-Calibrated frames must match the calibration resolution. Each result includes tag-relative IPPE candidates and angles;
-optional `tag_layout` enables the existing field pose. Robot mounting and yaw augmentation remain in the FRC service.
-Coordinate conventions remain those documented below: tag-relative IPPE vectors use OpenCV axes, while field and robot
-poses use WPILib axes. Applications must explicitly convert these to their own world coordinates.
+| Command | Purpose |
+| --- | --- |
+| `napa-vision` | Run on a live camera or replayed frames |
+| `napa-calibrate` | Measure camera intrinsics from checkerboard images |
+| `napa-benchmark` | Score detection on an annotated image set; `--compare-detectors napa` measures it against OpenCV |
+| `napa-simulate` | Render synthetic scenes and compare detector options |
 
-Pass a `detector=` object implementing `FiducialDetector.detect(image) -> list[FiducialImageObservation]` to replace
-the detection algorithm. Backends must preserve original tag IDs and return independent, finite `4x2` corner arrays
-in the input image's pixel coordinates and the existing OpenCV AprilTag corner order, including decoded rotation.
-They must not mutate or retain the input image. Optional prefiltering belongs in that backend. The archived custom
-detector needs a corner-order adapter and validation before it can be used for calibrated poses through this interface.
+See [operations](docs/operations.md) for calibration, coordinate frames, and deployment.
 
-Calls are synchronous and must not overlap on one processor. The application owns image buffers, camera permissions,
-RGB/YUV conversion, orientation, scheduling, and result delivery. Strided NumPy images are accepted. Frame timestamps
-and optional `capture_monotonic_s` are supplied in seconds by the caller; the processor never subtracts device clocks.
-Empty detections return a normal result, while invalid inputs and backend failures raise to the caller.
-
-This is device-independent **Python** integration. Running the same implementation locally from C#, C++, or an Android
-application requires a shared native library and language bindings; those are not implemented here yet. The
-[portability plan](.plans/2026-10-16_device_agnostic_vision.html) defines that next step without tying it to a particular
-headset or camera SDK. Recursive coarse-to-fine scanning also remains a benchmark candidate, rather than a default.
-
-## Production calibration and field layout
-
-Capture checkerboard photographs at the exact deployed resolution, focus, and lens settings. Use varied positions and
-angles, then create a versioned measured artifact:
+## Development
 
 ```bash
-northstar-calibrate calibration-images/ \
-  --output deploy/camera-calibration.json \
-  --columns 9 --rows 6 --square-size-m 0.024 \
-  --minimum-views 12
+python -m pip install -e ".[headless,dev,nt,benchmark]"
+ruff format --check . && ruff check .
+pytest --cov=napa_vision
 ```
-
-Validate the official WPILib layout and record its authoritative source:
-
-```bash
-northstar-layout deploy/field-layout.json \
-  --official-source "WPILib official season layout" \
-  --require-production \
-  --report deploy/field-layout-report.json
-```
-
-Reference both artifacts from an external profile using paths relative to that profile:
-
-```json
-{
-  "schema_version": 1,
-  "name": "competition-camera",
-  "device_id": "northstar_0",
-  "platform": "raspberry_pi",
-  "production": true,
-  "camera": {
-    "id": 0,
-    "width": 1280,
-    "height": 720,
-    "fps": 30,
-    "buffer_size": 1,
-    "calibration": {"file": "camera-calibration.json"},
-    "robot_to_camera": {
-      "translation_m": [0.25, 0.0, 0.35],
-      "rotation_rpy_rad": [0.0, 0.0, 0.0]
-    }
-  },
-  "tag_size_m": 0.1651,
-  "tag_layout": {
-    "wpilib_json": "field-layout.json",
-    "provenance": {"kind": "official", "source": "WPILib official season layout"}
-  },
-  "detection": {},
-  "output": {"mode": "nt", "nt_server": "10.0.0.2"}
-}
-```
-
-Strict parsing rejects unknown fields, duplicate tag IDs, invalid matrices, mismatched calibration resolution, and
-invalid thresholds. A `production: true` profile additionally requires measured calibration provenance with view/error
-metrics and official layout provenance with field dimensions.
-
-All field and mounting transforms use WPILib axes: +X forward, +Y left, +Z up, and positive yaw counter-clockwise from
-above. `camera.robot_to_camera` is the camera pose in the robot frame. The tag face lies in local Y/Z and local +X is
-its face normal.
-
-The corner convention matches official AprilRobotics/FRC artwork and upstream Northstar. OpenCV's
-`generateImageMarker()` raster is rotated 180 degrees relative to that artwork. When warping into the ordered points
-returned by `tag_field_corners()`, map the unrotated raster TL/TR/BR/BL directly to corners 0/1/2/3; that destination
-order already accounts for the artwork convention. Do not add a second 180-degree rotation without also remapping
-the destination corners.
-
-## Pose quality
-
-Single-tag localization preserves both IPPE ambiguity candidates and suppresses the field pose if either candidate
-fails reprojection or physical-bound checks. Multi-tag solving uses RANSAC when at least three tags are available,
-falls back to a physically valid general PnP solve, removes high-residual tag outliers iteratively, and validates field
-and camera-height bounds.
-
-JSONL output records attempted, accepted, and rejected tag IDs, per-tag and overall RMS reprojection error, RANSAC use,
-iterations, and the final rejection reason. Raw image/tag-angle observations remain available even when a field pose is
-rejected. The existing `confidence` value is only a display heuristic; pose acceptance does not use it.
-
-## NetworkTables and robot yaw
-
-The service publishes to `/<device_id>/output` using the upstream topic names. `observations` carries the frame's
-capture timestamp translated into NetworkTables synchronized monotonic time, followed by additional `fps_apriltags`,
-`latency_ms`, and `health` topics.
-
-Delivery semantics are explicit:
-
-```bash
-# Preserve every update for upstream compatibility.
-northstar-vision --profile raspi --nt-delivery upstream
-
-# Prefer the newest value when intermediate frames are disposable.
-northstar-vision --profile raspi --nt-delivery latest
-```
-
-Shutdown flushes pending topics and allows a bounded 100 ms drain by default so short runs do not discard their final
-observation. Configure that budget with `output.nt_close_drain_s` or `--nt-close-drain`.
-
-Trig localization is suppressed by default because a timeless heading is unsafe. Subscribe to an absolute
-NetworkTables double topic in radians to buffer timestamped samples, interpolate across angle wrap, and align yaw to
-frame capture time:
-
-```bash
-northstar-vision --profile raspi \
-  --robot-yaw-topic /RobotState/yaw \
-  --yaw-max-age 0.10
-```
-
-`--robot-yaw` remains available only for controlled bench tests. Stale or unavailable samples produce no trig pose and
-are visible in health telemetry. The robot-side yaw publisher must enable duplicate delivery (`keepDuplicates=True`,
-normally with `sendAll=True`) or publish a changing heartbeat contract. A default publisher can suppress repeated
-stationary headings; those samples then age out deliberately even while NetworkTables remains connected.
-
-## Bounded JSONL recording
-
-JSONL contains corners, both single-tag candidates, field-pose candidates, tag angles, trig poses, pose diagnostics,
-quality data, timings, and output health. The async writer has a fixed queue, configurable drop policy, size/time
-rotation, archive retention, periodic flush/fsync policy, bounded close, and write/drop/error telemetry.
-
-```bash
-northstar-vision --profile laptop --output jsonl \
-  --output-path recordings/run.jsonl \
-  --jsonl-queue-size 256 \
-  --jsonl-drop-policy drop_oldest \
-  --jsonl-max-size-mib 64 \
-  --jsonl-rotate-seconds 3600 \
-  --jsonl-retention-files 8 \
-  --jsonl-fsync-interval 5
-```
-
-Use `0` to disable size rotation, time rotation, or periodic fsync through their corresponding CLI options. The active
-file is not counted in `retention-files`.
-
-## Hardware-free simulation
-
-Generate deterministic AprilTag scenes and run them through the same detector, single-tag solver, multi-tag solver,
-health collection, and service orchestration used by a real camera:
-
-```bash
-northstar-simulate --profile laptop --suite standard \
-  --repetitions 5 --compare-optimizations \
-  --output-dir reports/synthetic --pretty
-```
-
-The standard suite covers clean and oblique views, blur/noise, dark motion-compressed input, partial occlusion, a
-layout outlier, single-tag ambiguity, and a blank frame. The `sweep` suite moves the synthetic camera through 31
-poses. The command gates ID recall/precision, ordered-corner error, pose solve rate, translation/rotation error, and
-outlier rejection. It also reports render, detection, solve, and total processing percentiles.
-
-Generated artifacts include a strict replay `corpus.json`, `ground-truth.json`, a compatible
-`simulation-profile.json`, PNG frames, and `simulation-report.json`. They can exercise either supported workflow:
-
-```bash
-northstar-vision --profile reports/synthetic/simulation-profile.json \
-  --replay reports/synthetic/frames --output none
-northstar-benchmark reports/synthetic/corpus.json --repetitions 5
-```
-
-With `--compare-optimizations`, the report measures ArUco3, a dictionary restricted to the synthetic field layout,
-subpixel corner refinement, and skip-scan against identical seeded frames. A candidate is only marked for hardware
-follow-up when its gates, accuracy, and pose solve counts match, plus it improves median processing by at least 5% or
-p95 by at least 20% without regressing median by more than 10%. This comparison does not change the production detector
-configuration, and synthetic results do not qualify a candidate for deployment without physical-camera validation.
-
-```mermaid
-flowchart LR
-    scenarios[Deterministic scenarios] --> renderer[Synthetic camera renderer]
-    renderer --> source[In-memory camera source]
-    source --> service[Normal Northstar service]
-    service --> scorer[Ground-truth scorer]
-    renderer --> corpus[Replay corpus and truth]
-    scorer --> report[Gate and optimization report]
-```
-
-Simulation is deliberately labeled synthetic evidence. It can validate software behavior and regression safety now,
-but it cannot validate a physical lens/calibration, exposure or rolling shutter, USB reconnects, Raspberry Pi thermal
-performance, or radio/NetworkTables timing.
-
-## Replay benchmark
-
-Copy `benchmarks/corpus.example.json`, place annotated images beside it, and freeze each image with an optional SHA-256.
-Manifest paths must stay beneath the manifest directory. The command streams frames and reports recall, precision,
-false positives/negatives, bounded mismatch samples, peak decoded image size, and p50/p95/p99 load, detection, scoring,
-and total time.
-
-```bash
-northstar-benchmark benchmarks/pi-corpus.json \
-  --repetitions 5 --warmup-passes 1 \
-  --min-recall 0.99 --min-precision 1.0 \
-  --max-p95-total-ms 30 \
-  --output reports/pi-benchmark.json --pretty
-```
-
-An input/configuration error exits `2`; a failed performance/accuracy gate exits `1`. Keep skip-scan disabled unless a
-representative Raspberry Pi corpus shows recall parity and a useful percentile improvement over full-frame detection.
-
-Use the opt-in replay comparison to evaluate ArUco3 or a field-layout-only dictionary on the same decoded images:
-
-```bash
-northstar-benchmark benchmarks/corpus.json \
-  --compare-detectors aruco3 layout-restricted \
-  --layout-tag-ids 1,2,3,4 --max-decoded-cache-mib 256 \
-  --repetitions 5 --warmup-passes 1 --output reports/detector-comparison.json
-```
-
-The restricted candidate remaps compact dictionary rows back to the supplied original tag IDs and intentionally ignores
-all other tags. Comparison mode reports detection-only speedups, its fixed execution order, and retained decoded-cache
-bytes. The cache has a 256 MiB default ceiling; split a larger corpus into representative shards or raise the limit
-explicitly. Both candidates remain hardware-validation inputs and never alter the production detector default.
-
-## Development and packaging
-
-```bash
-python -m pip install -e '.[headless,dev,nt]'
-ruff format --check .
-ruff check .
-pytest --cov=northstar_vision
-python -m build
-python -m twine check dist/*
-```
-
-CI covers Python 3.11–3.14, OpenCV 4.7 on Python 3.11, the current OpenCV release, real local NetworkTables timestamp
-integration, the deterministic simulator, and fresh wheel/sdist command smoke tests. The package includes typed
-source, bundled example profiles, and all five command entry points. The source archive also includes the benchmark
-manifest template and changelog.
-
-Unsupported occlusion-tolerant research remains under `experiments/occlusion_detector/` and is excluded from wheels
-and source distributions. Deprecated ArUco calls, legacy launchers, and the obsolete synchronous JSONL writer are not
-part of the supported runtime.
-
-## Remaining release gates
-
-- Choose a redistribution license and provide author, maintainer, repository, and release-policy metadata.
-- Capture measured camera calibration and select the official season layout for the actual robot.
-- Build and run a representative Raspberry Pi corpus; choose team-owned recall, pose-error, and latency budgets.
-- Validate camera reconnect, pose accuracy, robot-side timestamp behavior, and delivery policy on real hardware/radio.
-- Complete an eight-hour Raspberry Pi soak with thermal, RSS, queue, disk-growth, and frame-age evidence.

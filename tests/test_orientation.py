@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from northstar_vision.orientation import NetworkTablesRobotYawSource, StaticRobotYawSource, YawBuffer
+from napa_vision.orientation import NetworkTablesRobotYawSource, StaticRobotYawSource, YawBuffer
 
 
 def test_yaw_buffer_interpolates_across_angle_wrap() -> None:

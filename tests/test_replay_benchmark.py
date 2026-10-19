@@ -8,8 +8,8 @@ import cv2
 import numpy as np
 import pytest
 
-import northstar_vision.benchmark as benchmark_module
-from northstar_vision.benchmark import (
+import napa_vision.benchmark as benchmark_module
+from napa_vision.benchmark import (
     BenchmarkOptions,
     BenchmarkThresholds,
     CorpusManifestError,

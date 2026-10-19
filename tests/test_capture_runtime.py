@@ -10,8 +10,8 @@ import cv2
 import numpy as np
 import pytest
 
-from northstar_vision import load_profile
-from northstar_vision.capture import OpenCVCameraSource
+from napa_vision import load_profile
+from napa_vision.capture import OpenCVCameraSource
 
 CaptureResult = tuple[bool, np.ndarray | None]
 

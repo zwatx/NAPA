@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from northstar_vision import (
+from napa_vision import (
     ArtifactProvenance,
     CameraCalibration,
     ProfileError,
@@ -15,12 +15,12 @@ from northstar_vision import (
     load_profile,
     save_calibration_data,
 )
-from northstar_vision.output import make_output_publisher
-from northstar_vision.recording import AsyncJsonlOutputPublisher
+from napa_vision.output import make_output_publisher
+from napa_vision.recording import AsyncJsonlOutputPublisher
 
 
 def _profile_data() -> dict[str, object]:
-    source = resources.files("northstar_vision.profiles").joinpath("laptop.json")
+    source = resources.files("napa_vision.profiles").joinpath("laptop.json")
     return json.loads(source.read_text(encoding="utf-8"))
 
 
