@@ -104,6 +104,7 @@ struct napa_detector {
     int32_t *parent; /* union-find over runs; a blob's root is its first run in raster order */
     blob_box *boxes;
     int32_t *slot;   /* root run -> candidate index, or -1 */
+    int32_t *roots;  /* the root runs, in raster order */
     component *cands;
     size_t cand_capacity;
     uint64_t *row_bits;
@@ -237,6 +238,7 @@ void napa_destroy(napa_detector *det) {
     free(det->parent);
     free(det->boxes);
     free(det->slot);
+    free(det->roots);
     free(det->cands);
     free(det->row_bits);
     free(det->floors);
@@ -258,6 +260,8 @@ static int ensure_buffers(napa_detector *det, size_t pixels, size_t tiles, size_
         det->boxes = (blob_box *)p;
         if ((p = realloc(det->slot, max_runs * sizeof(int32_t))) == NULL) return -1;
         det->slot = (int32_t *)p;
+        if ((p = realloc(det->roots, max_runs * sizeof(int32_t))) == NULL) return -1;
+        det->roots = (int32_t *)p;
         det->run_capacity = max_runs;
     }
     if (row > det->row_capacity) {
@@ -700,9 +704,16 @@ static int threshold_level(napa_detector *det, int lw, int lh, int factor) {
                     } else if (R[b].x1 + 1 < R[a].x0) {
                         b++;
                     } else {
-                        int32_t ra = find_root(P, a), rb = find_root(P, b);
-                        if (ra < rb) P[rb] = ra;
-                        else if (rb < ra) P[ra] = rb;
+                        /* A run of this row that touches nothing yet is a singleton (runs of one row
+                         * join only through the row above): hang it under a's parent, which still
+                         * precedes it. Runs whose parents match are already joined. */
+                        if (P[b] == b) {
+                            P[b] = P[a];
+                        } else if (P[b] != P[a]) {
+                            int32_t ra = find_root(P, a), rb = find_root(P, b);
+                            if (ra < rb) P[rb] = ra;
+                            else if (rb < ra) P[ra] = rb;
+                        }
                         if (R[a].x1 < R[b].x1) a++;
                         else b++;
                     }
@@ -758,17 +769,19 @@ static int fit_sides(const uint8_t *img, int w, int h, int stride, const vec2 in
         double px[MAXP], py[MAXP], wt[MAXP];
         int good = 0;
         double step = (r_out + r_in) / (K - 1);
+        double dt = 0.76 / np, min_g = min_edge * 0.5 * step * 16777216.0; /* best / (2 step) >= min_edge / 4 */
         /* The profile step in 16.16 fixed point, rounded to nearest. */
         double ixd = nx * step * 65536.0, iyd = ny * step * 65536.0;
         int32_t ixp = (int32_t)(ixd < 0 ? ixd - 0.5 : ixd + 0.5), iyp = (int32_t)(iyd < 0 ? iyd - 0.5 : iyd + 0.5);
         for (int i = 0; i < np && good + (np - i) >= 3; i++) { /* stop once 3 edge points are out of reach */
-            double t = 0.12 + 0.76 * (i + 0.5) / np;
+            double t = 0.12 + dt * (i + 0.5);
             double bx = a.x + (b.x - a.x) * t, by = a.y + (b.y - a.y) * t;
-            double prof[KMAX];
+            int64_t prof[KMAX]; /* grey levels in 40.24 fixed point */
             double sx0 = bx - nx * r_out, sy0 = by - ny * r_out;
             double sx1 = bx + nx * r_in, sy1 = by + ny * r_in;
             /* Whole profile inside the image: skip per-sample clamping, and step in 16.16 fixed point
-             * with 12-bit interpolation weights (1/8192 px), one conversion per sample. The fixed-point
+             * with 12-bit interpolation weights (1/8192 px); the profile and its gradient stay in fixed
+             * point, with no conversion per sample. The fixed-point
              * walk is checked end to end, since its rounded step can drift past a profile that ends
              * right at the border (the floating-point test comes first and also rejects NaN). */
             int32_t fxp = 0, fyp = 0;
@@ -786,18 +799,18 @@ static int fit_sides(const uint8_t *img, int w, int h, int stride, const vec2 in
                     const uint8_t *q = img + (size_t)y0 * stride + x0;
                     int32_t top = (q[0] << 12) + (q[1] - q[0]) * fx;
                     int32_t bot = (q[stride] << 12) + (q[stride + 1] - q[stride]) * fx;
-                    prof[j] = (double)(((int64_t)top << 12) + (int64_t)(bot - top) * fy) * (1.0 / (1 << 24));
+                    prof[j] = ((int64_t)top << 12) + (int64_t)(bot - top) * fy;
                 }
             } else {
                 for (int j = 0; j < K; j++) {
                     double o = -r_out + j * step;
-                    prof[j] = sample_bilinear(img, w, h, stride, bx + nx * o, by + ny * o);
+                    prof[j] = (int64_t)(sample_bilinear(img, w, h, stride, bx + nx * o, by + ny * o) * 16777216.0 + 0.5);
                 }
             }
             /* outside (white) minus inside (black): the outer border edge is a positive peak. */
-            double best = 0;
+            int64_t best = 0;
             int bj = -1;
-            double g[KMAX];
+            int64_t g[KMAX];
             for (int j = 1; j < K - 1; j++) {
                 g[j] = prof[j - 1] - prof[j + 1];
                 if (g[j] > best) {
@@ -811,7 +824,7 @@ static int fit_sides(const uint8_t *img, int w, int h, int stride, const vec2 in
              * on the margin's grey (so require a dark landing). */
             if (outermost && bj >= 0) {
                 for (int j = 1; j < K - 1; j++) {
-                    if (g[j] >= 0.6 * best && (j == K - 2 || g[j] >= g[j + 1])) {
+                    if (5 * g[j] >= 3 * best && (j == K - 2 || g[j] >= g[j + 1])) {
                         bj = j;
                         best = g[j];
                         break;
@@ -819,21 +832,20 @@ static int fit_sides(const uint8_t *img, int w, int h, int stride, const vec2 in
                 }
             }
             /* Normalise by the derivative span so the strength test is independent of the step. */
-            if (bj < 0 || best / (2.0 * step) < min_edge * 0.25) continue;
+            if (bj < 0 || (double)best < min_g) continue;
             /* Centre of mass of the positive gradient lobe around the peak. For an area-sampled edge
              * this is exactly the edge at any blur width; trimming or squaring the weights biases
              * sharp edges. The lobe ends where the gradient changes sign, and the final window is
              * capped below half a cell, so the next payload edge never contributes. */
             int jl = bj, jr = bj;
-            while (jl > 1 && g[jl - 1] > 0.05 * best) jl--;
-            while (jr < K - 2 && g[jr + 1] > 0.05 * best) jr++;
-            double sg = 0, sj = 0;
+            while (jl > 1 && 20 * g[jl - 1] > best) jl--;
+            while (jr < K - 2 && 20 * g[jr + 1] > best) jr++;
+            int64_t sg = 0, sj = 0;
             for (int j = jl; j <= jr; j++) {
-                double wv = g[j];
-                sg += wv;
-                sj += wv * j;
+                sg += g[j];
+                sj += g[j] * j;
             }
-            double cj = sg > 1e-9 ? sj / sg : bj;
+            double cj = sg > 0 ? (double)sj / (double)sg : bj;
             /* When the edge ramp is wide against a cell (motion or defocus blur), the next edge's ramp
              * overlaps this one and biases the centre of mass. The crossing of the midpoint between
              * the tag's black and white stays exact for any symmetric blur narrower than two cells.
@@ -847,15 +859,17 @@ static int fit_sides(const uint8_t *img, int w, int h, int stride, const vec2 in
                     double pos0 = -r_out + cj * step;
                     double wl = sample_bilinear(img, w, h, stride, bx + nx * (pos0 - half), by + ny * (pos0 - half));
                     double bl = sample_bilinear(img, w, h, stride, bx + nx * (pos0 + half), by + ny * (pos0 + half));
-                    double mid = 0.5 * (wl + bl);
+                    double mid = 0.5 * (wl + bl) * 16777216.0;
                     double best_c = -1, best_d = 1e9;
                     for (int j = jl - 1; j <= jr && j + 1 < K; j++) {
-                        if (j < 0 || !(prof[j] >= mid && prof[j + 1] < mid)) continue;
-                        double c = j + (prof[j] - mid) / (prof[j] - prof[j + 1]);
+                        if (j < 0 || !((double)prof[j] >= mid && (double)prof[j + 1] < mid)) continue;
+                        double c = j + ((double)prof[j] - mid) / (double)(prof[j] - prof[j + 1]);
                         if (fabs(c - cj) < best_d) best_d = fabs(c - cj), best_c = c;
                     }
                     if (best_c < 0) break;
+                    int settled = fabs(best_c - cj) < 1e-3; /* the next pass would re-read the same levels */
                     cj = best_c;
+                    if (settled) break;
                 }
             }
             width_sum += (jr - jl + 1) * step;
@@ -863,7 +877,7 @@ static int fit_sides(const uint8_t *img, int w, int h, int stride, const vec2 in
             double pos = -r_out + cj * step;
             px[good] = bx + nx * pos;
             py[good] = by + ny * pos;
-            wt[good] = best;
+            wt[good] = (double)best * (1.0 / (1 << 24));
             good++;
         }
         if (good < 3) return 0;
@@ -965,8 +979,8 @@ static void square_to_quad(const vec2 q[4], double H[9]) {
 }
 
 static inline vec2 project(const double H[9], double u, double v) {
-    double z = H[6] * u + H[7] * v + H[8];
-    vec2 p = {(H[0] * u + H[1] * v + H[2]) / z, (H[3] * u + H[4] * v + H[5]) / z};
+    double iz = 1.0 / (H[6] * u + H[7] * v + H[8]);
+    vec2 p = {(H[0] * u + H[1] * v + H[2]) * iz, (H[3] * u + H[4] * v + H[5]) * iz};
     return p;
 }
 
@@ -1253,17 +1267,17 @@ static const int comp_dirs[16][2] = {{1, 0},  {2, 1},   {1, 1},   {1, 2},  {0, 1
                                      {-1, 0}, {-2, -1}, {-1, -1}, {-1, -2}, {0, -1}, {1, -2}, {1, -1}, {2, -1}};
 
 /* Fold the blob's current row into its extremes. Every direction's extreme over a row lies at the
- * row's leftmost or rightmost dark sample, so this runs once per row, not once per run. */
+ * row's leftmost or rightmost dark sample, so this runs once per row, not once per run. The stores
+ * are unconditional selects: a growing blob moves its extremes on most rows, unpredictably. */
 static void comp_flush_row(component *c) {
     int x0 = c->row_x0, x1 = c->row_x1, y = c->row_y;
     for (int k = 0; k < 16; k++) {
         int x = comp_dirs[k][0] > 0 ? x1 : x0;
         int v = comp_dirs[k][0] * x + comp_dirs[k][1] * y;
-        if (v > c->extv[k]) {
-            c->extv[k] = v;
-            c->ext[k][0] = x;
-            c->ext[k][1] = y;
-        }
+        int up = v > c->extv[k];
+        c->extv[k] = up ? v : c->extv[k];
+        c->ext[k][0] = up ? x : c->ext[k][0];
+        c->ext[k][1] = up ? y : c->ext[k][1];
     }
 }
 
@@ -1465,11 +1479,14 @@ int napa_detect(napa_detector *det, const uint8_t *img, int width, int height, i
         napa_run *R = det->runs;
         int32_t *P = det->parent;
         blob_box *B = det->boxes;
+        int32_t *roots = det->roots, nroots = 0;
         for (int i = 0; i < nruns; i++) {
             /* A parent precedes its child and was resolved first, so P[P[i]] is already the root. */
             int32_t r = P[P[i]];
             P[i] = r;
             if (r == i) {
+                det->slot[i] = -1;
+                roots[nroots++] = i;
                 B[i].count = R[i].x1 - R[i].x0 + 1;
                 B[i].minx = R[i].x0, B[i].maxx = R[i].x1, B[i].miny = B[i].maxy = R[i].y;
             } else {
@@ -1485,9 +1502,8 @@ int napa_detect(napa_detector *det, const uint8_t *img, int width, int height, i
         int min_size = lo;
         int max_size = last ? 1 << 30 : hi;
         int ncand = 0;
-        for (int i = 0; i < nruns; i++) {
-            det->slot[i] = -1;
-            if (P[i] != i) continue;
+        for (int ri = 0; ri < nroots; ri++) {
+            int i = roots[ri];
             int t_minx = B[i].minx, t_maxx = B[i].maxx, t_miny = B[i].miny, t_maxy = B[i].maxy;
             int bw = t_maxx - t_minx + 1, bh = t_maxy - t_miny + 1;
             int big = bw > bh ? bw : bh, small = bw < bh ? bw : bh;
