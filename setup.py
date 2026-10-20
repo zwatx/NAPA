@@ -15,7 +15,9 @@ class BuildNative(build_ext):
             if self.compiler.compiler_type == "msvc":
                 extension.extra_compile_args = ["/O2"]
             else:
-                extension.extra_compile_args = ["-O3", "-std=c99", "-fvisibility=hidden"]
+                # Python's own CFLAGS can carry -fwrapv or -fno-strict-overflow (wrapping signed
+                # arithmetic), which costs the core's loops several percent; the core doesn't rely on it.
+                extension.extra_compile_args = ["-O3", "-std=c99", "-fvisibility=hidden", "-fno-wrapv"]
                 extension.libraries = ["m"]
         super().build_extensions()
 
