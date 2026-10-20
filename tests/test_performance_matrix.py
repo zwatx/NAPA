@@ -65,6 +65,24 @@ def test_occlusion_patches_cover_the_requested_fraction() -> None:
     assert all(len(frame.tags) == 1 for frame in frames)
 
 
+def test_range_frames_hold_one_tag_of_each_requested_size() -> None:
+    frames = list(matrix.iter_range_frames(cases=2))
+    assert len(frames) == len(matrix.RANGE_SIDES_PX) * 2
+    for frame in frames:
+        (tag,) = frame.tags
+        # Up to 15 degrees of tilt foreshortens the mean side by at most a few percent.
+        assert tag.side_px == pytest.approx(frame.details["side_px"], rel=0.05)
+    assert matrix.render_range_frame(5, cases=2).image.tobytes() == frames[5].image.tobytes()
+    report = matrix.range_report(
+        [
+            {"backend": "napa", "detail_side_px": 12.0, "true_positive": 1},
+            {"backend": "napa", "detail_side_px": 12.0, "true_positive": 0},
+        ]
+    )
+    assert report == [{"backend": "napa", "side_px": 12.0, "cases": 2, "found": 1}]
+    assert "| napa | 1/2 |" in matrix.range_summary(report)
+
+
 def test_scoring_counts_ids_once_and_aligns_corners_only_when_asked() -> None:
     truth = [
         matrix.TagTruth(1, np.array([[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0]])),

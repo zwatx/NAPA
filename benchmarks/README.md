@@ -47,6 +47,11 @@ A separate obstruction sweep hides part of one tag per frame with a white or gre
 payload centre, along one border, or over a corner, and covers 0–40% of the black square. There are 24 random tags
 for each combination (864 frames), at the smallest resolution.
 
+A range sweep measures how small a tag each detector can still find, which sets how far away it can see one. It
+renders one tag per frame with a black square of exactly 12, 14, 16, 20, 24, 28, 32, 40, 48, 64, or 96 px, at a
+random ID and angle, up to 15° of tilt, and light noise (σ ≈ 1.5). There are 50 tags at each size (550 frames), at
+the smallest resolution. Results are in `benchmarks/results/2026-10-19_range_sweep.json`.
+
 ## Timing
 
 Backends take turns on each frame in a shuffled order, ten timed calls each after one untimed warm-up call. The
@@ -67,7 +72,10 @@ Useful options:
 
 - `--scenarios noise,jpeg`, `--resolutions 1280x720`, and `--frames 10` select a quick subset.
 - `--backends napa,apriltag,apriltag-full-res,opencv-aruco` chooses what to compare (OpenCV is off by default).
-- `--occlusion-cases 0` skips the obstruction sweep.
+- `--occlusion-cases 0` skips the obstruction sweep, and `--range-cases 0` the range sweep.
+- `--frames 0` runs only the sweeps. The range results in the main README came from
+  `--frames 0 --resolutions 640x480 --occlusion-cases 0`. They count tags found, not time, so any machine gives the
+  same numbers.
 - `--seed` changes every frame. Each frame's seed depends only on the run seed, its scenario, resolution, and
   index, so any frame can be re-rendered on its own with `render_frame()`.
 

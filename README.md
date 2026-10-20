@@ -21,6 +21,19 @@ ground truth. [The benchmark guide](benchmarks/README.md) describes each scene.
 (`quad_decimate=1`) 99.4%. Napa finds the small tags that standard AprilTag's decimation loses, and of the 60
 scene and resolution combinations, standard AprilTag found more tags than Napa in just one, by a single tag.
 
+**Range.** Napa sees tags from much farther away. A tag looks smaller the farther it is, so the smallest tag a
+detector can find sets its range. A separate sweep rendered 50 tags at each of eleven sizes, from 12 to 96 px across
+the black square, with light noise and up to 15° of tilt, and counted what each detector found:
+
+| Smallest black square found | Standard AprilTag | AprilTag at full resolution | Napa |
+| --- | ---: | ---: | ---: |
+| Every tag | 96 px | 40 px | **24 px** |
+| Most tags | 64 px (36 of 50) | 32 px (39 of 50) | **20 px (46 of 50)** |
+
+That is **4× the range of standard AprilTag** and 1.7× the range of AprilTag at full resolution. For example, a
+6.5-inch FRC tag seen by a 1280×720 camera with a 70° field of view is 24 px across at 6.3 m, where standard
+AprilTag needs it within 1.6 m. To see farther still, lower `min_tag_px` (see [the guide](docs/guide.md#detection)).
+
 **Speed.** Napa was faster on every one of the 3,000 frames:
 
 - **Noise-free frames: 5.4× to 10× faster** (median per frame, by resolution). The slowest single frame was still
@@ -101,8 +114,9 @@ the next several positions, so the search jumps past them.
 
 Napa applies the same idea to the image. It splits the raked samples into small tiles and records each tile's
 darkest and brightest value. A tile without contrast can't contain a tag's edge, so Napa skips it and does no work
-on its pixels. The contrast needed rises automatically with sensor noise, measured from the frame itself, which is
-why noise barely changes Napa's time.
+on its pixels. The contrast needed rises automatically with sensor noise, measured from the frame itself and region
+by region, so a noisy or textured part of the frame doesn't blind the rest. On a very noisy frame, each rake sample
+averages the block of pixels it stands for instead, which divides the noise by the stride.
 
 The same idea speeds up decoding. A tag's 36 payload bits must be matched against 587 codes in 4 rotations, allowing
 up to 3 wrong bits. Any code within 3 bits of the payload must match at least one of four 9-bit blocks *exactly* (the
@@ -156,7 +170,10 @@ bits are read. Obstruction tolerance is best-effort, with no guaranteed percenta
 
 - Tags smaller than `min_tag_px` (default 32 px across the black square) may be missed. Lower it to find smaller tags,
   at some cost in speed. A steeply tilted tag counts by its narrowest side.
-- Tags need their white quiet zone, as printed tags have.
+- Tags need their white quiet zone, as printed tags have. A tag whose quiet zone runs straight into dark, busy
+  texture can merge with it and be missed.
+- Tags with less than `min_contrast` (default 20) grey levels between their black and white are skipped. Lower it for
+  washed-out scenes, at a cost in speed on every frame.
 - Motion blur longer than a cell (an eighth of the tag) is the hardest case for corner accuracy: most corners stay
   within a tenth of a pixel, but the worst can be off by a few pixels.
 - Installing needs a C99 compiler, since Napa is its C core.
@@ -178,11 +195,15 @@ for tag in detector.detect(image):  # uint8 grayscale, BGR, or BGRA
     print(tag.tag_id, tag.corners)
 ```
 
-For metric poses, use `VisionProcessor(calibration=load_calibration_data("camera.json"), tag_size_m=...)`. Use one
+Each detection also has `tag.center` and `tag.homography`, as upstream AprilTag reports them.
+
+For metric poses, use `VisionProcessor(calibration=load_calibration_data("camera.json"), tag_size_m=...)`. Every pose
+comes with a covariance, so it can go straight into a Kalman filter, including WPILib's pose estimators. Use one
 detector per camera stream. The native call releases the GIL, so separate streams can run on separate threads.
 
 The C library has a plain C API (`src/napa_vision/_native/napa_core.h`), so other languages can call it directly.
-[The guide](docs/guide.md) covers tuning, poses, coordinate conventions, and calibration.
+[The guide](docs/guide.md) covers tuning, poses, Kalman filters, coordinate conventions, and calibration, and
+[the API reference](docs/api.md) lists every class, method, and field.
 
 ## Command-line tools
 

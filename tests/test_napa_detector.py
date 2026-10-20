@@ -208,3 +208,82 @@ def test_minimum_size_guarantee_holds_at_every_sampling_phase() -> None:
                 if not found or np.abs(found[0].corners - corners).max() > 0.5:
                     misses.append((side, angle, offset))
     assert misses == []
+
+
+def _tilted_scene(tag_id: int, side: float, tilt_deg: float, spin_deg: float, size: tuple[int, int] = (640, 480)):
+    """A tag turned spin_deg in its own plane, then tilted tilt_deg away from a pinhole camera."""
+
+    width, height = size
+    spin, tilt = np.deg2rad(spin_deg), np.deg2rad(tilt_deg)
+    unit = np.array([[-0.5, -0.5], [0.5, -0.5], [0.5, 0.5], [-0.5, 0.5]]) * side
+    planar = unit @ np.array([[np.cos(spin), -np.sin(spin)], [np.sin(spin), np.cos(spin)]]).T
+    focal = 2.0 * side  # the tag's centre sits one focal length away, so the perspective is strong
+    depth = focal + planar[:, 1] * np.sin(tilt)
+    corners = np.stack([planar[:, 0], planar[:, 1] * np.cos(tilt)], 1) * (focal / depth)[:, None]
+    corners += [width / 2, height / 2]
+    padded = np.full((100, 100), 255, np.uint8)
+    padded[10:90, 10:90] = cv2.aruco.generateImageMarker(DICTIONARY, tag_id, 80, borderBits=1)
+    source = np.array([[10, 10], [90, 10], [90, 90], [10, 90]], np.float32) - 0.5
+    homography = cv2.getPerspectiveTransform(source, (corners * 4 + 1.5).astype(np.float32))
+    large = cv2.warpPerspective(padded, homography, (width * 4, height * 4), borderValue=255)
+    return cv2.resize(large, (width, height), interpolation=cv2.INTER_AREA), corners
+
+
+def test_finds_steeply_tilted_tags_at_any_rotation() -> None:
+    """At 68 degrees of tilt a corner turns blunt and sits between the axis and diagonal directions."""
+
+    detector = NapaDetector()
+    misses = []
+    for spin in range(0, 90, 6):
+        tag_id = 11 + spin
+        image, corners = _tilted_scene(tag_id, 150, 68.0, spin)
+        found = [o for o in detector.detect(image) if o.tag_id == tag_id]
+        if not found or np.abs(found[0].corners - corners).max() > 0.5:
+            misses.append(spin)
+    assert misses == []
+
+
+def test_finds_low_contrast_tags_in_heavy_sensor_noise() -> None:
+    """Tag black and white 40 grey levels apart under noise of sigma 12: the averaging rake's case."""
+
+    rng = np.random.default_rng(12)
+    detector = NapaDetector()
+    found = 0
+    for k in range(12):
+        image, _corners = _scene(50 + k, 90, angle_deg=13.0 * k)
+        low = 100.0 + image.astype(np.float64) * (40.0 / 255.0)
+        noisy = np.clip(np.rint(low + rng.normal(0.0, 12.0, low.shape)), 0, 255).astype(np.uint8)
+        found += [o.tag_id for o in detector.detect(noisy)] == [50 + k]
+    assert found >= 11
+
+
+def test_noise_floor_is_local_to_each_region() -> None:
+    """Heavy texture over most of the frame must not raise the contrast floor where the tag is."""
+
+    rng = np.random.default_rng(45)
+    detector = NapaDetector()
+    found = 0
+    for k in range(10):
+        image, _corners = _scene(200 + k, 100, angle_deg=9.0 * k)
+        low = 130.0 + image.astype(np.float64) * (45.0 / 255.0)
+        frame = np.full((480, 640), 175.0)
+        frame[:, 400:] = low[:, 160:400]  # the tag, re-centred at x = 520
+        frame[:, :384] = rng.uniform(0, 255, (480, 384))  # 60% of the frame is random texture
+        frame = np.clip(np.rint(frame + rng.normal(0.0, 1.5, frame.shape)), 0, 255).astype(np.uint8)
+        found += [o.tag_id for o in detector.detect(frame)] == [200 + k]
+    assert found == 10
+
+
+def test_a_textured_patch_does_not_hide_a_clean_tag_beside_it() -> None:
+    """A region's floor never rises above the frame's: texture sharing a region with a small tag can't hide it."""
+
+    rng = np.random.default_rng(3)
+    detector = NapaDetector()
+    for k, side in enumerate((32, 40, 48) * 4):
+        image, _corners = _scene(300 + k, side)
+        low = 130.0 + image.astype(np.float64) * (45.0 / 255.0)
+        frame = np.full((480, 640), 175.0)
+        frame[56:136, 112:192] = low[200:280, 280:360]  # the tag, centred at (152, 96)
+        frame[0:192, 0:112] = rng.uniform(0, 255, (192, 112))  # texture about 10 px from its quiet zone
+        frame = np.clip(np.rint(frame + rng.normal(0.0, 1.5, frame.shape)), 0, 255).astype(np.uint8)
+        assert [o.tag_id for o in detector.detect(frame)] == [300 + k], side

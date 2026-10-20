@@ -48,7 +48,8 @@
 
 #define NAPA_ROTATED (NAPA_TAG36H11_COUNT * 4)
 
-#if defined(__GNUC__) || defined(__clang__)
+/* The builtin is one instruction on ARM64 and x86 with POPCNT, but a library call on baseline x86-64. */
+#if (defined(__GNUC__) || defined(__clang__)) && (defined(__POPCNT__) || !(defined(__x86_64__) || defined(__i386__)))
 #define napa_popcount64(x) __builtin_popcountll(x)
 #else
 static int napa_popcount64(uint64_t x) {
@@ -72,8 +73,9 @@ typedef struct {
 typedef struct {
     int count;
     int minx, maxx, miny, maxy;
-    int ext[8][2]; /* extremes: +x, -x, +y, -y, +(x+y), -(x+y), +(x-y), -(x-y) */
-    int extv[8];
+    int ext[16][2]; /* extreme points along the 16 directions of comp_dirs, in angular order */
+    int extv[16];
+    int row_y, row_x0, row_x1; /* the blob's current row: its leftmost and rightmost dark sample */
 } component;
 
 struct napa_detector {
@@ -94,8 +96,10 @@ struct napa_detector {
     uint8_t *level;
     uint8_t *tile_min;
     uint8_t *tile_max;
-    uint8_t *tile_lo;
-    uint8_t *tile_hi;
+    uint8_t *nb_lo; /* one band's tile neighbourhood min, max, and threshold (row buffers) */
+    uint8_t *nb_hi;
+    uint8_t *nb_t;
+    uint8_t *nb_f;
     napa_run *runs;
     int32_t *parent; /* union-find over runs; a blob's root is its first run in raster order */
     blob_box *boxes;
@@ -109,6 +113,11 @@ struct napa_detector {
     size_t row_capacity;
     size_t run_capacity;
     size_t level_capacity;
+    uint8_t *floors; /* tile contrast floor of each noise region, row-major */
+    size_t floor_alloc;
+    int floor_cols, floor_rows, floor_uniform; /* uniform: every region has the same floor */
+    uint16_t *box_rows; /* the averaging rake's two scratch rows */
+    size_t box_capacity;
     size_t tile_capacity;
 };
 
@@ -220,14 +229,18 @@ void napa_destroy(napa_detector *det) {
     free(det->level);
     free(det->tile_min);
     free(det->tile_max);
-    free(det->tile_lo);
-    free(det->tile_hi);
+    free(det->nb_lo);
+    free(det->nb_hi);
+    free(det->nb_t);
+    free(det->nb_f);
     free(det->runs);
     free(det->parent);
     free(det->boxes);
     free(det->slot);
     free(det->cands);
     free(det->row_bits);
+    free(det->floors);
+    free(det->box_rows);
     free(det->row_min);
     free(det->row_max);
     free(det->row_thr);
@@ -256,6 +269,15 @@ static int ensure_buffers(napa_detector *det, size_t pixels, size_t tiles, size_
         det->row_max = p;
         if ((p = (uint8_t *)realloc(det->row_thr, row + 128)) == NULL) return -1;
         det->row_thr = p;
+        /* Tile rows: row / 4 + 1 tiles plus one padding tile at each end. */
+        if ((p = (uint8_t *)realloc(det->nb_lo, row / 4 + 3)) == NULL) return -1;
+        det->nb_lo = p;
+        if ((p = (uint8_t *)realloc(det->nb_hi, row / 4 + 3)) == NULL) return -1;
+        det->nb_hi = p;
+        if ((p = (uint8_t *)realloc(det->nb_t, row / 4 + 3)) == NULL) return -1;
+        det->nb_t = p;
+        if ((p = (uint8_t *)realloc(det->nb_f, row / 4 + 3)) == NULL) return -1;
+        det->nb_f = p;
         uint64_t *bits = (uint64_t *)realloc(det->row_bits, (row / 64 + 2) * sizeof(uint64_t));
         if (bits == NULL) return -1;
         det->row_bits = bits;
@@ -274,10 +296,6 @@ static int ensure_buffers(napa_detector *det, size_t pixels, size_t tiles, size_
         det->tile_min = p;
         if ((p = (uint8_t *)realloc(det->tile_max, tiles)) == NULL) return -1;
         det->tile_max = p;
-        if ((p = (uint8_t *)realloc(det->tile_lo, tiles)) == NULL) return -1;
-        det->tile_lo = p;
-        if ((p = (uint8_t *)realloc(det->tile_hi, tiles)) == NULL) return -1;
-        det->tile_hi = p;
         det->tile_capacity = tiles;
     }
     return 0;
@@ -318,6 +336,18 @@ static inline double sample_bilinear(const uint8_t *img, int w, int h, int strid
 #define NAPA_FINAL_POINTS 96
 /* Midpoint-crossing passes: the plateau levels are re-read around each new estimate. */
 #define NAPA_CROSS_ITERS 3
+/* Noise: the tile contrast floor is NAPA_FLOOR_SIGMAS times the noise measured in the tile's region
+ * (NAPA_REGION samples square at the base level), at most NAPA_FLOOR_CAP (a cap, because texture
+ * inflates the noise estimate). Regions keep a clean part of the frame sensitive when another part is
+ * noisy or textured. A frame-wide floor above NAPA_NOISY_FLOOR (noise sigma of about 7) re-rakes the
+ * frame with each sample averaging its block, which divides the noise by the stride; that level's
+ * floors can then be NAPA_BOX_SIGMAS, still far below the point rake's in grey levels, which keeps
+ * noise blobs out. */
+#define NAPA_REGION 64
+#define NAPA_FLOOR_SIGMAS 6.0
+#define NAPA_FLOOR_CAP 64
+#define NAPA_NOISY_FLOOR 42
+#define NAPA_BOX_SIGMAS 7.0
 
 /* Debug-only candidate trace (compile with -DNAPA_TRACE): one record per non-trivial blob with the
  * stage that rejected it, for attributing missed tags to a pipeline stage. Not thread-safe. */
@@ -439,6 +469,47 @@ static void gather_row(uint8_t *dst, const uint8_t *src, int n, int s, int ssse3
     for (; x < n; x++) dst[x] = src[(size_t)x * s];
 }
 
+/* The averaging rake: level[y][x] = mean of the s x s image block centred on (x * s, y * s), clipped
+ * to the image. Each sample stands for its whole block, so sensor noise drops by a factor of s, and a
+ * border cell's core still leaves every sample at least two thirds dark. Needs s <= 16 (16-bit sums)
+ * and two scratch rows of w samples: acc (column sums) and hs (horizontal box sums). */
+static void box_rake(uint8_t *level, int lw, int lh, const uint8_t *img, int w, int h, int stride, int s,
+                     uint16_t *acc, uint16_t *hs) {
+    int half = (s - 1) / 2;
+    uint32_t m = (65536u + (uint32_t)(s * s) / 2) / (uint32_t)(s * s); /* 1 / (s * s) in 0.16 fixed point */
+    for (int y = 0; y < lh; y++) {
+        int r0 = y * s - half, r1 = r0 + s;
+        if (r0 < 0) r0 = 0;
+        if (r1 > h) r1 = h;
+        const uint8_t *row = img + (size_t)r0 * stride;
+        for (int x = 0; x < w; x++) acc[x] = row[x];
+        for (int r = r0 + 1; r < r1; r++) {
+            row = img + (size_t)r * stride;
+            for (int x = 0; x < w; x++) acc[x] = (uint16_t)(acc[x] + row[x]);
+        }
+        /* hs[c] = acc[c] + ... + acc[c + s - 1], for every block start c that fits in the row. */
+        for (int c = 0; c + s <= w; c++) hs[c] = acc[c];
+        for (int k = 1; k < s; k++)
+            for (int c = 0; c + s <= w; c++) hs[c] = (uint16_t)(hs[c] + acc[c + k]);
+        uint8_t *dst = level + (size_t)y * lw;
+        /* Whole blocks are x_lo <= x < x_hi; the rest are clipped by the image edge. */
+        int x_lo = (half + s - 1) / s, x_hi = (w - s + half) / s + 1;
+        if (x_hi > lw) x_hi = lw;
+        if (r1 - r0 < s) x_lo = x_hi = 0; /* a clipped row band: every block is partial */
+        for (int x = x_lo; x < x_hi; x++) dst[x] = (uint8_t)((hs[x * s - half] * m + 32768u) >> 16);
+        for (int x = 0; x < lw; x++) {
+            if (x == x_lo && x_lo < x_hi) x = x_hi;
+            if (x >= lw) break;
+            int c0 = x * s - half, c1 = c0 + s, sum = 0;
+            if (c0 < 0) c0 = 0;
+            if (c1 > w) c1 = w;
+            for (int c = c0; c < c1; c++) sum += acc[c];
+            int cnt = (c1 - c0) * (r1 - r0);
+            dst[x] = (uint8_t)((sum + cnt / 2) / cnt);
+        }
+    }
+}
+
 /* Bit x of bits[x / 64] is set where row[x] < thr[x], for x < lw; thr is zero (no sample is dark)
  * from lw up to the next multiple of 64, and both rows are readable that far. One compare and
  * movemask turn 16 samples into 16 bits (SSE2, which every x86-64 CPU has; NEON on ARM). */
@@ -496,6 +567,32 @@ static int extract_runs(const uint64_t *bits, int lw, int y, napa_run *R, int n)
     return n;
 }
 
+/* dst[4i..4i+3] = src[i] for i < n: each tile's threshold for its four sample columns. */
+static void expand4(uint8_t *dst, const uint8_t *src, int n) {
+    int i = 0;
+#ifdef NAPA_SSE2
+    for (; i + 16 <= n; i += 16) {
+        __m128i v = _mm_loadu_si128((const __m128i *)(src + i));
+        __m128i lo = _mm_unpacklo_epi8(v, v), hi = _mm_unpackhi_epi8(v, v);
+        _mm_storeu_si128((__m128i *)(dst + 4 * i), _mm_unpacklo_epi16(lo, lo));
+        _mm_storeu_si128((__m128i *)(dst + 4 * i + 16), _mm_unpackhi_epi16(lo, lo));
+        _mm_storeu_si128((__m128i *)(dst + 4 * i + 32), _mm_unpacklo_epi16(hi, hi));
+        _mm_storeu_si128((__m128i *)(dst + 4 * i + 48), _mm_unpackhi_epi16(hi, hi));
+    }
+#elif defined(__ARM_NEON) && !defined(NAPA_NO_SIMD)
+    for (; i + 16 <= n; i += 16) {
+        uint8x16_t v = vld1q_u8(src + i);
+        uint8x16x2_t a = vzipq_u8(v, v);
+        uint8x16x2_t b = vzipq_u8(a.val[0], a.val[0]), c = vzipq_u8(a.val[1], a.val[1]);
+        vst1q_u8(dst + 4 * i, b.val[0]);
+        vst1q_u8(dst + 4 * i + 16, b.val[1]);
+        vst1q_u8(dst + 4 * i + 32, c.val[0]);
+        vst1q_u8(dst + 4 * i + 48, c.val[1]);
+    }
+#endif
+    for (; i < n; i++) memset(dst + 4 * i, src[i], 4);
+}
+
 static inline int32_t find_root(int32_t *P, int32_t i) {
     while (P[i] != i) {
         P[i] = P[P[i]];
@@ -506,7 +603,7 @@ static inline int32_t find_root(int32_t *P, int32_t i) {
 
 /* Threshold the level and label its dark samples as runs joined by union-find (8-connected:
  * runs in adjacent rows touch if they overlap within one sample). Returns the run count. */
-static int threshold_level(napa_detector *det, int lw, int lh, int min_contrast) {
+static int threshold_level(napa_detector *det, int lw, int lh, int factor) {
     const uint8_t *L = det->level;
     napa_run *R = det->runs;
     int32_t *P = det->parent;
@@ -542,47 +639,52 @@ static int threshold_level(napa_detector *det, int lw, int lh, int min_contrast)
             tmax[tx] = h01 > h23 ? h01 : h23;
         }
     }
-    /* 3x3 tile neighbourhood, separably: horizontal then vertical. */
+    /* 3x3 tile neighbourhood, separably and without branches so the loops vectorise: vertically
+     * into a row padded by one tile at each end (repeating the edge tile), then horizontally. */
+    uint8_t *nlo = det->nb_lo, *nhi = det->nb_hi, *tt = det->nb_t, *fl = det->nb_f;
+    /* A tile here spans 4 * factor base-level samples; look up the floor of the region it lies in. */
+    int rows = det->floor_rows, cols = det->floor_cols;
+    if (det->floor_uniform) memset(fl, det->floors[0], (size_t)tw);
     for (int ty = 0; ty < th; ty++) {
-        const uint8_t *a = det->tile_min + (size_t)ty * tw, *b = det->tile_max + (size_t)ty * tw;
-        uint8_t *lo = det->tile_lo + (size_t)ty * tw, *hi = det->tile_hi + (size_t)ty * tw;
-        for (int tx = 0; tx < tw; tx++) {
-            uint8_t l = a[tx], h = b[tx];
-            if (tx > 0) {
-                l = a[tx - 1] < l ? a[tx - 1] : l;
-                h = b[tx - 1] > h ? b[tx - 1] : h;
-            }
-            if (tx + 1 < tw) {
-                l = a[tx + 1] < l ? a[tx + 1] : l;
-                h = b[tx + 1] > h ? b[tx + 1] : h;
-            }
-            lo[tx] = l;
-            hi[tx] = h;
+        int ry = ty * TILE * factor / NAPA_REGION;
+        const uint8_t *frow = det->floors + (size_t)(ry < rows ? ry : rows - 1) * cols;
+        for (int tx = 0; tx < tw && !det->floor_uniform; tx++) {
+            int rx = tx * TILE * factor / NAPA_REGION;
+            fl[tx] = frow[rx < cols ? rx : cols - 1];
         }
-    }
-    for (int ty = 0; ty < th; ty++) {
-        const uint8_t *lo_up = det->tile_lo + (size_t)(ty > 0 ? ty - 1 : ty) * tw;
-        const uint8_t *lo_mid = det->tile_lo + (size_t)ty * tw;
-        const uint8_t *lo_dn = det->tile_lo + (size_t)(ty + 1 < th ? ty + 1 : ty) * tw;
-        const uint8_t *hi_up = det->tile_hi + (size_t)(ty > 0 ? ty - 1 : ty) * tw;
-        const uint8_t *hi_mid = det->tile_hi + (size_t)ty * tw;
-        const uint8_t *hi_dn = det->tile_hi + (size_t)(ty + 1 < th ? ty + 1 : ty) * tw;
-        int any = 0;
+        const uint8_t *lo_up = det->tile_min + (size_t)(ty > 0 ? ty - 1 : ty) * tw;
+        const uint8_t *lo_mid = det->tile_min + (size_t)ty * tw;
+        const uint8_t *lo_dn = det->tile_min + (size_t)(ty + 1 < th ? ty + 1 : ty) * tw;
+        const uint8_t *hi_up = det->tile_max + (size_t)(ty > 0 ? ty - 1 : ty) * tw;
+        const uint8_t *hi_mid = det->tile_max + (size_t)ty * tw;
+        const uint8_t *hi_dn = det->tile_max + (size_t)(ty + 1 < th ? ty + 1 : ty) * tw;
         for (int tx = 0; tx < tw; tx++) {
             uint8_t l = lo_mid[tx], h = hi_mid[tx];
             l = lo_up[tx] < l ? lo_up[tx] : l;
             l = lo_dn[tx] < l ? lo_dn[tx] : l;
             h = hi_up[tx] > h ? hi_up[tx] : h;
             h = hi_dn[tx] > h ? hi_dn[tx] : h;
+            nlo[tx + 1] = l;
+            nhi[tx + 1] = h;
+        }
+        nlo[0] = nlo[1], nhi[0] = nhi[1], nlo[tw + 1] = nlo[tw], nhi[tw + 1] = nhi[tw];
+        uint8_t any = 0;
+        for (int tx = 0; tx < tw; tx++) {
+            uint8_t l = nlo[tx + 1], h = nhi[tx + 1];
+            l = nlo[tx] < l ? nlo[tx] : l;
+            l = nlo[tx + 2] < l ? nlo[tx + 2] : l;
+            h = nhi[tx] > h ? nhi[tx] : h;
+            h = nhi[tx + 2] > h ? nhi[tx + 2] : h;
             /* Boyer-Moore-style skip: a flat neighbourhood cannot hold a tag edge, so its
              * threshold is 0 and no sample can fall below it. */
-            uint8_t t = (h - l >= min_contrast) ? (uint8_t)((l + h + 1) / 2) : 0;
+            uint8_t t = (uint8_t)(h - l) >= fl[tx] ? (uint8_t)((l + h + 1) >> 1) : 0;
+            tt[tx] = t;
             any |= t;
-            memset(trow + 4 * tx, t, 4);
         }
         int y0 = ty * TILE;
         int y1 = y0 + TILE < lh ? y0 + TILE : lh;
         if (!any) continue; /* no contrast anywhere in this band: no dark samples, no runs */
+        expand4(trow, tt, tw);
         memset(trow + lw, 0, (size_t)(4 * tw + 64 - lw)); /* nothing past the row is dark */
         uint64_t *bits = det->row_bits;
         for (int y = y0; y < y1; y++) {
@@ -656,23 +758,35 @@ static int fit_sides(const uint8_t *img, int w, int h, int stride, const vec2 in
         double px[MAXP], py[MAXP], wt[MAXP];
         int good = 0;
         double step = (r_out + r_in) / (K - 1);
-        for (int i = 0; i < np; i++) {
+        /* The profile step in 16.16 fixed point, rounded to nearest. */
+        double ixd = nx * step * 65536.0, iyd = ny * step * 65536.0;
+        int32_t ixp = (int32_t)(ixd < 0 ? ixd - 0.5 : ixd + 0.5), iyp = (int32_t)(iyd < 0 ? iyd - 0.5 : iyd + 0.5);
+        for (int i = 0; i < np && good + (np - i) >= 3; i++) { /* stop once 3 edge points are out of reach */
             double t = 0.12 + 0.76 * (i + 0.5) / np;
             double bx = a.x + (b.x - a.x) * t, by = a.y + (b.y - a.y) * t;
             double prof[KMAX];
             double sx0 = bx - nx * r_out, sy0 = by - ny * r_out;
             double sx1 = bx + nx * r_in, sy1 = by + ny * r_in;
-            if (sx0 >= 0 && sy0 >= 0 && sx1 >= 0 && sy1 >= 0 && sx0 < w - 1 && sx1 < w - 1 && sy0 < h - 1 &&
-                sy1 < h - 1) {
-                /* Whole profile inside the image: skip per-sample clamping. */
-                double sx = sx0, sy = sy0, ix = nx * step, iy = ny * step;
-                for (int j = 0; j < K; j++, sx += ix, sy += iy) {
-                    int x0 = (int)sx, y0 = (int)sy;
-                    double fx = sx - x0, fy = sy - y0;
+            /* Whole profile inside the image: skip per-sample clamping, and step in 16.16 fixed point
+             * with 12-bit interpolation weights (1/8192 px), one conversion per sample. The fixed-point
+             * walk is checked end to end, since its rounded step can drift past a profile that ends
+             * right at the border (the floating-point test comes first and also rejects NaN). */
+            int32_t fxp = 0, fyp = 0;
+            int inside = sx0 >= 0 && sy0 >= 0 && sx1 >= 0 && sy1 >= 0 && sx0 < w - 1 && sx1 < w - 1 &&
+                         sy0 < h - 1 && sy1 < h - 1;
+            if (inside) {
+                fxp = (int32_t)(sx0 * 65536.0), fyp = (int32_t)(sy0 * 65536.0);
+                int64_t endx = fxp + (int64_t)(K - 1) * ixp, endy = fyp + (int64_t)(K - 1) * iyp;
+                inside = endx >= 0 && endy >= 0 && endx < ((int64_t)(w - 1) << 16) && endy < ((int64_t)(h - 1) << 16);
+            }
+            if (inside) {
+                for (int j = 0; j < K; j++, fxp += ixp, fyp += iyp) {
+                    int x0 = fxp >> 16, y0 = fyp >> 16;
+                    int32_t fx = (fxp >> 4) & 4095, fy = (fyp >> 4) & 4095;
                     const uint8_t *q = img + (size_t)y0 * stride + x0;
-                    double top = q[0] + (q[1] - q[0]) * fx;
-                    double bot = q[stride] + (q[stride + 1] - q[stride]) * fx;
-                    prof[j] = top + (bot - top) * fy;
+                    int32_t top = (q[0] << 12) + (q[1] - q[0]) * fx;
+                    int32_t bot = (q[stride] << 12) + (q[stride + 1] - q[stride]) * fx;
+                    prof[j] = (double)(((int64_t)top << 12) + (int64_t)(bot - top) * fy) * (1.0 / (1 << 24));
                 }
             } else {
                 for (int j = 0; j < K; j++) {
@@ -771,11 +885,23 @@ static int fit_sides(const uint8_t *img, int w, int h, int stride, const vec2 in
                 syy += wt[i] * qy * qy;
                 sxy += wt[i] * qx * qy;
             }
-            double theta = 0.5 * atan2(2 * sxy, sxx - syy);
+            /* Principal axis (cos t, sin t) with tan 2t = 2 sxy / (sxx - syy), from the half-angle
+             * identities instead of atan2, cos and sin: cos t sin t = sxy / r. */
+            double spread = sxx - syy, r = sqrt(spread * spread + 4 * sxy * sxy);
+            double ct = 1, st = 0;
+            if (r > 0) {
+                if (spread >= 0) {
+                    ct = sqrt(0.5 * (1 + spread / r));
+                    st = sxy / (r * ct);
+                } else {
+                    st = copysign(sqrt(0.5 * (1 - spread / r)), sxy);
+                    ct = sxy / (r * st);
+                }
+            }
             lx[k] = mx;
             ly[k] = my;
-            dx[k] = cos(theta);
-            dy[k] = sin(theta);
+            dx[k] = ct;
+            dy[k] = st;
             if (pass == 0) {
                 int kept = 0;
                 for (int i = 0; i < good; i++) {
@@ -1120,19 +1246,35 @@ static int decode_quad(napa_detector *det, const uint8_t *img, int w, int h, int
 
 /* ---------------------------------------------------------------- components */
 
-static void comp_add_run(component *c, const napa_run *r) {
-    int x0 = r->x0, x1 = r->x1, y = r->y;
-    /* The extreme of each direction over a run lies at one of its ends. */
-    int px[8] = {x1, x0, x0, x0, x1, x0, x1, x0};
-    int vals[8] = {x1, -x0, y, -y, x1 + y, -(x0 + y), x1 - y, y - x0};
-    for (int k = 0; k < 8; k++) {
-        if (c->count == 0 || vals[k] > c->extv[k]) {
-            c->extv[k] = vals[k];
-            c->ext[k][0] = px[k];
+/* Directions (dx, dy) whose extreme points seed the rough quad, in clockwise angular order (y points
+ * down), about 22.5 degrees apart: a corner lies within about 11 degrees of one of them, so its extreme
+ * can't slide far along a shallow side. */
+static const int comp_dirs[16][2] = {{1, 0},  {2, 1},   {1, 1},   {1, 2},  {0, 1},  {-1, 2}, {-1, 1}, {-2, 1},
+                                     {-1, 0}, {-2, -1}, {-1, -1}, {-1, -2}, {0, -1}, {1, -2}, {1, -1}, {2, -1}};
+
+/* Fold the blob's current row into its extremes. Every direction's extreme over a row lies at the
+ * row's leftmost or rightmost dark sample, so this runs once per row, not once per run. */
+static void comp_flush_row(component *c) {
+    int x0 = c->row_x0, x1 = c->row_x1, y = c->row_y;
+    for (int k = 0; k < 16; k++) {
+        int x = comp_dirs[k][0] > 0 ? x1 : x0;
+        int v = comp_dirs[k][0] * x + comp_dirs[k][1] * y;
+        if (v > c->extv[k]) {
+            c->extv[k] = v;
+            c->ext[k][0] = x;
             c->ext[k][1] = y;
         }
     }
-    c->count += x1 - x0 + 1;
+}
+
+/* Runs arrive in raster order. extv starts at INT32_MIN and row_y at -1. */
+static void comp_add_run(component *c, const napa_run *r) {
+    if (r->y != c->row_y) {
+        if (c->row_y >= 0) comp_flush_row(c);
+        c->row_y = r->y, c->row_x0 = r->x0;
+    }
+    c->row_x1 = r->x1;
+    c->count += r->x1 - r->x0 + 1;
 }
 
 static double quad_area_pts(int p[4][2]) {
@@ -1175,28 +1317,89 @@ static int already_found(const napa_detection *out, int n, const napa_detection 
 
 /* ---------------------------------------------------------------- detect */
 
-/* Tile contrast floor that rises with sensor noise. The median absolute difference of
- * neighbouring samples is about 0.95 sigma for Gaussian noise, and a flat noisy tile
- * neighbourhood spans about 5.5 sigma, so a floor of 6 sigma keeps noise from forming
- * dark networks. Capped well below real tag contrast. */
-static int contrast_floor(const uint8_t *L, int lw, int lh, int min_contrast) {
-    uint32_t hist[256] = {0};
-    uint32_t n = 0;
-    for (int y = 0; y < lh; y += 8) {
-        const uint8_t *row = L + (size_t)y * lw;
-        for (int x = 0; x + 1 < lw; x += 2) {
-            int d = row[x + 1] - row[x];
-            hist[d < 0 ? -d : d]++;
-            n++;
-        }
-    }
-    if (n == 0) return min_contrast;
+/* Tile contrast floor from a histogram of neighbouring-sample differences (clamped to 63): `sigmas`
+ * times the noise. The median absolute difference of neighbouring samples is about 0.95 sigma for
+ * Gaussian noise, and a flat noisy tile neighbourhood spans about 5.5 sigma, so a floor of 6 sigma
+ * keeps noise from forming dark networks. Capped well below real tag contrast. */
+static int floor_from(const uint32_t hist[64], uint32_t n, int min_contrast, double sigmas) {
     uint32_t seen = 0;
     int median = 0;
-    while (median < 255 && (seen += hist[median]) < (n + 1) / 2) median++;
-    int floor = (int)(6.0 * median / 0.954 + 0.5);
-    if (floor > 64) floor = 64;
+    while (median < 63 && (seen += hist[median]) < (n + 1) / 2) median++;
+    int floor = (int)(sigmas * median / 0.954 + 0.5);
+    if (floor > NAPA_FLOOR_CAP) floor = NAPA_FLOOR_CAP;
     return floor > min_contrast ? floor : min_contrast;
+}
+
+/* out[i] = min(|row[2i + 1] - row[2i]|, 63) for i < n: neighbouring-sample differences, 16 at a time. */
+static void pair_diffs(const uint8_t *row, int n, uint8_t *out) {
+    int i = 0;
+#ifdef NAPA_SSE2
+    const __m128i even = _mm_set1_epi16(0x00ff), cap = _mm_set1_epi8(63);
+    for (; i + 16 <= n; i += 16) {
+        __m128i a = _mm_loadu_si128((const __m128i *)(row + 2 * i));
+        __m128i b = _mm_loadu_si128((const __m128i *)(row + 2 * i + 16));
+        __m128i ae = _mm_and_si128(a, even), ao = _mm_srli_epi16(a, 8);
+        __m128i be = _mm_and_si128(b, even), bo = _mm_srli_epi16(b, 8);
+        __m128i da = _mm_sub_epi16(_mm_max_epi16(ae, ao), _mm_min_epi16(ae, ao));
+        __m128i db = _mm_sub_epi16(_mm_max_epi16(be, bo), _mm_min_epi16(be, bo));
+        _mm_storeu_si128((__m128i *)(out + i), _mm_min_epu8(_mm_packus_epi16(da, db), cap));
+    }
+#elif defined(__ARM_NEON) && !defined(NAPA_NO_SIMD)
+    for (; i + 16 <= n; i += 16) {
+        uint8x16x2_t v = vld2q_u8(row + 2 * i);
+        vst1q_u8(out + i, vminq_u8(vabdq_u8(v.val[1], v.val[0]), vdupq_n_u8(63)));
+    }
+#endif
+    for (; i < n; i++) {
+        int d = row[2 * i + 1] - row[2 * i];
+        d = d < 0 ? -d : d;
+        out[i] = (uint8_t)(d < 63 ? d : 63);
+    }
+}
+
+/* Each region's floor into det->floors (from pairs of samples on every 8th row), at most the frame's,
+ * which is returned; a region too small to measure takes the frame's. Returns -1 if out of memory. */
+static int contrast_floors(napa_detector *det, const uint8_t *L, int lw, int lh, int min_contrast, double sigmas) {
+    int cols = (lw + NAPA_REGION - 1) / NAPA_REGION, rows = (lh + NAPA_REGION - 1) / NAPA_REGION;
+    if ((size_t)cols * rows > det->floor_alloc) {
+        uint8_t *p = (uint8_t *)realloc(det->floors, (size_t)cols * rows);
+        if (p == NULL) return -1;
+        det->floors = p;
+        det->floor_alloc = (size_t)cols * rows;
+    }
+    det->floor_cols = cols, det->floor_rows = rows;
+    uint32_t all[64] = {0}, n_all = 0;
+    for (int ry = 0; ry < rows; ry++) {
+        for (int rx = 0; rx < cols; rx++) {
+            /* Four interleaved histograms: a flat region repeats the same few differences, and
+             * consecutive increments of one counter would wait on each other. */
+            uint32_t h4[4][64], hist[64], n = 0;
+            memset(h4, 0, sizeof h4);
+            int x0 = rx * NAPA_REGION, x1 = x0 + NAPA_REGION < lw ? x0 + NAPA_REGION : lw;
+            int y1 = (ry + 1) * NAPA_REGION < lh ? (ry + 1) * NAPA_REGION : lh;
+            int pairs = (x1 - x0) / 2;
+            for (int y = ry * NAPA_REGION; y < y1; y += 8) {
+                uint8_t d[NAPA_REGION / 2];
+                pair_diffs(L + (size_t)y * lw + x0, pairs, d);
+                for (int k = 0; k < pairs; k++) h4[k & 3][d[k]]++;
+            }
+            for (int k = 0; k < 64; k++) {
+                hist[k] = h4[0][k] + h4[1][k] + h4[2][k] + h4[3][k];
+                n += hist[k], all[k] += hist[k];
+            }
+            n_all += n;
+            det->floors[ry * cols + rx] = (uint8_t)(n >= 16 ? floor_from(hist, n, min_contrast, sigmas) : 0);
+        }
+    }
+    int frame = n_all ? floor_from(all, n_all, min_contrast, sigmas) : min_contrast;
+    det->floor_uniform = 1;
+    for (int i = 0; i < cols * rows; i++) {
+        /* Never above the frame's: a region only lowers its floor, where it is cleaner than the frame
+         * (a region's estimate, from fewer samples, also varies more). */
+        if (det->floors[i] == 0 || det->floors[i] > frame) det->floors[i] = (uint8_t)frame;
+        det->floor_uniform &= det->floors[i] == det->floors[0];
+    }
+    return frame;
 }
 
 int napa_detect(napa_detector *det, const uint8_t *img, int width, int height, int stride, const napa_params *params,
@@ -1240,8 +1443,22 @@ int napa_detect(napa_detector *det, const uint8_t *img, int width, int height, i
         }
         prev_lw = lw;
         PROF_MARK(PROF_RAKE);
-        if (s == base) contrast = contrast_floor(det->level, lw, lh, params->min_contrast);
-        int nruns = threshold_level(det, lw, lh, contrast);
+        if (s == base) {
+            contrast = contrast_floors(det, det->level, lw, lh, params->min_contrast, NAPA_FLOOR_SIGMAS);
+            /* A noisy frame: rake again, averaging each sample's block, and re-measure the noise. */
+            if (contrast > NAPA_NOISY_FLOOR && s > 1 && s <= 16) {
+                if ((size_t)width > det->box_capacity) {
+                    uint16_t *p = (uint16_t *)realloc(det->box_rows, sizeof(uint16_t) * 2 * (size_t)width);
+                    if (p == NULL) return -2;
+                    det->box_rows = p;
+                    det->box_capacity = (size_t)width;
+                }
+                box_rake(det->level, lw, lh, img, width, height, stride, s, det->box_rows, det->box_rows + width);
+                contrast = contrast_floors(det, det->level, lw, lh, params->min_contrast, NAPA_BOX_SIGMAS);
+            }
+            if (contrast < 0) return -2;
+        }
+        int nruns = threshold_level(det, lw, lh, s / base);
         PROF_MARK(PROF_THRESHOLD);
 
         /* Blobs: each run's root, then every blob's count and bounding box. */
@@ -1249,7 +1466,8 @@ int napa_detect(napa_detector *det, const uint8_t *img, int width, int height, i
         int32_t *P = det->parent;
         blob_box *B = det->boxes;
         for (int i = 0; i < nruns; i++) {
-            int32_t r = find_root(P, i);
+            /* A parent precedes its child and was resolved first, so P[P[i]] is already the root. */
+            int32_t r = P[P[i]];
             P[i] = r;
             if (r == i) {
                 B[i].count = R[i].x1 - R[i].x0 + 1;
@@ -1261,7 +1479,9 @@ int napa_detect(napa_detector *det, const uint8_t *img, int width, int height, i
                 B[r].maxy = R[i].y; /* runs arrive row by row */
             }
         }
-        /* Keep tag-sized, tag-shaped blobs as candidates, in raster order of their first sample. */
+        /* Keep tag-sized, tag-shaped blobs as candidates, in raster order of their first sample. A tag
+         * tilted by t looks about 1 / cos(t) times longer than it is wide, more with perspective: a 4:1
+         * box admits tilts to about 70-75 degrees, beyond which the cells are too thin to read anyway. */
         int min_size = lo;
         int max_size = last ? 1 << 30 : hi;
         int ncand = 0;
@@ -1271,7 +1491,7 @@ int napa_detect(napa_detector *det, const uint8_t *img, int width, int height, i
             int t_minx = B[i].minx, t_maxx = B[i].maxx, t_miny = B[i].miny, t_maxy = B[i].maxy;
             int bw = t_maxx - t_minx + 1, bh = t_maxy - t_miny + 1;
             int big = bw > bh ? bw : bh, small = bw < bh ? bw : bh;
-            if (small < min_size || big > max_size || big > 3 * small) {
+            if (small < min_size || big > max_size || big > 4 * small) {
                 if (big >= 4) TRACE(small < min_size ? 1 : big > max_size ? 2 : 3);
                 continue;
             }
@@ -1288,6 +1508,8 @@ int napa_detect(napa_detector *det, const uint8_t *img, int width, int height, i
             }
             component *c = &det->cands[ncand];
             c->count = 0;
+            for (int k = 0; k < 16; k++) c->extv[k] = INT32_MIN;
+            c->row_y = -1;
             c->minx = t_minx, c->maxx = t_maxx, c->miny = t_miny, c->maxy = t_maxy;
             det->slot[i] = ncand++;
         }
@@ -1296,6 +1518,7 @@ int napa_detect(napa_detector *det, const uint8_t *img, int width, int height, i
             int32_t c = det->slot[P[i]];
             if (c >= 0) comp_add_run(&det->cands[c], &R[i]);
         }
+        for (int ci = 0; ci < ncand; ci++) comp_flush_row(&det->cands[ci]);
         PROF_MARK(PROF_BLOBS);
 
         for (int ci = 0; ci < ncand; ci++) {
@@ -1309,34 +1532,50 @@ int napa_detect(napa_detector *det, const uint8_t *img, int width, int height, i
                 TRACE(5);
                 continue;
             }
-            /* Rough quad: of the eight extreme points (in clockwise angular order), the four that
-             * span the largest quadrilateral. Axis or diagonal extremes alone degrade near 22 and
-             * 67 degrees; the best mix tracks the corners at any rotation. */
-            static const int order[8] = {0, 4, 2, 7, 1, 5, 3, 6};
-            int pick[4][2] = {{0, 0}, {0, 0}, {0, 0}, {0, 0}};
-            double best_area = -1;
-            for (int i = 0; i < 5; i++) {
-                for (int j = i + 1; j < 6; j++) {
-                    for (int k = j + 1; k < 7; k++) {
-                        for (int l = k + 1; l < 8; l++) {
-                            int q[4][2] = {{comp.ext[order[i]][0], comp.ext[order[i]][1]},
-                                           {comp.ext[order[j]][0], comp.ext[order[j]][1]},
-                                           {comp.ext[order[k]][0], comp.ext[order[k]][1]},
-                                           {comp.ext[order[l]][0], comp.ext[order[l]][1]}};
-                            double area = quad_area_pts(q);
-                            if (area > best_area) {
-                                best_area = area;
-                                memcpy(pick, q, sizeof pick);
-                            }
+            /* Rough quad: of the extreme points (in clockwise angular order), the four that span the
+             * largest quadrilateral. Start from the best of the eight axis and diagonal extremes, then
+             * let each vertex move to any of the 16 extremes between its neighbours while the area
+             * grows: axis or diagonal extremes alone slide along a side near 22 and 67 degrees. */
+            /* Twice the area (positive, as the extremes run clockwise with y down) is the sum of
+             * cross(p[t], p[t + 1]), so moving vertex v to point m changes it by a term linear in m:
+             * cross(m, next - prev). Each move is one dot product. */
+            int(*E)[2] = comp.ext;
+            int idx[4] = {0, 4, 8, 12};
+            int64_t best2 = -1; /* twice the area: (p2 - p0) x (p3 - p1) */
+            for (int i = 0; i < 10; i += 2) {
+                for (int j = i + 2; j < 12; j += 2) {
+                    for (int k = j + 2; k < 14; k += 2) {
+                        for (int l = k + 2; l < 16; l += 2) {
+                            int64_t a2 = (int64_t)(E[k][0] - E[i][0]) * (E[l][1] - E[j][1]) -
+                                         (int64_t)(E[k][1] - E[i][1]) * (E[l][0] - E[j][0]);
+                            if (a2 > best2) best2 = a2, idx[0] = i, idx[1] = j, idx[2] = k, idx[3] = l;
                         }
                     }
                 }
             }
+            for (int moved = 1, sweep = 0; moved && sweep < 4; sweep++) {
+                moved = 0;
+                for (int v = 0; v < 4; v++) {
+                    int pv = idx[(v + 3) & 3], nv = idx[(v + 1) & 3];
+                    int ex = E[nv][0] - E[pv][0], ey = E[nv][1] - E[pv][1];
+                    int64_t cur = (int64_t)E[idx[v]][0] * ey - (int64_t)E[idx[v]][1] * ex;
+                    for (int m = (pv + 1) & 15; m != nv; m = (m + 1) & 15) {
+                        int64_t gain = (int64_t)E[m][0] * ey - (int64_t)E[m][1] * ex;
+                        if (gain > cur) cur = gain, idx[v] = m, moved = 1;
+                    }
+                }
+            }
+            int pick[4][2];
+            for (int t = 0; t < 4; t++) pick[t][0] = E[idx[t]][0], pick[t][1] = E[idx[t]][1];
+            double best_area = quad_area_pts(pick);
             /* Every tag36h11 code has at least 10 white payload cells, so at most 54/64 of a tag's
              * square is dark (0.85 measured, against the quad grown by the half sample its corner
              * samples sit inside). Solid strokes and filled shapes run well past that. */
             double perim_q = 0;
-            for (int k = 0; k < 4; k++) perim_q += hypot(pick[(k + 1) & 3][0] - pick[k][0], pick[(k + 1) & 3][1] - pick[k][1]);
+            for (int k = 0; k < 4; k++) {
+                int ex = pick[(k + 1) & 3][0] - pick[k][0], ey = pick[(k + 1) & 3][1] - pick[k][1];
+                perim_q += sqrt((double)(ex * ex + ey * ey));
+            }
             if (comp.count > 0.95 * (best_area + 0.5 * perim_q + 1.0)) {
                 PROF_MARK(PROF_QUAD);
                 TRACE(6);

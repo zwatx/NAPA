@@ -10,6 +10,7 @@ from time import perf_counter
 import numpy as np
 
 from .calibration import CameraCalibration
+from .covariance import DEFAULT_CORNER_NOISE_PX
 from .napa_detector import NapaDetector
 from .solvers import CameraPoseSolver, SingleTagPoseSolver, TagAngleSolver
 from .types import CameraPoseBounds, FiducialDetector, FrameResult
@@ -40,7 +41,8 @@ class VisionProcessor:
     Without calibration, return IDs and corners only. Calibrated processing also
     requires the physical tag size. A tag layout (tag ID to world-to-tag transform)
     is optional and enables a camera pose; poses use the conventions documented in
-    ``geometry``, never a device SDK's world frame.
+    ``geometry``, never a device SDK's world frame. Poses and tag angles carry
+    covariances for ``corner_noise_px`` of independent per-axis corner noise.
     Calls are synchronous and must not overlap on one instance. The caller owns
     capture, pixel-format conversion, clocks, scheduling, and result delivery.
     """
@@ -57,6 +59,7 @@ class VisionProcessor:
         camera_pose_bounds: CameraPoseBounds | None = None,
         max_outlier_iterations: int = 8,
         ransac_iterations: int = 100,
+        corner_noise_px: float = DEFAULT_CORNER_NOISE_PX,
     ) -> None:
         if (calibration is None) != (tag_size_m is None):
             raise ValueError("calibration and tag_size_m must be provided together")
@@ -83,15 +86,16 @@ class VisionProcessor:
             if calibration is None
             else _CameraGeometry(calibration.camera_matrix, calibration.distortion_coefficients)
         )
-        self._single_solver = SingleTagPoseSolver(max_reprojection_error_px)
+        self._single_solver = SingleTagPoseSolver(max_reprojection_error_px, corner_noise_px=corner_noise_px)
         self._camera_solver = CameraPoseSolver(
             max_reprojection_error_px,
             max_tag_reprojection_error_px=max_tag_reprojection_error_px,
             bounds=camera_pose_bounds,
             max_outlier_iterations=max_outlier_iterations,
             ransac_iterations=ransac_iterations,
+            corner_noise_px=corner_noise_px,
         )
-        self._angle_solver = TagAngleSolver()
+        self._angle_solver = TagAngleSolver(corner_noise_px=corner_noise_px)
         self.detector = detector if detector is not None else NapaDetector()
 
     def process(
@@ -138,8 +142,8 @@ class VisionProcessor:
         )
         if self._camera is not None and self.tag_size_m is not None:
             solved_observations = []
-            for observation in observations:
-                single = self._single_solver.solve(observation, self._camera, self.tag_size_m)
+            singles = self._single_solver.solve_many(observations, self._camera, self.tag_size_m)
+            for observation, single in zip(observations, singles, strict=True):
                 if single is not None:
                     result.single_tag_poses.append(single)
                     solved_observations.append(observation)
