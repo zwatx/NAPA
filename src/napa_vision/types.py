@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 import numpy as np
 
-from .covariance import PoseWithCovariance, change_basis
-from .geometry import OPENCV_TO_WPILIB_ROTATION, opencv_pose_to_wpilib_transform, tag_homography
+from .covariance import PoseWithCovariance
+from .geometry import OPENCV_TO_WPILIB_ROTATION, rvec_tvec_to_transform, tag_homography
 
 
 @dataclass(slots=True)
@@ -52,20 +53,104 @@ class FiducialDetector(Protocol):
     def detect(self, image: np.ndarray) -> list[FiducialImageObservation]: ...
 
 
+Distributions = tuple[PoseWithCovariance | None, PoseWithCovariance | None]
+
+
 def _solution(solution: int) -> int:
     if solution not in (0, 1) or isinstance(solution, bool):
         raise ValueError("solution must be 0 or 1")
     return solution
 
 
+Fingerprint = tuple[tuple[bytes, ...] | None, tuple[bytes, ...] | None]
+CovarianceState = tuple[Distributions, tuple[np.ndarray | None, np.ndarray | None]]
+
+
+def fingerprint(*values: np.ndarray | None) -> tuple[bytes, ...] | None:
+    """A solution's public pose values as float64 bytes, an immutable copy to recognize the solution by later."""
+
+    if any(value is None for value in values):
+        return None
+    return tuple(np.asarray(value, dtype=np.float64).tobytes() for value in values)
+
+
+class _DeferredCovariances:
+    """``covariance_0``/``covariance_1``, computed from the solver's deferred work the first time either is read.
+
+    Resolved state is one immutable tuple, replaced whole: concurrent first reads may both compute, but neither sees a
+    partial result, and copies never share later assignments. An assigned covariance, or a pose that no longer matches
+    what was solved, makes the pose methods build a plain pose from the current values.
+    """
+
+    __slots__ = ()
+
+    def _defer(self, source: Callable[[], Distributions], solved: Fingerprint) -> None:
+        self._source, self._solved, self._state = source, solved, None
+
+    def _resolved(self) -> CovarianceState:
+        state = self._state
+        if state is None:
+            distributions = self._source() if self._source is not None else (None, None)
+            state = (distributions, tuple(None if pose is None else pose.covariance for pose in distributions))
+            self._state = state
+        return state
+
+    def _assign(self, solution: int, value: np.ndarray | None) -> None:
+        distributions, covariances = self._resolved()
+        updated = list(covariances)
+        updated[solution] = value
+        self._state = (distributions, (updated[0], updated[1]))
+
+    @property
+    def covariance_0(self) -> np.ndarray | None:
+        return self._resolved()[1][0]
+
+    @covariance_0.setter
+    def covariance_0(self, value: np.ndarray | None) -> None:
+        self._assign(0, value)
+
+    @property
+    def covariance_1(self) -> np.ndarray | None:
+        return self._resolved()[1][1]
+
+    @covariance_1.setter
+    def covariance_1(self, value: np.ndarray | None) -> None:
+        self._assign(1, value)
+
+    def _distribution(
+        self, transform: np.ndarray, current: tuple[np.ndarray | None, ...], solution: int
+    ) -> PoseWithCovariance:
+        """The solver's distribution for a solution, or a plain one if the pose or covariance has changed since."""
+
+        distributions, covariances = self._resolved()
+        covariance = covariances[solution]
+        if covariance is None:
+            raise ValueError(f"solution {solution} has no covariance")
+        stored, solved = distributions[solution], self._solved[solution] if self._solved else None
+        if (
+            stored is not None
+            and solved is not None
+            and np.array_equal(stored.covariance, covariance)
+            and solved == fingerprint(*current)
+        ):
+            return stored
+        return PoseWithCovariance(transform, covariance)
+
+
+def _private(**default: Any) -> Any:
+    """A private dataclass field, left out of ``repr`` and comparisons; ``dataclasses.replace`` carries it over."""
+
+    return field(repr=False, compare=False, **default)
+
+
 @dataclass(slots=True)
-class SingleTagPoseObservation:
+class SingleTagPoseObservation(_DeferredCovariances):
     """Two planar IPPE solutions for a tag, expressed in OpenCV coordinates.
 
     Each ``rvec``/``tvec`` maps tag-local points into the OpenCV camera frame (+X right, +Y down, +Z forward).
     ``error_*`` is the solution's RMS corner reprojection error in pixels; solution 0 has the lower error.
-    ``covariance_*`` is the 6x6 covariance of that camera-to-tag pose in the OpenCV camera frame (see
-    ``napa_vision.covariance``), or ``None`` when it wasn't computed.
+    ``covariance_0``/``covariance_1`` is the 6x6 covariance of that camera-to-tag pose in the OpenCV camera frame
+    (see ``napa_vision.covariance``), or ``None`` when there is none. It is computed the first time it is read.
     """
 
     tag_id: int
@@ -76,8 +161,9 @@ class SingleTagPoseObservation:
     pose_1_tvec: np.ndarray | None
     error_1: float | None
     distance: float
-    covariance_0: np.ndarray | None = None
-    covariance_1: np.ndarray | None = None
+    _source: Callable[[], Distributions] | None = _private(default=None)
+    _solved: Fingerprint | tuple[()] = _private(default=())
+    _state: CovarianceState | None = _private(default=None)
 
     @property
     def ambiguity(self) -> float | None:
@@ -94,18 +180,13 @@ class SingleTagPoseObservation:
         The tag frame is WPILib's: its face lies in its local Y/Z plane and +X is the face normal.
         """
 
-        rvec, tvec, covariance = (
-            (self.pose_0_rvec, self.pose_0_tvec, self.covariance_0)
-            if _solution(solution) == 0
-            else (self.pose_1_rvec, self.pose_1_tvec, self.covariance_1)
+        rvec, tvec = (
+            (self.pose_0_rvec, self.pose_0_tvec) if _solution(solution) == 0 else (self.pose_1_rvec, self.pose_1_tvec)
         )
         if rvec is None or tvec is None:
             raise ValueError(f"solution {solution} is unavailable")
-        if covariance is None:
-            raise ValueError(f"solution {solution} has no covariance")
-        return PoseWithCovariance(
-            opencv_pose_to_wpilib_transform(rvec, tvec), change_basis(covariance, OPENCV_TO_WPILIB_ROTATION)
-        )
+        pose = self._distribution(rvec_tvec_to_transform(rvec, tvec), (rvec, tvec), solution)
+        return pose.rebased(OPENCV_TO_WPILIB_ROTATION)
 
 
 @dataclass(frozen=True, slots=True)
@@ -176,11 +257,11 @@ class PoseSolveDiagnostics:
 
 
 @dataclass(slots=True)
-class CameraPoseObservation:
+class CameraPoseObservation(_DeferredCovariances):
     """One or two candidate WPILib camera poses in the field frame.
 
-    ``covariance_*`` is the 6x6 covariance of ``field_to_camera_*`` in the field frame (see
-    ``napa_vision.covariance``), or ``None`` when it wasn't computed.
+    ``covariance_0``/``covariance_1`` is the 6x6 covariance of ``field_to_camera_*`` in the field frame (see
+    ``napa_vision.covariance``), or ``None`` when there is none. It is computed the first time it is read.
     """
 
     tag_ids: list[int]
@@ -191,8 +272,9 @@ class CameraPoseObservation:
     average_tag_distance: float
     confidence: float
     diagnostics: PoseSolveDiagnostics | None = None
-    covariance_0: np.ndarray | None = None
-    covariance_1: np.ndarray | None = None
+    _source: Callable[[], Distributions] | None = _private(default=None)
+    _solved: Fingerprint | tuple[()] = _private(default=())
+    _state: CovarianceState | None = _private(default=None)
 
     @property
     def ambiguity(self) -> float | None:
@@ -205,16 +287,10 @@ class CameraPoseObservation:
     def field_to_camera(self, solution: int = 0) -> PoseWithCovariance:
         """The camera's pose in the field, with its covariance, ready for a filter or ``transform_by``."""
 
-        transform, covariance = (
-            (self.field_to_camera_0, self.covariance_0)
-            if _solution(solution) == 0
-            else (self.field_to_camera_1, self.covariance_1)
-        )
+        transform = self.field_to_camera_0 if _solution(solution) == 0 else self.field_to_camera_1
         if transform is None:
             raise ValueError(f"solution {solution} is unavailable")
-        if covariance is None:
-            raise ValueError(f"solution {solution} has no covariance")
-        return PoseWithCovariance(transform, covariance)
+        return self._distribution(transform, (transform,), solution)
 
 
 @dataclass(slots=True)
@@ -223,8 +299,9 @@ class TagAngleObservation:
 
     ``corner_angles`` is 4x2, ``(horizontal, vertical)`` per corner, positive right and down (OpenCV's image axes).
     ``center_tx``/``center_ty`` are the corners' mean angles. ``center_covariance`` is their 2x2 covariance in
-    radians squared, or ``None`` when it wasn't computed. ``distance`` is the camera-to-tag distance in metres
-    from solution 0, and ``camera_to_tag_translation`` that solution's translation in WPILib camera axes.
+    radians squared, computed the first time it is read, or ``None`` when there is none. ``distance`` is the
+    camera-to-tag distance in metres from solution 0, and ``camera_to_tag_translation`` that solution's translation
+    in WPILib camera axes.
     """
 
     tag_id: int
@@ -233,7 +310,20 @@ class TagAngleObservation:
     center_ty: float
     distance: float
     camera_to_tag_translation: np.ndarray
-    center_covariance: np.ndarray | None = None
+    _center_source: Callable[[], np.ndarray | None] | None = _private(default=None)
+    _center_state: tuple[np.ndarray | None] | None = _private(default=None)
+
+    @property
+    def center_covariance(self) -> np.ndarray | None:
+        state = self._center_state
+        if state is None:
+            state = (None if self._center_source is None else self._center_source(),)
+            self._center_state = state
+        return state[0]
+
+    @center_covariance.setter
+    def center_covariance(self, value: np.ndarray | None) -> None:
+        self._center_state = (value,)
 
 
 @dataclass(slots=True)
