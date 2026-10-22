@@ -36,6 +36,21 @@ class _Detection(ctypes.Structure):
     ]
 
 
+class _FamilyLayout(ctypes.Structure):
+    _fields_ = [
+        ("ncodes", ctypes.c_int),
+        ("nbits", ctypes.c_int),
+        ("width", ctypes.c_int),
+        ("total_width", ctypes.c_int),
+        ("reversed", ctypes.c_int),
+        ("min_distance", ctypes.c_int),
+        ("max_hamming", ctypes.c_int),
+        ("recommended_hamming", ctypes.c_int),
+        ("x", ctypes.c_int8 * 64),
+        ("y", ctypes.c_int8 * 64),
+    ]
+
+
 class NativeLibraryError(RuntimeError):
     """Raised when the compiled Napa core library is unavailable."""
 
@@ -60,6 +75,16 @@ def _library() -> ctypes.CDLL:
         library.napa_create.argtypes = []
         library.napa_destroy.restype = None
         library.napa_destroy.argtypes = [ctypes.c_void_p]
+        library.napa_create_family.restype = ctypes.c_void_p
+        library.napa_create_family.argtypes = [ctypes.c_char_p]
+        library.napa_family_count.restype = ctypes.c_int
+        library.napa_family_count.argtypes = []
+        library.napa_family_name.restype = ctypes.c_char_p
+        library.napa_family_name.argtypes = [ctypes.c_int]
+        library.napa_family_info.restype = ctypes.c_int
+        library.napa_family_info.argtypes = [ctypes.c_char_p, ctypes.POINTER(_FamilyLayout)]
+        library.napa_family_code.restype = ctypes.c_int
+        library.napa_family_code.argtypes = [ctypes.c_char_p, ctypes.c_int, ctypes.POINTER(ctypes.c_uint64)]
         library.napa_detect.restype = ctypes.c_int
         library.napa_detect.argtypes = [
             ctypes.c_void_p,
@@ -79,6 +104,13 @@ def _library() -> ctypes.CDLL:
     )
 
 
+def families() -> tuple[str, ...]:
+    """The tag families Napa detects, tag36h11 (the default) first."""
+
+    library = _library()
+    return tuple(library.napa_family_name(index).decode() for index in range(library.napa_family_count()))
+
+
 def native_available() -> bool:
     """Return whether the compiled Napa core can be loaded on this platform."""
 
@@ -90,13 +122,14 @@ def native_available() -> bool:
 
 
 class NapaDetector:
-    """Sparse-sampling tag36h11 detector implemented in portable C.
+    """Sparse-sampling AprilTag detector implemented in portable C, for one tag family.
 
-    The detector samples one pixel every three quarters of a cell (``3 * min_tag_px / 32``) in each
-    direction, so every border crossing of a tag at least ``min_tag_px`` pixels wide contains a
-    sample from the border's dark core, even with mild blur. Smaller tags may be missed. Corners
-    are fitted at full resolution and returned in OpenCV's AprilTag corner order, in pixel-centre
-    coordinates.
+    ``family`` is any of ``families()``; the default, tag36h11, is the FRC family. The detector samples
+    one pixel every three quarters of a cell in each direction, so every border crossing of a tag at
+    least ``min_tag_px`` pixels wide contains a sample from the border's dark core, even with mild blur.
+    ``min_tag_px`` is the side of the square whose corners are reported (the tag size for poses). Smaller
+    tags may be missed. Corners are fitted at full resolution and returned in OpenCV's AprilTag corner
+    order, in pixel-centre coordinates.
 
     One instance holds reusable buffers: serialize calls on each instance, and use one instance
     per thread or camera stream. The native call releases the GIL.
@@ -105,8 +138,9 @@ class NapaDetector:
     def __init__(
         self,
         *,
+        family: str = "tag36h11",
         min_tag_px: int = 32,
-        max_hamming: int = 3,
+        max_hamming: int | None = None,
         min_contrast: int = 20,
         min_border_cells: int = 22,
         sharpening: float = 0.25,
@@ -114,8 +148,10 @@ class NapaDetector:
     ) -> None:
         if isinstance(min_tag_px, bool) or not isinstance(min_tag_px, int) or not 8 <= min_tag_px <= _MAX_SIDE:
             raise ValueError(f"min_tag_px must be an integer from 8 to {_MAX_SIDE}")
-        if isinstance(max_hamming, bool) or not isinstance(max_hamming, int) or not 0 <= max_hamming <= 3:
-            raise ValueError("max_hamming must be an integer from 0 to 3")
+        if max_hamming is not None and (
+            isinstance(max_hamming, bool) or not isinstance(max_hamming, int) or not 0 <= max_hamming <= 3
+        ):
+            raise ValueError("max_hamming must be None or an integer from 0 to 3")
         if isinstance(min_contrast, bool) or not isinstance(min_contrast, int) or not 1 <= min_contrast <= 255:
             raise ValueError("min_contrast must be an integer from 1 to 255")
         if (
@@ -129,9 +165,16 @@ class NapaDetector:
         if isinstance(max_detections, bool) or not isinstance(max_detections, int) or max_detections < 1:
             raise ValueError("max_detections must be a positive integer")
         library = _library()
-        handle = library.napa_create()
+        if not isinstance(family, str) or family not in families():
+            raise ValueError(f"family must be one of {', '.join(families())}")
+        layout = _FamilyLayout()
+        library.napa_family_info(family.encode(), ctypes.byref(layout))
+        # The family's default keeps chance matches as rare as tag36h11's at 3 bits; larger values are capped.
+        max_hamming = layout.recommended_hamming if max_hamming is None else min(max_hamming, layout.max_hamming)
+        handle = library.napa_create_family(family.encode())
         if not handle:
-            raise MemoryError("napa_create failed")
+            raise MemoryError("napa_create_family failed")
+        self.family = family
         self._library = library
         self._handle = ctypes.c_void_p(handle)
         self._finalizer = weakref.finalize(self, library.napa_destroy, self._handle)
@@ -164,7 +207,7 @@ class NapaDetector:
         rows = self._rows[:count]
         corners = rows["corners"].reshape(count, 4, 2).copy()
         return [
-            FiducialImageObservation(tag_id, tag_corners, hamming=hamming, decision_margin=margin)
+            FiducialImageObservation(tag_id, tag_corners, hamming=hamming, decision_margin=margin, family=self.family)
             for tag_id, tag_corners, hamming, margin in zip(
                 rows["id"].tolist(), corners, rows["hamming"].tolist(), rows["decision_margin"].tolist(), strict=True
             )

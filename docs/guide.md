@@ -14,6 +14,11 @@ for tag in detector.detect(frame):  # uint8 grayscale, BGR, or BGRA; strided vie
     print(tag.tag_id, tag.corners)  # corners: 4x2 float64
 ```
 
+A detector reads one tag family: tag36h11, the FRC family, unless you pass another, such as
+`NapaDetector(family="tagStandard41h12")`. `napa_vision.families()` lists all nine of upstream AprilTag's families.
+For several families, use one detector per family. [The API reference](api.md#tag-families) describes each family,
+and which square's side is its tag size.
+
 Each observation also carries `hamming`, the number of payload bits that were corrected (0 is a
 perfect read), and `decision_margin`: the smaller of the white and black payload bits' mean distance
 from the decision threshold, in grey levels. Both are computed as upstream AprilTag computes them, so
@@ -34,7 +39,7 @@ processing and calibration.
 | Parameter | Default | What it does |
 | --- | ---: | --- |
 | `min_tag_px` | 32 | Smallest black-square side, in pixels, that Napa guarantees to sample. Lower it for distant tags; the work grows roughly with `1 / min_tag_px²`. |
-| `max_hamming` | 3 | Payload bits Napa will correct (0–3). A third bit is corrected only when the three wrong cells touch, as they do under a finger, cable, or glare spot; scattered errors look like chance matches and are rejected. Lower it to reject more aggressively. |
+| `max_hamming` | family's (3 for tag36h11) | Payload bits Napa will correct (0–3). A third bit is corrected only when the three wrong cells touch, as they do under a finger, cable, or glare spot; scattered errors look like chance matches and are rejected. Lower it to reject more aggressively. Families with close codes default lower, such as tag16h5 at 0 ([why](api.md#tag-families)). |
 | `min_contrast` | 20 | Minimum grey-level difference between tag black and the white quiet zone. Napa raises this automatically, region by region, where the frame is noisy or textured. Lowering it finds fainter tags in washed-out scenes, but costs speed on every frame, because sensor noise then passes the threshold too. |
 | `min_border_cells` | 22 | How many of the 28 border cells must read as dark before a candidate is decoded. |
 | `sharpening` | 0.25 | Cell sharpening before decoding, as upstream AprilTag's `decode_sharpening`. |
@@ -63,16 +68,19 @@ the tag size pose solvers want.
 ```bash
 napa-tag 0-7 --size-mm 165.1 --output tags/      # tags 0-7 as SVG, 6.5 in black squares (the FRC size)
 napa-tag 1,4,9 --format png --cell-px 40         # PNG, 40 px per cell
+napa-tag 0-3 --family tagStandard41h12 --size-mm 100
 ```
 
-Print SVGs at 100% scale, then measure the black square. In Python, `napa_vision.tags.tag_image(tag_id, cell_px=...)`
+Print SVGs at 100% scale, then measure the tag-size square: the black square, or for tagStandard, tagCircle, and
+tagCustom tags the white square inside the black frame. In Python, `napa_vision.tags.tag_image(tag_id, cell_px=...)`
 returns a tag as a `uint8` array, `tag_svg` as an SVG string, and `tag_cells` as a boolean grid. They're drawn as the
 official artwork, in the orientation field layouts assume; OpenCV's `DICT_APRILTAG_36h11` draws them turned 180°.
 
 ### From C or another language
 
 `src/napa_vision/_native/napa_core.h` is the whole API: create a detector, call `napa_detect` on a grayscale buffer
-with a stride, and destroy it. The library has no dependencies beyond the C standard library and `libm`.
+with a stride, and destroy it. `napa_create()` reads tag36h11; `napa_create_family("tag25h9")` reads another family,
+and `napa_family_info()` describes each. The library has no dependencies beyond the C standard library and `libm`.
 
 C and C++ projects can build the core with CMake, without Python:
 

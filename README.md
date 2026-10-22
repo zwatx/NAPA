@@ -2,7 +2,8 @@
 
 **Not Another Pixel Algorithm**: Napa skips most of the pixels in each frame.
 
-Napa is a fast AprilTag (`tag36h11`) detector for any camera. Give it a frame and it returns tag IDs and sub-pixel
+Napa is a fast AprilTag detector for any camera. It reads every AprilTag family, and `tag36h11`, the FRC family, by
+default. Give it a frame and it returns tag IDs and sub-pixel
 corners, plus poses if you supply a calibration. It opens no cameras, starts no threads, and publishes nothing, so a
 webcam, a Raspberry Pi, a headset, recorded video, or a camera SDK can all feed it the same way.
 
@@ -82,6 +83,39 @@ corners was 2.5 px off, where AprilTag's worst in that scene was 0.98 px.
 **False detections.** In 3,000 frames, Napa reported one wrong ID: a tag-shaped decoy whose random payload happened
 to fall within 2 bits of a real code, the same tolerance standard AprilTag uses. Standard AprilTag reported none,
 and full-resolution AprilTag 3. On a separate test of 80,000 such decoys, Napa reported none.
+
+## Every tag family
+
+Napa reads all nine of upstream AprilTag's families: tag36h11 (the default), tag16h5, tag25h9, tag36h10,
+tagStandard41h12, tagStandard52h13, tagCircle21h7, tagCircle49h12, and tagCustom48h12. Pass the family when you create
+a detector: `NapaDetector(family="tagStandard41h12")`. tag36h11's detection is unchanged by the other families: it
+gives exactly the same results as before they were added.
+
+A family-by-family run over the same 20 scenes (each with its own family's tags, spaced by their printed size) gave:
+
+| Family | Tags | Found: AprilTag → Napa | False IDs: AprilTag → Napa | Median corner error: AprilTag → Napa | Speedup: median (slowest frame) |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| tag36h11 | 289 | 288 → 287 | 0 → 0 | 0.097 → 0.022 px | 40× (7.9×) |
+| tag16h5 | 282 | 282 → 280 | **581 → 0** | 0.107 → 0.022 px | 38× (5.5×) |
+| tag25h9 | 287 | 286 → 286 | 3 → 0 | 0.098 → 0.021 px | 36× (7.2×) |
+| tagStandard41h12 | 232 | 232 → 231 | 0 → 0 | 0.097 → 0.025 px | 42× (8.5×) |
+| tagCircle21h7 | 231 | 231 → 230 | 9 → 0 | 0.097 → 0.025 px | 42× (9.3×) |
+
+Frames were 640×480 and 1280×720. Speedups are per frame, from a separate timing pass over 80 frames per family on
+one pinned core.
+
+Every tag that only AprilTag found was small (40–60 px) and steeply tilted, where the white quiet zone narrows to a
+pixel or two: either its narrow side was under `min_tag_px`, or a dark line in the background touched the tag and
+joined its border (see [Limits](#limits)). On tagStandard52h13, tagCircle49h12, tagCustom48h12, and tag36h10 (which the reference
+Python binding doesn't include), Napa found 99.2–99.6% of tags with no false IDs. Upstream's decode table for the
+three big families needs several gigabytes, which is one more reason to prefer Napa for them: its tables take
+megabytes.
+
+tag16h5's 30 codes are only 5 bits apart, so a decoder that corrects two wrong bits, as AprilTag does by default,
+accepts about one in four random tag-shaped patterns. Napa sets each family's default correction so that chance
+matches stay as rare as they are for tag36h11, and adds a "soft" correction for families like tag16h5: a few bits
+may still be corrected, but only if they're exactly the payload's least certain readings. [The API
+reference](docs/api.md#tag-families) has the details.
 
 These are synthetic frames on one laptop CPU. Measure on your own camera and hardware before relying on a specific
 number: `napa-benchmark` scores Napa on your own annotated images (see [the guide](docs/guide.md)).
@@ -174,7 +208,8 @@ bits are read. Obstruction tolerance is best-effort, with no guaranteed percenta
 - Tags smaller than `min_tag_px` (default 32 px across the black square) may be missed. Lower it to find smaller tags,
   at some cost in speed. A steeply tilted tag counts by its narrowest side.
 - Tags need their white quiet zone, as printed tags have. A tag whose quiet zone runs straight into dark, busy
-  texture can merge with it and be missed.
+  texture can merge with it and be missed. Steep tilt makes this likelier, because it narrows the quiet zone: a small
+  tag tilted 60° can join a dark line that touches it.
 - Tags with less than `min_contrast` (default 20) grey levels between their black and white are skipped. Lower it for
   washed-out scenes, at a cost in speed on every frame.
 - Motion blur longer than a cell (an eighth of the tag) is the hardest case for corner accuracy: most corners stay
@@ -247,5 +282,5 @@ and other noncommercial organizations can use, modify, and share it. Copies, for
 include the license and its notices crediting Zachary Wilson. Commercial use, including selling Napa or products
 built on it, needs a separate license; ask through [the repository](https://github.com/zwatx/NAPA).
 
-The tag36h11 codewords come from [AprilTag](https://github.com/AprilRobotics/apriltag) under its BSD license; see
+The tag families' codewords come from [AprilTag](https://github.com/AprilRobotics/apriltag) under its BSD license; see
 [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES).
