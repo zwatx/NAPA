@@ -1,3 +1,6 @@
+/* Napa: Not Another Pixel Algorithm. Copyright (c) 2026 Zachary Wilson.
+ * Licensed under the PolyForm Noncommercial License 1.0.0: see LICENSE. Commercial use needs a separate
+ * license. Copies and works based on this file must keep this notice and credit Zachary Wilson. */
 /*
  * Napa core: a sparse-sampling ("rake") AprilTag 36h11 detector in portable C99.
  *
@@ -78,6 +81,12 @@ typedef struct {
     int row_y, row_x0, row_x1; /* the blob's current row: its leftmost and rightmost dark sample */
 } component;
 
+/* The fitted quad, in pixels, of a candidate that failed its early decode, and its level's stride. */
+typedef struct {
+    float xy[8];
+    int s;
+} failed_quad;
+
 struct napa_detector {
     uint64_t codes[NAPA_ROTATED];
     int16_t ids[NAPA_ROTATED];
@@ -120,6 +129,8 @@ struct napa_detector {
     uint16_t *box_rows; /* the averaging rake's two scratch rows */
     size_t box_capacity;
     size_t tile_capacity;
+    failed_quad *failed; /* this frame's failed candidates, for skipping the same blob at a coarser level */
+    size_t failed_n, failed_capacity;
 };
 
 typedef struct {
@@ -209,6 +220,12 @@ static void load_family(napa_detector *det) {
     build_index(det->codes, 4, 9, &det->mi9_start[0][0], &det->mi9_list[0][0]);
 }
 
+int napa_tag36h11_code(int id, uint64_t *code) {
+    if (code == NULL || id < 0 || id >= NAPA_TAG36H11_COUNT) return -1;
+    *code = napa_tag36h11_codes[id];
+    return 0;
+}
+
 /* ---------------------------------------------------------------- lifecycle */
 
 napa_detector *napa_create(void) {
@@ -228,6 +245,7 @@ void napa_destroy(napa_detector *det) {
         return;
     }
     free(det->level);
+    free(det->failed);
     free(det->tile_min);
     free(det->tile_max);
     free(det->nb_lo);
@@ -1128,25 +1146,13 @@ static void grow_quad(const vec2 q[4], double d, vec2 out[4]) {
     }
 }
 
-/* Decode the tag inside quad q (reordered in place to a consistent winding). `slack` loosens the
- * border and Hamming limits, for a cheap early decode on unrefined corners. Optionally reports each
- * side's border level (side_level) and the tag's black and white levels. */
-static int decode_quad(napa_detector *det, const uint8_t *img, int w, int h, int stride, vec2 q[4],
-                       const napa_params *params, int slack, napa_detection *out, double side_level[4],
-                       edge_levels *levels) {
-    if (signed_area(q) < 0) {
-        vec2 t = q[1];
-        q[1] = q[3];
-        q[3] = t;
-    }
-    double H[9];
-    square_to_quad(q, H);
-    double grid[64];
-    double border[28];
+/* Read the 28 border cells (into grid and border) and the 36-sample quiet-zone ring half a cell outside
+ * them, for the tag square mapped by H. Black and white are their medians. Returns how many border cells
+ * are darker than the midpoint, or -1 if white - black is under min_contrast. */
+static int read_border(const uint8_t *img, int w, int h, int stride, const double H[9], int min_contrast,
+                       double grid[64], double border[28], double *black_out, double *white_out) {
     double ring[36];
     int nb = 0, nr = 0;
-    /* Border cells and the quiet-zone ring first: most candidates are rejected on their contrast
-     * or border before the 36 payload cells are worth sampling. */
     for (int r = 0; r < 8; r++) {
         for (int c = 0; c < 8; c += (r == 0 || r == 7) ? 1 : 7) {
             vec2 p = project(H, (c + 0.5) / 8.0, (r + 0.5) / 8.0);
@@ -1176,11 +1182,45 @@ static int decode_quad(napa_detector *det, const uint8_t *img, int w, int h, int
     memcpy(rs, ring, sizeof rs);
     double black = median_even(bs, 28);
     double white = median_even(rs, 36);
-    if (white - black < params->min_contrast) return 0;
-    if (levels != NULL) levels->black = black, levels->white = white;
+    *black_out = black, *white_out = white;
+    if (white - black < min_contrast) return -1;
     double thr = 0.5 * (black + white);
     int dark = 0;
     for (int i = 0; i < 28; i++) dark += border[i] < thr;
+    return dark;
+}
+
+/* Whether quad q has a plausible tag border, before any edge fitting: its border cells read dark against
+ * the ring outside with at least min_dark of 28 cells. */
+static int border_plausible(const uint8_t *img, int w, int h, int stride, const vec2 q[4], int min_contrast,
+                            int min_dark) {
+    double H[9], grid[64], border[28], black, white;
+    square_to_quad(q, H);
+    return read_border(img, w, h, stride, H, min_contrast, grid, border, &black, &white) >= min_dark;
+}
+
+/* Decode the tag inside quad q (reordered in place to a consistent winding). `slack` loosens the
+ * border and Hamming limits, for a cheap early decode on unrefined corners. Optionally reports each
+ * side's border level (side_level) and the tag's black and white levels. */
+static int decode_quad(napa_detector *det, const uint8_t *img, int w, int h, int stride, vec2 q[4],
+                       const napa_params *params, int slack, napa_detection *out, double side_level[4],
+                       edge_levels *levels) {
+    if (signed_area(q) < 0) {
+        vec2 t = q[1];
+        q[1] = q[3];
+        q[3] = t;
+    }
+    double H[9];
+    square_to_quad(q, H);
+    double grid[64];
+    double border[28];
+    double black, white;
+    /* Border cells and the quiet-zone ring first: most candidates are rejected on their contrast
+     * or border before the 36 payload cells are worth sampling. */
+    int dark = read_border(img, w, h, stride, H, params->min_contrast, grid, border, &black, &white);
+    if (dark < 0) return 0;
+    if (levels != NULL) levels->black = black, levels->white = white;
+    double thr = 0.5 * (black + white);
     if (dark < params->min_border_cells - slack) return 0;
     for (int r = 1; r < 7; r++) {
         for (int c = 1; c < 7; c++) {
@@ -1416,6 +1456,37 @@ static int contrast_floors(napa_detector *det, const uint8_t *L, int lw, int lh,
     return frame;
 }
 
+/* Remember a failed candidate's fitted quad. Best effort: without memory, nothing is remembered. */
+static void remember_failure(napa_detector *det, const vec2 q[4], int s) {
+    if (det->failed_n == det->failed_capacity) {
+        size_t cap = det->failed_capacity ? 2 * det->failed_capacity : 64;
+        failed_quad *p = (failed_quad *)realloc(det->failed, cap * sizeof(failed_quad));
+        if (p == NULL) return;
+        det->failed = p, det->failed_capacity = cap;
+    }
+    failed_quad *f = &det->failed[det->failed_n++];
+    for (int k = 0; k < 4; k++) f->xy[2 * k] = (float)q[k].x, f->xy[2 * k + 1] = (float)q[k].y;
+    f->s = s;
+}
+
+/* Whether a finer level already rejected this quad: every corner of q within tol pixels of a failed
+ * quad's corner, in any cyclic order of the same winding. */
+static int failed_before(const napa_detector *det, const vec2 q[4], int s, double tol) {
+    for (size_t i = 0; i < det->failed_n; i++) {
+        const failed_quad *f = &det->failed[i];
+        if (f->s >= s) continue;
+        for (int shift = 0; shift < 4; shift++) {
+            int k = 0;
+            for (; k < 4; k++) {
+                int j = (k + shift) & 3;
+                if (fabs(q[k].x - f->xy[2 * j]) > tol || fabs(q[k].y - f->xy[2 * j + 1]) > tol) break;
+            }
+            if (k == 4) return 1;
+        }
+    }
+    return 0;
+}
+
 int napa_detect(napa_detector *det, const uint8_t *img, int width, int height, int stride, const napa_params *params,
                 napa_detection *out, int max_out) {
     if (det == NULL || img == NULL || params == NULL) return -1;
@@ -1432,6 +1503,7 @@ int napa_detect(napa_detector *det, const uint8_t *img, int width, int height, i
     if (base < 1) base = 1;
     int found = 0;
     int contrast = params->min_contrast;
+    det->failed_n = 0;
     /* Size band in level samples. Adjacent levels overlap (7-24 here is 14-48 one level finer),
      * because a blob's measured extent varies by a sample or two with phase, blur and rotation. */
     const int lo = 7, hi = NAPA_HI;
@@ -1621,6 +1693,14 @@ int napa_detect(napa_detector *det, const uint8_t *img, int width, int height, i
              * slack, and spend the refinement passes only on quads that are tags. A random quad
              * passes this only about 1.5% of the time. */
             PROF_MARK(PROF_FIT1);
+            /* Levels overlap, so a blob that failed to decode at a finer level often comes back at this one.
+             * The early decode depends only on the fitted quad: if it's within 0.3 px of a failed one, it
+             * fails again. (The rough quads can match while the fits differ: the window grows with s.) */
+            if (failed_before(det, fine, s, 0.3)) {
+                PROF_MARK(PROF_DECODE1);
+                TRACE(8);
+                continue;
+            }
             vec2 probe[4];
             napa_detection early;
             edge_levels lv = {255, 0};
@@ -1636,7 +1716,12 @@ int napa_detect(napa_detector *det, const uint8_t *img, int width, int height, i
                                  project(Hq, 0.1, 0.9)};
                 for (int k = 0; k < 4; k++) perim += hypot(fine[(k + 1) & 3].x - fine[k].x, fine[(k + 1) & 3].y - fine[k].y);
                 double r = 0.45 * perim / 40.0; /* 0.45 of a cell, if the quad spans 10 cells */
-                if (r >= 1.5 && fit_sides(img, width, height, stride, inner, finer, r, r, params->min_contrast, 0, 8, &edge_w, NULL)) {
+                /* Most failed decodes aren't tags at all. Refit only if the unfitted inner square already
+                 * shows a dark border inside a lighter margin, with loose limits (half the contrast, six
+                 * more light border cells): this skips 86% of retries and kept every rescue tested. */
+                if (r >= 1.5 &&
+                    border_plausible(img, width, height, stride, inner, params->min_contrast / 2, params->min_border_cells - 6) &&
+                    fit_sides(img, width, height, stride, inner, finer, r, r, params->min_contrast, 0, 8, &edge_w, NULL)) {
                     memcpy(probe, finer, sizeof probe);
                     if (decode_quad(det, img, width, height, stride, probe, params, 2, &early, NULL, &lv)) {
                         memcpy(fine, finer, sizeof fine);
@@ -1647,6 +1732,7 @@ int napa_detect(napa_detector *det, const uint8_t *img, int width, int height, i
                 if (!rescued) {
                     PROF_MARK(PROF_DECODE1);
                     TRACE(8);
+                    remember_failure(det, fine, s);
                     continue;
                 }
             }

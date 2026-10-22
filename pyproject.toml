@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=70.1"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,6 +7,9 @@ name = "napa-vision"
 dynamic = ["version"]
 description = "Napa: a fast, dependency-free tag36h11 AprilTag detector with optional pose processing"
 readme = "README.md"
+license = "PolyForm-Noncommercial-1.0.0"
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES"]
+authors = [{ name = "Zachary Wilson" }]
 requires-python = ">=3.11"
 keywords = ["apriltag", "computer-vision", "fiducial", "pose-estimation", "robotics"]
 classifiers = [
@@ -24,9 +27,9 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/Zw96042/apriltag-detector"
-Repository = "https://github.com/Zw96042/apriltag-detector.git"
-Issues = "https://github.com/Zw96042/apriltag-detector/issues"
+Homepage = "https://github.com/zwatx/NAPA"
+Repository = "https://github.com/zwatx/NAPA.git"
+Issues = "https://github.com/zwatx/NAPA/issues"
 
 [project.optional-dependencies]
 gui = ["opencv-python>=4.7"]
@@ -47,6 +50,7 @@ dev = [
 [project.scripts]
 napa-benchmark = "napa_vision.benchmark:main"
 napa-calibrate = "napa_vision.workflows:calibration_main"
+napa-tag = "napa_vision.workflows:tag_main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

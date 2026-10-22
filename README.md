@@ -179,15 +179,16 @@ bits are read. Obstruction tolerance is best-effort, with no guaranteed percenta
   washed-out scenes, at a cost in speed on every frame.
 - Motion blur longer than a cell (an eighth of the tag) is the hardest case for corner accuracy: most corners stay
   within a tenth of a pixel, but the worst can be off by a few pixels.
-- Installing needs a C99 compiler, since Napa is its C core.
+- Prebuilt wheels cover Linux (x86-64, ARM64), macOS (Apple silicon, Intel), and Windows x64. Elsewhere, pip builds
+  from source, which needs a C99 compiler.
 
 ## Quick start
 
-Requires Python 3.11 or newer and a C compiler.
+Requires Python 3.11 or newer.
 
 ```bash
-python -m pip install -e .              # the detector: needs only numpy
-python -m pip install -e ".[headless]"  # adds OpenCV, for poses, calibration, and napa-benchmark
+python -m pip install napa-vision              # the detector: needs only numpy
+python -m pip install "napa-vision[headless]"  # adds OpenCV, for poses, calibration, and napa-benchmark
 ```
 
 ```python
@@ -200,11 +201,25 @@ for tag in detector.detect(image):  # uint8 grayscale, BGR, or BGRA
 
 Each detection also has `tag.center` and `tag.homography`, as upstream AprilTag reports them.
 
+Already using `pupil_apriltags` or `dt-apriltags`? Change the import and keep the rest of your code:
+
+```python
+from napa_vision.compat import Detector  # was: from pupil_apriltags import Detector
+
+detector = Detector(families="tag36h11")
+detections = detector.detect(gray, estimate_tag_pose=True, camera_params=(fx, fy, cx, cy), tag_size=0.1651)
+```
+
+Results keep upstream's conventions (corner order, pixel origin, and pose frames), so code written against those
+libraries works unchanged.
+
 For metric poses, use `VisionProcessor(calibration=load_calibration_data("camera.json"), tag_size_m=...)`. Every pose
 comes with a covariance, so it can go straight into a Kalman filter, including WPILib's pose estimators. Use one
 detector per camera stream. The native call releases the GIL, so separate streams can run on separate threads.
 
 The C library has a plain C API (`src/napa_vision/_native/napa_core.h`), so other languages can call it directly.
+C and C++ projects can build and install it with CMake and link `napa::napa`; see
+[the guide](docs/guide.md#from-c-or-another-language).
 [The guide](docs/guide.md) covers tuning, poses, Kalman filters, coordinate conventions, and calibration, and
 [the API reference](docs/api.md) lists every class, method, and field.
 
@@ -212,6 +227,7 @@ The C library has a plain C API (`src/napa_vision/_native/napa_core.h`), so othe
 
 | Command | Purpose |
 | --- | --- |
+| `napa-tag` | Write tags to print: SVG at an exact printed size, or PNG |
 | `napa-calibrate` | Measure camera intrinsics from checkerboard photographs |
 | `napa-benchmark` | Score Napa on your own annotated images, with optional recall, precision, and latency gates |
 
@@ -222,3 +238,14 @@ python -m pip install -e ".[headless,dev,benchmark]"
 ruff format --check . && ruff check .
 pytest --cov=napa_vision
 ```
+
+## License
+
+Copyright © 2026 Zachary Wilson. Napa is free for noncommercial use under the
+[PolyForm Noncommercial License 1.0.0](LICENSE): personal projects, research, education, student robotics teams,
+and other noncommercial organizations can use, modify, and share it. Copies, forks, and works based on Napa must
+include the license and its notices crediting Zachary Wilson. Commercial use, including selling Napa or products
+built on it, needs a separate license; ask through [the repository](https://github.com/zwatx/NAPA).
+
+The tag36h11 codewords come from [AprilTag](https://github.com/AprilRobotics/apriltag) under its BSD license; see
+[THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES).
