@@ -13,6 +13,7 @@ from typing import Any
 import numpy as np
 
 from .napa_detector import NapaDetector
+from .napa_detector import families as napa_families
 
 # Napa's corner order is upstream's p[1], p[0], p[3], p[2]; this indexes Napa's corners in upstream order.
 _UPSTREAM_ORDER = [1, 0, 3, 2]
@@ -56,9 +57,10 @@ class Detection:
 
 
 class Detector:
-    """``pupil_apriltags.Detector``'s interface on Napa's tag36h11 detector.
+    """``pupil_apriltags.Detector``'s interface on Napa's detector.
 
-    Only ``families="tag36h11"`` is supported. ``decode_sharpening`` is used; ``nthreads``,
+    ``families`` is a space-separated list, as upstream; every upstream family is supported (see
+    ``napa_vision.families()``). ``decode_sharpening`` is used; ``nthreads``,
     ``quad_decimate``, ``quad_sigma``, ``refine_edges``, ``debug``, and ``searchpath`` are accepted and
     ignored, since Napa has no equivalent (it never decimates, and always refines edges). Napa's own
     options, such as ``min_tag_px`` or ``max_hamming``, can be passed as extra keyword arguments.
@@ -76,9 +78,10 @@ class Detector:
         searchpath: Any = None,
         **napa_options: Any,
     ) -> None:
-        unsupported = [family for family in families.split() if family != "tag36h11"]
-        if unsupported or not families.split():
-            raise ValueError(f"Napa detects only tag36h11 tags; got families={families!r}")
+        names = list(dict.fromkeys(families.split()))
+        unsupported = [family for family in names if family not in napa_families()]
+        if unsupported or not names:
+            raise ValueError(f"unknown families {families!r}; Napa detects {', '.join(napa_families())}")
         self.params = {
             "families": families.split(),
             "nthreads": nthreads,
@@ -88,7 +91,9 @@ class Detector:
             "decode_sharpening": decode_sharpening,
             "debug": debug,
         }
-        self._detector = NapaDetector(sharpening=decode_sharpening, **napa_options)
+        self._detectors = [
+            NapaDetector(family=family, sharpening=decode_sharpening, **napa_options) for family in names
+        ]
 
     def detect(
         self,
@@ -100,7 +105,8 @@ class Detector:
         """Detect tags in a ``uint8`` grayscale image.
 
         With ``estimate_tag_pose=True``, also pass ``camera_params`` as ``(fx, fy, cx, cy)`` and
-        ``tag_size``, the black square's side in metres. Each pose maps tag points into the camera frame
+        ``tag_size``, in metres, the side of the square whose corners are reported (tag36h11's black
+        square). Each pose maps tag points into the camera frame
         (+x right, +y down, +z forward), with upstream's tag frame (+x right and +y down on the official
         artwork, +z into the tag), as upstream's ``estimate_tag_pose`` does: the better of the two planar
         solutions by upstream's object-space error, ``pose_err``. Poses need OpenCV. As upstream, lens
@@ -116,9 +122,10 @@ class Detector:
             if tag_size is None:
                 raise ValueError("tag_size must be provided to detect if estimate_tag_pose is set to True")
         detections = []
-        for observation in self._detector.detect(img):
+        observations = [observation for detector in self._detectors for observation in detector.detect(img)]
+        for observation in observations:
             detection = Detection()
-            detection.tag_family = b"tag36h11"
+            detection.tag_family = observation.family.encode()
             detection.tag_id = observation.tag_id
             detection.hamming = observation.hamming
             detection.decision_margin = observation.decision_margin

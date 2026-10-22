@@ -1,5 +1,7 @@
 """Build Napa's native C core; all other metadata lives in pyproject.toml."""
 
+from glob import glob
+
 from setuptools import Extension, setup
 from setuptools.command.bdist_wheel import bdist_wheel
 from setuptools.command.build_ext import build_ext
@@ -34,7 +36,7 @@ setup(
         Extension(
             "napa_vision._native._napa_core",
             sources=[f"{NATIVE}/napa_core.c"],
-            depends=[f"{NATIVE}/napa_core.h", f"{NATIVE}/tag36h11_codes.h"],
+            depends=[f"{NATIVE}/napa_core.h", f"{NATIVE}/families.h", *sorted(glob(f"{NATIVE}/families/*.h"))],
             include_dirs=[NATIVE],
             # Napa is the C core: installing without a C compiler fails rather than shipping no detector.
             optional=False,

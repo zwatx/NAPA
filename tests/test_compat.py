@@ -60,9 +60,17 @@ def test_pose_matches_the_true_pose(seed: int) -> None:
     assert 0 <= detection.pose_err < 1e-6
 
 
-def test_rejects_other_families_and_missing_pose_inputs() -> None:
-    with pytest.raises(ValueError, match="tag36h11"):
-        Detector(families="tag36h11 tag16h5")
+def test_reads_several_families_and_rejects_unknown_ones() -> None:
+    with pytest.raises(ValueError, match="tag99h1"):
+        Detector(families="tag36h11 tag99h1")
+    image = np.full((260, 520), 255, np.uint8)
+    image[30:230, 30:230] = tag_image(4, cell_px=20)
+    image[30:190, 290:450] = tag_image(9, family="tag16h5", cell_px=20)
+    found = {(d.tag_family, d.tag_id) for d in Detector(families="tag36h11 tag16h5").detect(image)}
+    assert found == {(b"tag36h11", 4), (b"tag16h5", 9)}
+
+
+def test_rejects_missing_pose_inputs() -> None:
     detector = Detector(families="tag36h11", nthreads=4, quad_decimate=1.0, min_tag_px=24)
     image = np.full((64, 64), 255, np.uint8)
     assert detector.detect(image) == []

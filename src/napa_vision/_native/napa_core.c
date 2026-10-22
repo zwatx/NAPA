@@ -47,9 +47,7 @@
 #endif
 
 #include "napa_core.h"
-#include "tag36h11_codes.h"
-
-#define NAPA_ROTATED (NAPA_TAG36H11_COUNT * 4)
+#include "families.h"
 
 /* The builtin is one instruction on ARM64 and x86 with POPCNT, but a library call on baseline x86-64. */
 #if (defined(__GNUC__) || defined(__clang__)) && (defined(__POPCNT__) || !(defined(__x86_64__) || defined(__i386__)))
@@ -87,19 +85,41 @@ typedef struct {
     int s;
 } failed_quad;
 
-struct napa_detector {
-    uint64_t codes[NAPA_ROTATED];
-    int16_t ids[NAPA_ROTATED];
-    int8_t rotations[NAPA_ROTATED];
-    /* Multi-index hashing: a code within H bits matches at least one of H + 1 disjoint blocks
-     * exactly, so only codes sharing a block are compared. Six 6-bit blocks cover H <= 5 and
-     * four 9-bit blocks cover H <= 3. Lists are stored compressed by bucket. */
-    uint16_t mi6_start[6][65];
-    uint16_t mi6_list[6][NAPA_ROTATED];
-    uint16_t mi9_start[4][513];
-    uint16_t mi9_list[4][NAPA_ROTATED];
-    uint32_t stamp[NAPA_ROTATED];
+/* Multi-index hashing: a code within H bits of another matches at least one of H + 1 disjoint blocks
+ * of bits exactly, so only codes sharing a block are compared. Lists are stored compressed by bucket. */
+typedef struct {
+    int blocks;
+    int probe; /* 1: also look up every one-bit change of each block (multi-probe), so fewer, larger blocks work */
+    int shift[6], bits[6];
+    uint32_t *start[6]; /* (1 << bits) + 1 offsets per block */
+    uint32_t *list[6];  /* rotated-code indices, by bucket */
+} code_index;
+
+/* The family a detector reads, laid out for decoding. Cells are in grid coordinates: the square's
+ * top-left cell is (outer, outer), and the grid spans `grid` cells, the square plus any data rings
+ * outside its quiet ring. */
+typedef struct {
+    const napa_family *f;
+    int width, outer, grid, nbits, ncodes, nrot, max_hamming;
+    int recommended_hamming; /* the default correction: chance matches no likelier than tag36h11's at 3 */
+    int soft_hamming; /* families whose default corrects fewer bits than 3: the most bits a soft correction may fix */
+    double cells;      /* width as a double */
+    double fill_limit; /* largest dark fraction a blob may have of its grown quad */
+    double bias_slack; /* border_bias's side-agreement tolerance, relative to tag36h11's */
+    int8_t cell[64];   /* each bit's grid index, most significant first */
+    int8_t is_data[256];
+    uint64_t near[64]; /* bits whose cells touch each bit's cell (8-connected), for errors_connected */
+    uint64_t mask;     /* the low nbits bits */
+    uint64_t *codes;   /* nrot codes: every code in 4 rotations, as observed (complemented if reversed) */
+    int32_t *ids;
+    int8_t *rotations;
+    code_index index3, index5; /* for up to 3 and up to 5 wrong bits */
+    uint32_t *stamp;
     uint32_t stamp_now;
+} family_layout;
+
+struct napa_detector {
+    family_layout fam;
     int ssse3; /* the CPU supports SSSE3 (x86 only; picked once at creation) */
 
     uint8_t *level;
@@ -139,99 +159,239 @@ typedef struct {
 
 /* ---------------------------------------------------------------- family */
 
-static uint64_t rotate_ccw(uint64_t code) {
-    /* code holds a 6x6 row-major grid, MSB = row 0 col 0. Return it rotated 90 degrees counter-clockwise. */
+static uint64_t rotate_bits(const uint64_t code, const int8_t *perm, int nbits) {
     uint64_t out = 0;
-    for (int r = 0; r < 6; r++) {
-        for (int c = 0; c < 6; c++) {
-            /* rot90 (CCW): out[r][c] = in[c][5 - r] */
-            int src = c * 6 + (5 - r);
-            uint64_t bit = (code >> (35 - src)) & 1u;
-            out = (out << 1) | bit;
-        }
-    }
+    for (int k = 0; k < nbits; k++) out = (out << 1) | ((code >> (nbits - 1 - perm[k])) & 1u);
     return out;
 }
 
-static void build_index(const uint64_t *codes, int blocks, int bits, uint16_t *start, uint16_t *list) {
-    int buckets = 1 << bits;
-    for (int b = 0; b < blocks; b++) {
-        uint16_t *st = start + b * (buckets + 1);
-        uint16_t *ls = list + b * NAPA_ROTATED;
-        memset(st, 0, sizeof(uint16_t) * (size_t)(buckets + 1));
-        for (int i = 0; i < NAPA_ROTATED; i++) st[((codes[i] >> (b * bits)) & (uint64_t)(buckets - 1)) + 1]++;
-        for (int v = 0; v < buckets; v++) st[v + 1] = (uint16_t)(st[v + 1] + st[v]);
-        uint16_t fill[512];
-        memcpy(fill, st, sizeof(uint16_t) * (size_t)buckets);
-        for (int i = 0; i < NAPA_ROTATED; i++) {
-            int v = (int)((codes[i] >> (b * bits)) & (uint64_t)(buckets - 1));
-            ls[fill[v]++] = (uint16_t)i;
-        }
+static void free_index(code_index *ix) {
+    for (int b = 0; b < 6; b++) {
+        free(ix->start[b]);
+        free(ix->list[b]);
+        ix->start[b] = NULL, ix->list[b] = NULL;
     }
 }
 
-/* Index of the rotated code within max_bits (at most 5) of `code`, or -1. tag36h11 codes (with
- * rotations) are at least 11 bits apart, so any match is unique. */
+/* Split nbits into `blocks` blocks of bits (low bits first; the larger blocks last) and index every
+ * rotated code by each block's value. Returns -1 if out of memory. */
+static int build_index(code_index *ix, const uint64_t *codes, int n, int nbits, int blocks, int probe) {
+    ix->blocks = blocks;
+    ix->probe = probe;
+    for (int b = 0, shift = 0; b < blocks; b++) {
+        ix->shift[b] = shift;
+        ix->bits[b] = nbits / blocks + (b >= blocks - nbits % blocks ? 1 : 0);
+        shift += ix->bits[b];
+        size_t buckets = (size_t)1 << ix->bits[b];
+        uint32_t *st = (uint32_t *)calloc(buckets + 1, sizeof(uint32_t));
+        uint32_t *ls = (uint32_t *)malloc((size_t)n * sizeof(uint32_t));
+        ix->start[b] = st, ix->list[b] = ls;
+        if (st == NULL || ls == NULL) return -1;
+        uint64_t m = buckets - 1;
+        for (int i = 0; i < n; i++) st[((codes[i] >> ix->shift[b]) & m) + 1]++;
+        for (size_t v = 0; v < buckets; v++) st[v + 1] += st[v];
+        /* Fill each bucket in code order, using the next bucket's start as a cursor, then shift back. */
+        for (int i = 0; i < n; i++) ls[st[(codes[i] >> ix->shift[b]) & m]++] = (uint32_t)i;
+        for (size_t v = buckets; v > 0; v--) st[v] = st[v - 1];
+        st[0] = 0;
+    }
+    return 0;
+}
+
+/* Index of the rotated code within max_bits (at most 5) of `code`, or -1. When codes are at least
+ * 2 * max_bits + 1 apart (the final decode), any match is unique. */
 static int nearest_code(napa_detector *det, uint64_t code, int max_bits, int *distance) {
-    int blocks, bits;
-    const uint16_t *start, *list;
-    if (max_bits <= 3) {
-        blocks = 4, bits = 9, start = &det->mi9_start[0][0], list = &det->mi9_list[0][0];
-    } else {
-        blocks = 6, bits = 6, start = &det->mi6_start[0][0], list = &det->mi6_list[0][0];
+    family_layout *L = &det->fam;
+    const code_index *ix = max_bits <= 3 ? &L->index3 : &L->index5;
+    if (++L->stamp_now == 0) {
+        memset(L->stamp, 0, sizeof(uint32_t) * (size_t)L->nrot);
+        L->stamp_now = 1;
     }
-    if (++det->stamp_now == 0) {
-        memset(det->stamp, 0, sizeof det->stamp);
-        det->stamp_now = 1;
-    }
-    int buckets = 1 << bits;
-    for (int b = 0; b < blocks; b++) {
-        const uint16_t *st = start + b * (buckets + 1);
-        const uint16_t *ls = list + b * NAPA_ROTATED;
-        int v = (int)((code >> (b * bits)) & (uint64_t)(buckets - 1));
-        for (int e = st[v]; e < st[v + 1]; e++) {
-            int i = ls[e];
-            if (det->stamp[i] == det->stamp_now) continue;
-            det->stamp[i] = det->stamp_now;
-            int d = napa_popcount64(code ^ det->codes[i]);
-            if (d <= max_bits) {
-                *distance = d;
-                return i;
+    for (int b = 0; b < ix->blocks; b++) {
+        const uint32_t *st = ix->start[b];
+        const uint32_t *ls = ix->list[b];
+        uint64_t v0 = (code >> ix->shift[b]) & (((uint64_t)1 << ix->bits[b]) - 1);
+        for (int flip = -1; flip < (ix->probe ? ix->bits[b] : 0); flip++) {
+            uint64_t v = flip < 0 ? v0 : v0 ^ ((uint64_t)1 << flip);
+            for (uint32_t e = st[v]; e < st[v + 1]; e++) {
+                uint32_t i = ls[e];
+                if (L->stamp[i] == L->stamp_now) continue;
+                L->stamp[i] = L->stamp_now;
+                int d = napa_popcount64(code ^ L->codes[i]);
+                if (d <= max_bits) {
+                    *distance = d;
+                    return (int)i;
+                }
             }
         }
     }
     return -1;
 }
 
-static void load_family(napa_detector *det) {
-    for (int rot = 0; rot < 4; rot++) {
-        for (int id = 0; id < NAPA_TAG36H11_COUNT; id++) {
-            uint64_t code = napa_tag36h11_codes[id];
-            for (int k = 0; k < rot; k++) {
-                code = rotate_ccw(code);
-            }
-            int index = rot * NAPA_TAG36H11_COUNT + id;
-            det->codes[index] = code;
-            det->ids[index] = (int16_t)id;
-            det->rotations[index] = (int8_t)rot;
+static int errors_connected(const family_layout *L, uint64_t diff);
+
+static const napa_family *find_family(const char *name) {
+    if (name == NULL) return NULL;
+    for (int i = 0; i < NAPA_FAMILY_COUNT; i++)
+        if (strcmp(napa_families[i].name, name) == 0) return &napa_families[i];
+    return NULL;
+}
+
+static void free_family(family_layout *L) {
+    free(L->codes);
+    free(L->ids);
+    free(L->rotations);
+    free(L->stamp);
+    free_index(&L->index3);
+    free_index(&L->index5);
+}
+
+/* Lay a family out for decoding: grid cells, rotations, neighbours, and the code indexes. */
+static int load_family(family_layout *L, const napa_family *f) {
+    memset(L, 0, sizeof *L);
+    L->f = f;
+    L->width = f->width, L->nbits = f->nbits, L->ncodes = f->ncodes, L->nrot = 4 * f->ncodes;
+    L->cells = f->width;
+    /* Each side's clipping estimate averages about (width - 2) / 2 border measurements: allow its noise. */
+    L->bias_slack = sqrt(6.0 / (f->width - 2));
+    L->max_hamming = (f->min_distance - 1) / 2;
+    L->mask = f->nbits == 64 ? ~(uint64_t)0 : (((uint64_t)1 << f->nbits) - 1);
+    int lo = 0, hi = f->width - 1;
+    for (int k = 0; k < f->nbits; k++) {
+        lo = f->x[k] < lo ? f->x[k] : lo, lo = f->y[k] < lo ? f->y[k] : lo;
+        hi = f->x[k] > hi ? f->x[k] : hi, hi = f->y[k] > hi ? f->y[k] : hi;
+    }
+    L->outer = -lo, L->grid = hi - lo + 1;
+    if (L->outer != hi - (f->width - 1) || L->grid > 16 || f->nbits > 64) return -1; /* not symmetric */
+    int8_t perm[64];
+    for (int k = 0; k < f->nbits; k++) {
+        int gx = f->x[k] + L->outer, gy = f->y[k] + L->outer;
+        L->cell[k] = (int8_t)(gy * L->grid + gx);
+        L->is_data[gy * L->grid + gx] = 1;
+    }
+    for (int k = 0; k < f->nbits; k++) {
+        int gx = L->cell[k] % L->grid, gy = L->cell[k] / L->grid;
+        /* Turned 90 degrees counter-clockwise, as numpy's rot90: out[y][x] = in[x][grid - 1 - y]. */
+        int src = gx * L->grid + (L->grid - 1 - gy);
+        perm[k] = -1;
+        for (int j = 0; j < f->nbits; j++)
+            if (L->cell[j] == src) perm[k] = (int8_t)j;
+        if (perm[k] < 0) return -1; /* a layout that doesn't rotate onto itself */
+        for (int j = 0; j < f->nbits; j++) {
+            int dx = L->cell[j] % L->grid - gx, dy = L->cell[j] / L->grid - gy;
+            if (j != k && dx >= -1 && dx <= 1 && dy >= -1 && dy <= 1) L->near[k] |= (uint64_t)1 << (f->nbits - 1 - j);
         }
     }
-    build_index(det->codes, 6, 6, &det->mi6_start[0][0], &det->mi6_list[0][0]);
-    build_index(det->codes, 4, 9, &det->mi9_start[0][0], &det->mi9_list[0][0]);
+    L->codes = (uint64_t *)malloc(sizeof(uint64_t) * (size_t)L->nrot);
+    L->ids = (int32_t *)malloc(sizeof(int32_t) * (size_t)L->nrot);
+    L->rotations = (int8_t *)malloc((size_t)L->nrot);
+    L->stamp = (uint32_t *)calloc((size_t)L->nrot, sizeof(uint32_t));
+    if (L->codes == NULL || L->ids == NULL || L->rotations == NULL || L->stamp == NULL) return -1;
+    int max_dark = 0;
+    for (int id = 0; id < f->ncodes; id++) {
+        /* Napa reads reversed families on the inverted image, where a printed white cell is dark. */
+        uint64_t code = f->reversed ? ~f->codes[id] & L->mask : f->codes[id];
+        int dark = 0;
+        for (int k = 0; k < f->nbits; k++) {
+            int gx = L->cell[k] % L->grid - L->outer, gy = L->cell[k] / L->grid - L->outer;
+            int inside = gx > 0 && gy > 0 && gx < f->width - 1 && gy < f->width - 1;
+            dark += inside && !((code >> (f->nbits - 1 - k)) & 1);
+        }
+        max_dark = dark > max_dark ? dark : max_dark;
+        for (int rot = 0; rot < 4; rot++) {
+            int index = rot * f->ncodes + id;
+            L->codes[index] = code;
+            L->ids[index] = id;
+            L->rotations[index] = (int8_t)rot;
+            code = rotate_bits(code, perm, f->nbits);
+        }
+    }
+    /* Interior cells that aren't data (tagCustom48h12's centre) are left blank on the official artwork:
+     * printed white, they're dark on the inverted image. Count them as dark. */
+    for (int gy = 1; gy < f->width - 1; gy++)
+        for (int gx = 1; gx < f->width - 1; gx++) max_dark += !L->is_data[(gy + L->outer) * L->grid + gx + L->outer];
+    /* A tag36h11 tag is at most 54/64 dark (every code has at least 10 white payload cells); blobs are
+     * rejected above 0.95 of the grown quad. Other families keep the same slack over their own bound. */
+    int dark_cells = 4 * (f->width - 1) + max_dark;
+    L->fill_limit = 0.95 + ((double)dark_cells / (f->width * f->width) - 54.0 / 64.0);
+    /* How likely a random pattern is to fall within h bits of some rotated code: nrot * sum_k C(n, k) / 2^n,
+     * with three-bit corrections counted only for touching cells (errors_connected). Recommend the
+     * largest h whose chance is at most 1e-4, about three times tag36h11's at its default of 3. */
+    double placements[4] = {1, f->nbits, 0.5 * f->nbits * (f->nbits - 1), 0};
+    for (int a = 0; a < f->nbits; a++)
+        for (int b = a + 1; b < f->nbits; b++)
+            for (int c = b + 1; c < f->nbits; c++) {
+                uint64_t bits = ((uint64_t)1 << (f->nbits - 1 - a)) | ((uint64_t)1 << (f->nbits - 1 - b)) |
+                                ((uint64_t)1 << (f->nbits - 1 - c));
+                placements[3] += errors_connected(L, bits);
+            }
+    double chance = 0;
+    for (int h = 0; h <= 3 && h <= L->max_hamming; h++) {
+        chance += L->nrot * placements[h] / ldexp(1.0, f->nbits);
+        if (h == 0 || chance <= 1e-4) L->recommended_hamming = h;
+        if (chance > 1e-4) break;
+    }
+    /* Families that can't afford three hard corrections get soft ones (decode_quad), up to 3 bits. */
+    int cap = L->max_hamming < 3 ? L->max_hamming : 3;
+    L->soft_hamming = L->recommended_hamming < cap ? cap : 0;
+    if (build_index(&L->index3, L->codes, L->nrot, f->nbits, 4, 0) != 0) return -1;
+    /* Up to 5 wrong bits: six exact blocks, or for large families three blocks probed with one changed bit
+     * each (five errors leave some block with at most one), whose buckets are far smaller. */
+    int large = L->nrot > 4096;
+    if (build_index(&L->index5, L->codes, L->nrot, f->nbits, large ? 3 : 6, large) != 0) return -1;
+    return 0;
 }
 
 int napa_tag36h11_code(int id, uint64_t *code) {
-    if (code == NULL || id < 0 || id >= NAPA_TAG36H11_COUNT) return -1;
-    *code = napa_tag36h11_codes[id];
+    return napa_family_code("tag36h11", id, code);
+}
+
+int napa_family_code(const char *family, int id, uint64_t *code) {
+    const napa_family *f = find_family(family);
+    if (f == NULL || code == NULL || id < 0 || id >= f->ncodes) return -1;
+    *code = f->codes[id];
+    return 0;
+}
+
+int napa_family_count(void) { return NAPA_FAMILY_COUNT; }
+
+const char *napa_family_name(int index) {
+    return index >= 0 && index < NAPA_FAMILY_COUNT ? napa_families[index].name : NULL;
+}
+
+int napa_family_info(const char *family, napa_family_layout *info) {
+    const napa_family *f = find_family(family);
+    if (f == NULL || info == NULL) return -1;
+    info->ncodes = f->ncodes, info->nbits = f->nbits, info->width = f->width, info->total_width = f->total_width;
+    info->reversed = f->reversed, info->min_distance = f->min_distance;
+    family_layout L;
+    if (load_family(&L, f) != 0) {
+        free_family(&L);
+        return -1;
+    }
+    info->max_hamming = L.max_hamming < 3 ? L.max_hamming : 3;
+    info->recommended_hamming = L.recommended_hamming;
+    free_family(&L);
+    for (int k = 0; k < 64; k++) {
+        info->x[k] = k < f->nbits ? f->x[k] : 0;
+        info->y[k] = k < f->nbits ? f->y[k] : 0;
+    }
     return 0;
 }
 
 /* ---------------------------------------------------------------- lifecycle */
 
-napa_detector *napa_create(void) {
+napa_detector *napa_create(void) { return napa_create_family("tag36h11"); }
+
+napa_detector *napa_create_family(const char *family) {
+    const napa_family *f = find_family(family);
+    if (f == NULL) return NULL;
     napa_detector *det = (napa_detector *)calloc(1, sizeof(napa_detector));
     if (det != NULL) {
-        load_family(det);
+        if (load_family(&det->fam, f) != 0) {
+            napa_destroy(det);
+            return NULL;
+        }
 #ifdef NAPA_SSSE3_DISPATCH
         __builtin_cpu_init();
         det->ssse3 = __builtin_cpu_supports("ssse3") != 0;
@@ -246,6 +406,7 @@ void napa_destroy(napa_detector *det) {
     }
     free(det->level);
     free(det->failed);
+    free_family(&det->fam);
     free(det->tile_min);
     free(det->tile_max);
     free(det->nb_lo);
@@ -325,7 +486,16 @@ static int ensure_buffers(napa_detector *det, size_t pixels, size_t tiles, size_
 
 /* ---------------------------------------------------------------- sampling */
 
-static inline double sample_bilinear(const uint8_t *img, int w, int h, int stride, double x, double y) {
+/* The frame as the detector reads it. Reversed families read it inverted, one sample at a time, so the
+ * frame is never copied. */
+typedef struct {
+    const uint8_t *p;
+    int w, h, stride, invert;
+} image_view;
+
+static inline double sample_bilinear(const image_view *im, double x, double y) {
+    const uint8_t *img = im->p;
+    const int w = im->w, h = im->h, stride = im->stride;
     /* Negated compares also clamp NaN (from a degenerate homography) instead of reading out of bounds. */
     if (!(x >= 0)) x = 0;
     if (!(y >= 0)) y = 0;
@@ -338,7 +508,8 @@ static inline double sample_bilinear(const uint8_t *img, int w, int h, int strid
     const uint8_t *p = img + (size_t)y0 * stride + x0;
     double a = p[0] + (p[1] - p[0]) * fx;
     double b = p[stride] + (p[stride + 1] - p[stride]) * fx;
-    return a + (b - a) * fy;
+    double v = a + (b - a) * fy;
+    return im->invert ? 255.0 - v : v;
 }
 
 /* ---------------------------------------------------------------- threshold */
@@ -751,9 +922,10 @@ typedef struct {
     double black, white;
 } edge_levels;
 
-static int fit_sides(const uint8_t *img, int w, int h, int stride, const vec2 in[4], vec2 out[4], double r_out,
-                     double r_in, int min_edge, int outermost, int max_points, double *edge_width,
-                     const edge_levels *levels) {
+static int fit_sides(const image_view *im, const vec2 in[4], vec2 out[4], double r_out, double r_in, int min_edge,
+                     int outermost, int max_points, double *edge_width, const edge_levels *levels, double cells) {
+    const uint8_t *img = im->p;
+    const int w = im->w, h = im->h, stride = im->stride;
     double width_sum = 0;
     int width_n = 0;
     double reach = 0.5 * (r_out + r_in);
@@ -819,10 +991,12 @@ static int fit_sides(const uint8_t *img, int w, int h, int stride, const vec2 in
                     int32_t bot = (q[stride] << 12) + (q[stride + 1] - q[stride]) * fx;
                     prof[j] = ((int64_t)top << 12) + (int64_t)(bot - top) * fy;
                 }
+                if (im->invert)
+                    for (int j = 0; j < K; j++) prof[j] = ((int64_t)255 << 24) - prof[j];
             } else {
                 for (int j = 0; j < K; j++) {
                     double o = -r_out + j * step;
-                    prof[j] = (int64_t)(sample_bilinear(img, w, h, stride, bx + nx * o, by + ny * o) * 16777216.0 + 0.5);
+                    prof[j] = (int64_t)(sample_bilinear(im, bx + nx * o, by + ny * o) * 16777216.0 + 0.5);
                 }
             }
             /* outside (white) minus inside (black): the outer border edge is a positive peak. */
@@ -869,14 +1043,14 @@ static int fit_sides(const uint8_t *img, int w, int h, int stride, const vec2 in
              * the tag's black and white stays exact for any symmetric blur narrower than two cells.
              * Black is scaled by the local white, so it follows lighting that varies across the tag. */
             if (levels != NULL && levels->black < levels->white &&
-                (jr - jl + 1) * step > NAPA_CROSSING_CELLS * len / 8.0) {
+                (jr - jl + 1) * step > NAPA_CROSSING_CELLS * len / cells) {
                 /* Levels from the centres of the cells either side (white margin, black border), half
                  * a cell from the edge: outside the blurred ramp the window would sit in. */
-                double half = len / 16.0;
+                double half = len / (2.0 * cells);
                 for (int iter = 0; iter < NAPA_CROSS_ITERS; iter++) {
                     double pos0 = -r_out + cj * step;
-                    double wl = sample_bilinear(img, w, h, stride, bx + nx * (pos0 - half), by + ny * (pos0 - half));
-                    double bl = sample_bilinear(img, w, h, stride, bx + nx * (pos0 + half), by + ny * (pos0 + half));
+                    double wl = sample_bilinear(im, bx + nx * (pos0 - half), by + ny * (pos0 - half));
+                    double bl = sample_bilinear(im, bx + nx * (pos0 + half), by + ny * (pos0 + half));
                     double mid = 0.5 * (wl + bl) * 16777216.0;
                     double best_c = -1, best_d = 1e9;
                     for (int j = jl - 1; j <= jr && j + 1 < K; j++) {
@@ -1026,28 +1200,16 @@ static double median_even(double *v, int n) {
     return 0.5 * (v[k] + upper);
 }
 
-/* Whether the set bits of a 36-bit payload mask (row-major 6x6, most significant bit first) form
- * one 8-connected group of cells. */
-static int errors_connected(uint64_t diff) {
-    int cells[36], n = 0;
-    for (int i = 0; i < 36; i++)
-        if (diff >> (35 - i) & 1) cells[n++] = i;
-    if (n <= 1) return 1;
-    int reached = 1, frontier[36], nf = 1, seen = 1; /* bitmask over cells[] indices */
-    frontier[0] = 0;
-    while (nf) {
-        int c = cells[frontier[--nf]];
-        for (int j = 0; j < n; j++) {
-            if (seen >> j & 1) continue;
-            int dr = cells[j] / 6 - c / 6, dc = cells[j] % 6 - c % 6;
-            if (dr >= -1 && dr <= 1 && dc >= -1 && dc <= 1) {
-                seen |= 1 << j;
-                frontier[nf++] = j;
-                reached++;
-            }
-        }
+/* Whether the set bits of a code difference (bits as the family's cells) form one 8-connected group. */
+static int errors_connected(const family_layout *L, uint64_t diff) {
+    if (napa_popcount64(diff) <= 1) return 1;
+    uint64_t reached = diff & (~diff + 1), last = 0;
+    while (reached != last) {
+        last = reached;
+        for (int k = 0; k < L->nbits; k++)
+            if (reached >> (L->nbits - 1 - k) & 1) reached |= L->near[k] & diff;
     }
-    return reached == n;
+    return reached == diff;
 }
 
 /* Centre of mass of the strongest falling (white to black going along the profile) or rising
@@ -1072,7 +1234,7 @@ static double lobe_centroid(const double *prof, int from, int to, int falling) {
  * per side and the one-cell border by 2 * delta. Measuring the border's width where a white payload
  * cell lies inside it gives delta = (cell - width) / 1.75 against the measured outline. Returns the
  * number of border measurements averaged into *delta. */
-static int border_bias(const uint8_t *img, int w, int h, int stride, const vec2 q[4], double black, double white,
+static int border_bias(const family_layout *L, const image_view *im, const vec2 q[4], double black, double white,
                        double *delta) {
     enum { N = 33 };
     double H[9], sum = 0, side_sum[4] = {0, 0, 0, 0};
@@ -1080,25 +1242,25 @@ static int border_bias(const uint8_t *img, int w, int h, int stride, const vec2 
     square_to_quad(q, H);
     double mid = 0.5 * (black + white);
     for (int side = 0; side < 4; side++) {
-        for (int c = 1; c < 7; c++) {
+        for (int c = 1; c < L->width - 1; c++) {
             /* (a, t): position along the side and depth inward, in cells; side 0 is the top (v = 0). */
             double a = c + 0.5;
 #define UNIT(t, uu, vv)                                                                                      \
     do {                                                                                                     \
-        double t_ = (t) / 8.0, a_ = a / 8.0;                                                                 \
+        double t_ = (t) / L->cells, a_ = a / L->cells;                                                       \
         uu = side == 0 ? a_ : side == 1 ? 1 - t_ : side == 2 ? a_ : t_;                                      \
         vv = side == 0 ? t_ : side == 1 ? a_ : side == 2 ? 1 - t_ : a_;                                      \
     } while (0)
             double u, v;
             UNIT(1.5, u, v);
             vec2 pc = project(H, u, v);
-            if (sample_bilinear(img, w, h, stride, pc.x, pc.y) < mid) continue; /* dark payload cell */
+            if (sample_bilinear(im, pc.x, pc.y) < mid) continue; /* dark payload cell */
             double prof[N];
             vec2 pts[N];
             for (int j = 0; j < N; j++) {
                 UNIT(-0.5 + 2.0 * j / (N - 1), u, v);
                 pts[j] = project(H, u, v);
-                prof[j] = sample_bilinear(img, w, h, stride, pts[j].x, pts[j].y);
+                prof[j] = sample_bilinear(im, pts[j].x, pts[j].y);
             }
             /* Outer edge within half a cell of t = 0, inner edge within half a cell of t = 1. */
             double jo = lobe_centroid(prof, 1, N / 2 - 1, 1), ji = lobe_centroid(prof, N / 2 + 1, N - 2, 0);
@@ -1120,7 +1282,8 @@ static int border_bias(const uint8_t *img, int w, int h, int stride, const vec2 
     /* Clipping moves every side alike. Sides that disagree mean the border simply isn't one cell
      * wide (a rasterised tag whose cells were rounded to whole pixels): leave such a tag alone. */
     for (int side = 0; side < 4; side++) {
-        if (side_n[side] && fabs(side_sum[side] / side_n[side] - *delta) > 0.05 + 0.25 * fabs(*delta)) return 0;
+        if (side_n[side] && fabs(side_sum[side] / side_n[side] - *delta) > (0.05 + 0.25 * fabs(*delta)) * L->bias_slack)
+            return 0;
     }
     return n;
 }
@@ -1146,65 +1309,75 @@ static void grow_quad(const vec2 q[4], double d, vec2 out[4]) {
     }
 }
 
-/* Read the 28 border cells (into grid and border) and the 36-sample quiet-zone ring half a cell outside
- * them, for the tag square mapped by H. Black and white are their medians. Returns how many border cells
- * are darker than the midpoint, or -1 if white - black is under min_contrast. */
-static int read_border(const uint8_t *img, int w, int h, int stride, const double H[9], int min_contrast,
-                       double grid[64], double border[28], double *black_out, double *white_out) {
-    double ring[36];
+/* Read the square's border cells (into grid and border) and the quiet ring half a cell outside them, for
+ * the square mapped by H: 28 and 36 samples for an 8-cell square. Black and white are their medians.
+ * Returns how many border cells are darker than the midpoint, or -1 if white - black is under
+ * min_contrast. */
+static int read_border(const family_layout *L, const image_view *im, const double H[9], int min_contrast,
+                       double *grid, double *border, double *black_out, double *white_out) {
+    const int W = L->width, o = L->outer, G = L->grid;
+    const double cells = L->cells;
+    double ring[4 * 16 + 4];
     int nb = 0, nr = 0;
-    for (int r = 0; r < 8; r++) {
-        for (int c = 0; c < 8; c += (r == 0 || r == 7) ? 1 : 7) {
-            vec2 p = project(H, (c + 0.5) / 8.0, (r + 0.5) / 8.0);
-            double v = sample_bilinear(img, w, h, stride, p.x, p.y);
-            grid[r * 8 + c] = v;
+    for (int r = 0; r < W; r++) {
+        for (int c = 0; c < W; c += (r == 0 || r == W - 1) ? 1 : W - 1) {
+            vec2 p = project(H, (c + 0.5) / cells, (r + 0.5) / cells);
+            double v = sample_bilinear(im, p.x, p.y);
+            grid[(r + o) * G + c + o] = v;
             border[nb++] = v;
         }
     }
-    for (int i = 0; i < 10; i++) {
-        double u = (i - 0.5) / 8.0;
+    for (int i = 0; i < W + 2; i++) {
+        double u = (i - 0.5) / cells;
         vec2 p;
-        p = project(H, u, -0.5 / 8.0);
-        ring[nr++] = sample_bilinear(img, w, h, stride, p.x, p.y);
-        p = project(H, u, 8.5 / 8.0);
-        ring[nr++] = sample_bilinear(img, w, h, stride, p.x, p.y);
+        p = project(H, u, -0.5 / cells);
+        ring[nr++] = sample_bilinear(im, p.x, p.y);
+        p = project(H, u, (W + 0.5) / cells);
+        ring[nr++] = sample_bilinear(im, p.x, p.y);
     }
-    for (int i = 1; i < 9; i++) {
-        double v = (i - 0.5) / 8.0;
+    for (int i = 1; i < W + 1; i++) {
+        double v = (i - 0.5) / cells;
         vec2 p;
-        p = project(H, -0.5 / 8.0, v);
-        ring[nr++] = sample_bilinear(img, w, h, stride, p.x, p.y);
-        p = project(H, 8.5 / 8.0, v);
-        ring[nr++] = sample_bilinear(img, w, h, stride, p.x, p.y);
+        p = project(H, -0.5 / cells, v);
+        ring[nr++] = sample_bilinear(im, p.x, p.y);
+        p = project(H, (W + 0.5) / cells, v);
+        ring[nr++] = sample_bilinear(im, p.x, p.y);
     }
-    double bs[28], rs[36];
-    memcpy(bs, border, sizeof bs);
-    memcpy(rs, ring, sizeof rs);
-    double black = median_even(bs, 28);
-    double white = median_even(rs, 36);
+    double bs[4 * 16], rs[4 * 16 + 4];
+    memcpy(bs, border, sizeof(double) * (size_t)nb);
+    memcpy(rs, ring, sizeof(double) * (size_t)nr);
+    double black = median_even(bs, nb);
+    double white = median_even(rs, nr);
     *black_out = black, *white_out = white;
     if (white - black < min_contrast) return -1;
     double thr = 0.5 * (black + white);
     int dark = 0;
-    for (int i = 0; i < 28; i++) dark += border[i] < thr;
+    for (int i = 0; i < nb; i++) dark += border[i] < thr;
     return dark;
 }
 
+/* The params' min_border_cells counts out of tag36h11's 28 border cells; scale it to the family's. */
+static int min_border(const family_layout *L, int min_border_cells) {
+    return (min_border_cells * 4 * (L->width - 1) + 14) / 28;
+}
+
 /* Whether quad q has a plausible tag border, before any edge fitting: its border cells read dark against
- * the ring outside with at least min_dark of 28 cells. */
-static int border_plausible(const uint8_t *img, int w, int h, int stride, const vec2 q[4], int min_contrast,
+ * the ring outside, with at least min_dark of them dark. */
+static int border_plausible(const family_layout *L, const image_view *im, const vec2 q[4], int min_contrast,
                             int min_dark) {
-    double H[9], grid[64], border[28], black, white;
+    double H[9], grid[256], border[64], black, white;
     square_to_quad(q, H);
-    return read_border(img, w, h, stride, H, min_contrast, grid, border, &black, &white) >= min_dark;
+    return read_border(L, im, H, min_contrast, grid, border, &black, &white) >= min_dark;
 }
 
 /* Decode the tag inside quad q (reordered in place to a consistent winding). `slack` loosens the
  * border and Hamming limits, for a cheap early decode on unrefined corners. Optionally reports each
  * side's border level (side_level) and the tag's black and white levels. */
-static int decode_quad(napa_detector *det, const uint8_t *img, int w, int h, int stride, vec2 q[4],
+static int decode_quad(napa_detector *det, const image_view *im, vec2 q[4],
                        const napa_params *params, int slack, napa_detection *out, double side_level[4],
                        edge_levels *levels) {
+    const family_layout *L = &det->fam;
+    const int W = L->width, o = L->outer, G = L->grid;
     if (signed_area(q) < 0) {
         vec2 t = q[1];
         q[1] = q[3];
@@ -1212,86 +1385,112 @@ static int decode_quad(napa_detector *det, const uint8_t *img, int w, int h, int
     }
     double H[9];
     square_to_quad(q, H);
-    double grid[64];
-    double border[28];
+    double grid[256];
+    double border[64];
     double black, white;
     /* Border cells and the quiet-zone ring first: most candidates are rejected on their contrast
-     * or border before the 36 payload cells are worth sampling. */
-    int dark = read_border(img, w, h, stride, H, params->min_contrast, grid, border, &black, &white);
+     * or border before the payload cells are worth sampling. */
+    int dark = read_border(L, im, H, params->min_contrast, grid, border, &black, &white);
     if (dark < 0) return 0;
     if (levels != NULL) levels->black = black, levels->white = white;
     double thr = 0.5 * (black + white);
-    if (dark < params->min_border_cells - slack) return 0;
-    for (int r = 1; r < 7; r++) {
-        for (int c = 1; c < 7; c++) {
-            vec2 p = project(H, (c + 0.5) / 8.0, (r + 0.5) / 8.0);
-            grid[r * 8 + c] = sample_bilinear(img, w, h, stride, p.x, p.y);
+    if (dark < min_border(L, params->min_border_cells) - slack) return 0;
+    /* Every other cell of the grid: the payload, and for families with data outside the quiet ring,
+     * that ring and the data around it. */
+    for (int r = 1 - o; r < W - 1 + o; r++) {
+        for (int c = 1 - o; c < W - 1 + o; c++) {
+            if (o > 0 && r >= 0 && r < W && c >= 0 && c < W && (r == 0 || r == W - 1 || c == 0 || c == W - 1))
+                continue; /* a border cell, already read */
+            vec2 p = project(H, (c + 0.5) / L->cells, (r + 0.5) / L->cells);
+            grid[(r + o) * G + c + o] = sample_bilinear(im, p.x, p.y);
         }
     }
-    double raw[64];
-    memcpy(raw, grid, sizeof raw);
+    if (o > 0) {
+        /* The grid's outermost ring, outside the quiet ring. */
+        for (int r = -o; r < W + o; r++) {
+            for (int c = -o; c < W + o; c += (r == -o || r == W + o - 1) ? 1 : W + 2 * o - 1) {
+                vec2 p = project(H, (c + 0.5) / L->cells, (r + 0.5) / L->cells);
+                grid[(r + o) * G + c + o] = sample_bilinear(im, p.x, p.y);
+            }
+        }
+    }
+    double raw[256];
+    memcpy(raw, grid, sizeof(double) * (size_t)(G * G));
     /* Sharpen the cell samples, as upstream AprilTag does, to undo blur between neighbouring cells. */
     if (params->sharpening_x100 > 0) {
         double k = params->sharpening_x100 / 100.0;
-        double sharp[64];
-        for (int r = 0; r < 8; r++) {
-            for (int c = 0; c < 8; c++) {
-                double v = grid[r * 8 + c], lap = 4 * v;
-                lap -= r > 0 ? grid[(r - 1) * 8 + c] : v;
-                lap -= r < 7 ? grid[(r + 1) * 8 + c] : v;
-                lap -= c > 0 ? grid[r * 8 + c - 1] : v;
-                lap -= c < 7 ? grid[r * 8 + c + 1] : v;
-                sharp[r * 8 + c] = v + k * lap;
+        double sharp[256];
+        for (int r = 0; r < G; r++) {
+            for (int c = 0; c < G; c++) {
+                double v = grid[r * G + c], lap = 4 * v;
+                lap -= r > 0 ? grid[(r - 1) * G + c] : v;
+                lap -= r < G - 1 ? grid[(r + 1) * G + c] : v;
+                lap -= c > 0 ? grid[r * G + c - 1] : v;
+                lap -= c < G - 1 ? grid[r * G + c + 1] : v;
+                sharp[r * G + c] = v + k * lap;
             }
         }
-        memcpy(grid, sharp, sizeof sharp);
+        memcpy(grid, sharp, sizeof(double) * (size_t)(G * G));
     }
     if (side_level != NULL) {
         /* Each side's non-corner border cells (top, right, bottom, left, unsharpened), as a fraction of
          * the way from the tag's black to its white: about 0 for a true border side. */
         for (int k = 0; k < 4; k++) side_level[k] = 0;
-        for (int k = 1; k < 7; k++) {
-            side_level[0] += raw[k];
-            side_level[1] += raw[k * 8 + 7];
-            side_level[2] += raw[56 + k];
-            side_level[3] += raw[k * 8];
+        for (int k = 1; k < W - 1; k++) {
+            side_level[0] += raw[o * G + k + o];
+            side_level[1] += raw[(k + o) * G + W - 1 + o];
+            side_level[2] += raw[(W - 1 + o) * G + k + o];
+            side_level[3] += raw[(k + o) * G + o];
         }
-        for (int k = 0; k < 4; k++) side_level[k] = (side_level[k] / 6.0 - black) / (white - black);
+        for (int k = 0; k < 4; k++) side_level[k] = (side_level[k] / (W - 2) - black) / (white - black);
     }
 
     uint64_t code = 0;
-    for (int r = 1; r < 7; r++) {
-        for (int c = 1; c < 7; c++) {
-            code = (code << 1) | (grid[r * 8 + c] > thr ? 1u : 0u);
+    for (int k = 0; k < L->nbits; k++) code = (code << 1) | (grid[L->cell[k]] > thr ? 1u : 0u);
+    int max_hamming = params->max_hamming < L->max_hamming ? params->max_hamming : L->max_hamming;
+    int soft = L->soft_hamming > max_hamming ? L->soft_hamming : max_hamming;
+    int best = 64;
+    int bi = nearest_code(det, code, (slack ? soft : max_hamming) + slack, &best);
+    if (bi < 0 && slack == 0 && soft > max_hamming) {
+        /* Soft decision, for families whose codes are too close for more hard corrections: accept up to
+         * `soft` wrong bits only if they are exactly the least certain readings (nearest the threshold),
+         * as blur and compression make them. A random pattern's wrong bits are that set by chance only
+         * once in C(n, d), so each extra bit adds about the chance-match rate of exact decoding. */
+        bi = nearest_code(det, code, soft, &best);
+        if (bi >= 0) {
+            uint64_t wrong = code ^ L->codes[bi];
+            double worst_wrong = 0, best_right = 1e300;
+            for (int k = 0; k < L->nbits; k++) {
+                double certainty = fabs(grid[L->cell[k]] - thr);
+                if (wrong >> (L->nbits - 1 - k) & 1) worst_wrong = certainty > worst_wrong ? certainty : worst_wrong;
+                else best_right = certainty < best_right ? certainty : best_right;
+            }
+            if (worst_wrong >= best_right) bi = -1;
         }
     }
-    int best = 64;
-    int bi = nearest_code(det, code, params->max_hamming + slack, &best);
     if (bi < 0) return 0;
     /* Three corrected bits are accepted only when the wrong cells touch (8-connected): real damage,
      * a finger, cable, or glare spot, is spatially coherent, while a random pattern that happens to
-     * fall within three bits of a code has its errors scattered: only 420 of the 7,140 three-cell
-     * placements are connected, so this rejects ~94% of chance three-bit matches. */
-    if (slack == 0 && best == 3 && !errors_connected(code ^ det->codes[bi])) return 0;
-    int rot = det->rotations[bi];
+     * fall within three bits of a code has its errors scattered: for tag36h11, only 420 of the 7,140
+     * three-cell placements are connected, so this rejects ~94% of chance three-bit matches. */
+    if (slack == 0 && best == 3 && !errors_connected(L, code ^ L->codes[bi])) return 0;
+    int rot = L->rotations[bi];
     /* Observed grid == rot90(canonical, rot); the canonical top-left sits at corner index (4 - rot) % 4. */
     for (int k = 0; k < 4; k++) {
         vec2 c = q[(k - rot + 4) & 3];
         out->corners[2 * k] = c.x;
         out->corners[2 * k + 1] = c.y;
     }
-    out->id = det->ids[bi];
+    out->id = L->ids[bi];
     out->hamming = best;
     /* As upstream AprilTag: the smaller of the white and black payload bits' mean distance from the
      * threshold, in grey levels. Low values mean bits were nearly ambiguous. */
     double white_sum = 0, black_sum = 0;
     int white_n = 0, black_n = 0;
-    for (int r = 1; r < 7; r++) {
-        for (int c = 1; c < 7; c++) {
-            double v = grid[r * 8 + c] - thr;
-            if (v > 0) white_sum += v, white_n++;
-            else black_sum -= v, black_n++;
-        }
+    for (int k = 0; k < L->nbits; k++) {
+        double v = grid[L->cell[k]] - thr;
+        if (v > 0) white_sum += v, white_n++;
+        else black_sum -= v, black_n++;
     }
     double wm = white_n ? white_sum / white_n : 0, bm = black_n ? black_sum / black_n : 0;
     out->decision_margin = (float)(wm < bm ? wm : bm);
@@ -1456,6 +1655,10 @@ static int contrast_floors(napa_detector *det, const uint8_t *L, int lw, int lh,
     return frame;
 }
 
+static void invert_bytes(uint8_t *p, size_t n) {
+    for (size_t i = 0; i < n; i++) p[i] = (uint8_t)(255 - p[i]);
+}
+
 /* Remember a failed candidate's fitted quad. Best effort: without memory, nothing is remembered. */
 static void remember_failure(napa_detector *det, const vec2 q[4], int s) {
     if (det->failed_n == det->failed_capacity) {
@@ -1497,22 +1700,28 @@ int napa_detect(napa_detector *det, const uint8_t *img, int width, int height, i
         params->min_border_cells > 28 || params->sharpening_x100 < 0 || params->sharpening_x100 > 100)
         return -1;
     if (width < 16 || height < 16) return 0;
-    /* A tag cell is min_tag_px / 8 wide, but blur turns its edges grey, so only its core is
+    const int W = det->fam.width;
+    const double cells = det->fam.cells;
+    /* Reversed families print the square light in a dark frame: read inverted, they look like every other
+     * family, a dark square in a light quiet ring. The raked levels are inverted as they're made, and
+     * full-resolution reads sample by sample (image_view). */
+    const image_view view = {img, width, height, stride, det->fam.f->reversed};
+    /* A tag cell is min_tag_px / W wide, but blur turns its edges grey, so only its core is
      * reliably dark. Sampling every 3/4 cell guarantees a sample inside that core. */
-    int base = params->min_tag_px * 3 / 32;
+    int base = params->min_tag_px * 3 / (4 * W);
     if (base < 1) base = 1;
     int found = 0;
     int contrast = params->min_contrast;
     det->failed_n = 0;
     /* Size band in level samples. Adjacent levels overlap (7-24 here is 14-48 one level finer),
      * because a blob's measured extent varies by a sample or two with phase, blur and rotation. */
-    const int lo = 7, hi = NAPA_HI;
+    const int lo = (7 * W + 4) / 8, hi = NAPA_HI * W / 8;
 
     int prev_lw = 0;
     for (int s = base;; s *= 2) {
         int lw = (width + s - 1) / s;
         int lh = (height + s - 1) / s;
-        int last = (lw < NAPA_LAST) || (lh < NAPA_LAST);
+        int last = (lw < NAPA_LAST * W / 8) || (lh < NAPA_LAST * W / 8);
         size_t pixels = (size_t)lw * lh;
         size_t tiles = (size_t)((lw + TILE - 1) / TILE) * ((lh + TILE - 1) / TILE);
         if (ensure_buffers(det, pixels, tiles, (size_t)lw, pixels / 2 + (size_t)lh + 1) != 0) return -2;
@@ -1524,6 +1733,7 @@ int napa_detect(napa_detector *det, const uint8_t *img, int width, int height, i
         if (s == base) {
             for (int y = 0; y < lh; y++)
                 gather_row(det->level + (size_t)y * lw, img + (size_t)y * s * stride, lw, s, det->ssse3);
+            if (view.invert) invert_bytes(det->level, pixels);
         } else {
             for (int y = 0; y < lh; y++) gather2(det->level + (size_t)y * lw, det->level + (size_t)(2 * y) * prev_lw, lw);
         }
@@ -1540,6 +1750,7 @@ int napa_detect(napa_detector *det, const uint8_t *img, int width, int height, i
                     det->box_capacity = (size_t)width;
                 }
                 box_rake(det->level, lw, lh, img, width, height, stride, s, det->box_rows, det->box_rows + width);
+                if (view.invert) invert_bytes(det->level, pixels);
                 contrast = contrast_floors(det, det->level, lw, lh, params->min_contrast, NAPA_BOX_SIGMAS);
             }
             if (contrast < 0) return -2;
@@ -1664,7 +1875,7 @@ int napa_detect(napa_detector *det, const uint8_t *img, int width, int height, i
                 int ex = pick[(k + 1) & 3][0] - pick[k][0], ey = pick[(k + 1) & 3][1] - pick[k][1];
                 perim_q += sqrt((double)(ex * ex + ey * ey));
             }
-            if (comp.count > 0.95 * (best_area + 0.5 * perim_q + 1.0)) {
+            if (comp.count > det->fam.fill_limit * (best_area + 0.5 * perim_q + 1.0)) {
                 PROF_MARK(PROF_QUAD);
                 TRACE(6);
                 continue;
@@ -1684,7 +1895,7 @@ int napa_detect(napa_detector *det, const uint8_t *img, int width, int height, i
              * one stride: search mostly outward, which keeps payload edges out of the window. */
             double reach = 0.5 * ((1.5 * s + 1.0) + (0.5 * s + 1.0));
             double edge_w = 0;
-            if (!fit_sides(img, width, height, stride, rough, fine, 1.5 * s + 1.0, 0.5 * s + 1.0, params->min_contrast, 1, 6, &edge_w, NULL)) {
+            if (!fit_sides(&view, rough, fine, 1.5 * s + 1.0, 0.5 * s + 1.0, params->min_contrast, 1, 6, &edge_w, NULL, cells)) {
                 PROF_MARK(PROF_FIT1);
                 TRACE(7);
                 continue;
@@ -1705,25 +1916,26 @@ int napa_detect(napa_detector *det, const uint8_t *img, int width, int height, i
             napa_detection early;
             edge_levels lv = {255, 0};
             memcpy(probe, fine, sizeof probe);
-            if (!decode_quad(det, img, width, height, stride, probe, params, 2, &early, NULL, &lv)) {
+            if (!decode_quad(det, &view, probe, params, 2, &early, NULL, &lv)) {
                 /* The blob can include the white quiet zone when that margin is darker than the
                  * background around it (a grey card on a bright wall): then this quad is the margin's
                  * outline and the black square is its inner 8/10. Refit there and try once more. */
                 int rescued = 0;
                 double Hq[9], perim = 0;
                 square_to_quad(fine, Hq);
-                vec2 inner[4] = {project(Hq, 0.1, 0.1), project(Hq, 0.9, 0.1), project(Hq, 0.9, 0.9),
-                                 project(Hq, 0.1, 0.9)};
+                double m0 = 1.0 / (W + 2), m1 = (W + 1.0) / (W + 2);
+                vec2 inner[4] = {project(Hq, m0, m0), project(Hq, m1, m0), project(Hq, m1, m1), project(Hq, m0, m1)};
                 for (int k = 0; k < 4; k++) perim += hypot(fine[(k + 1) & 3].x - fine[k].x, fine[(k + 1) & 3].y - fine[k].y);
-                double r = 0.45 * perim / 40.0; /* 0.45 of a cell, if the quad spans 10 cells */
+                double r = 0.45 * perim / (4.0 * (W + 2)); /* 0.45 of a cell, if the quad spans W + 2 cells */
                 /* Most failed decodes aren't tags at all. Refit only if the unfitted inner square already
                  * shows a dark border inside a lighter margin, with loose limits (half the contrast, six
                  * more light border cells): this skips 86% of retries and kept every rescue tested. */
                 if (r >= 1.5 &&
-                    border_plausible(img, width, height, stride, inner, params->min_contrast / 2, params->min_border_cells - 6) &&
-                    fit_sides(img, width, height, stride, inner, finer, r, r, params->min_contrast, 0, 8, &edge_w, NULL)) {
+                    border_plausible(&det->fam, &view, inner, params->min_contrast / 2,
+                                     min_border(&det->fam, params->min_border_cells) - 6) &&
+                    fit_sides(&view, inner, finer, r, r, params->min_contrast, 0, 8, &edge_w, NULL, cells)) {
                     memcpy(probe, finer, sizeof probe);
-                    if (decode_quad(det, img, width, height, stride, probe, params, 2, &early, NULL, &lv)) {
+                    if (decode_quad(det, &view, probe, params, 2, &early, NULL, &lv)) {
                         memcpy(fine, finer, sizeof fine);
                         reach = r;
                         rescued = 1;
@@ -1740,7 +1952,7 @@ int napa_detect(napa_detector *det, const uint8_t *img, int width, int height, i
             double cell = 0;
             for (int k = 0; k < 4; k++) {
                 double ex = fine[(k + 1) & 3].x - fine[k].x, ey = fine[(k + 1) & 3].y - fine[k].y;
-                cell += sqrt(ex * ex + ey * ey) / 32.0;
+                cell += sqrt(ex * ex + ey * ey) / (4.0 * W);
             }
             /* Coarse-to-fine: shrink the symmetric window to the previous pass's resolution, but
              * never below the measured edge width, so the whole ramp stays inside it. */
@@ -1754,13 +1966,13 @@ int napa_detect(napa_detector *det, const uint8_t *img, int width, int height, i
                 if (next > 0.45 * cell && 0.45 * cell >= 1.0) next = 0.45 * cell;
                 if (pass > 0 && (next >= 0.9 * reach || step <= 0.35)) break;
                 reach = next;
-                ok = fit_sides(img, width, height, stride, fine, finer, reach, reach, params->min_contrast, 0, 8, &edge_w, &lv);
+                ok = fit_sides(&view, fine, finer, reach, reach, params->min_contrast, 0, 8, &edge_w, &lv, cells);
                 if (!ok) break;
                 memcpy(fine, finer, sizeof fine);
             }
             /* One more pass at the converged window, re-centred on the last estimate, with every
              * edge sample. */
-            if (ok) ok = fit_sides(img, width, height, stride, fine, finer, reach, reach, params->min_contrast, 0, NAPA_FINAL_POINTS, &edge_w, &lv);
+            if (ok) ok = fit_sides(&view, fine, finer, reach, reach, params->min_contrast, 0, NAPA_FINAL_POINTS, &edge_w, &lv, cells);
             if (!ok) {
                 PROF_MARK(PROF_REFINE);
                 TRACE(9);
@@ -1770,7 +1982,7 @@ int napa_detect(napa_detector *det, const uint8_t *img, int width, int height, i
             napa_detection d;
             double side_level[4];
             edge_levels final_lv = {255, 0};
-            int decoded_ = decode_quad(det, img, width, height, stride, finer, params, 0, &d, side_level, &final_lv);
+            int decoded_ = decode_quad(det, &view, finer, params, 0, &d, side_level, &final_lv);
             PROF_MARK(PROF_DECODE2);
             if (!decoded_) {
                 TRACE(10);
@@ -1788,11 +2000,12 @@ int napa_detect(napa_detector *det, const uint8_t *img, int width, int height, i
             if (bad && bad != 15) {
                 double Hs[9], perim = 0;
                 square_to_quad(finer, Hs);
-                double u0 = (bad & 8) ? 0.125 : 0, v0 = (bad & 1) ? 0.125 : 0;
-                double u1 = (bad & 2) ? 0.875 : 1, v1 = (bad & 4) ? 0.875 : 1;
+                double one = 1.0 / W, rest = (W - 1.0) / W;
+                double u0 = (bad & 8) ? one : 0, v0 = (bad & 1) ? one : 0;
+                double u1 = (bad & 2) ? rest : 1, v1 = (bad & 4) ? rest : 1;
                 vec2 moved[4] = {project(Hs, u0, v0), project(Hs, u1, v0), project(Hs, u1, v1), project(Hs, u0, v1)};
                 for (int k = 0; k < 4; k++) perim += hypot(moved[(k + 1) & 3].x - moved[k].x, moved[(k + 1) & 3].y - moved[k].y);
-                double r = 0.45 * perim / 32.0;
+                double r = 0.45 * perim / (4.0 * W);
                 vec2 fixed[4];
                 napa_detection d2;
                 double side2[4], level_after = 0;
@@ -1800,10 +2013,10 @@ int napa_detect(napa_detector *det, const uint8_t *img, int width, int height, i
                  * in a window just wide enough for the edge, as the main refinement converges. */
                 double r2 = 1.25 * edge_w > 1.5 ? 1.25 * edge_w : 1.5;
                 vec2 first[4];
-                int refit = r >= 1.0 && fit_sides(img, width, height, stride, moved, first, r, r, params->min_contrast, 0, NAPA_FINAL_POINTS, &edge_w, &lv);
-                if (refit && r2 < r) refit = fit_sides(img, width, height, stride, first, fixed, r2, r2, params->min_contrast, 0, NAPA_FINAL_POINTS, &edge_w, &lv);
+                int refit = r >= 1.0 && fit_sides(&view, moved, first, r, r, params->min_contrast, 0, NAPA_FINAL_POINTS, &edge_w, &lv, cells);
+                if (refit && r2 < r) refit = fit_sides(&view, first, fixed, r2, r2, params->min_contrast, 0, NAPA_FINAL_POINTS, &edge_w, &lv, cells);
                 else if (refit) memcpy(fixed, first, sizeof fixed);
-                if (refit && decode_quad(det, img, width, height, stride, fixed, params, 0, &d2, side2, NULL) && d2.id == d.id) {
+                if (refit && decode_quad(det, &view, fixed, params, 0, &d2, side2, NULL) && d2.id == d.id) {
                     for (int k = 0; k < 4; k++) level_after += side2[k];
                     if (level_after < level_before - 0.2) {
                         d = d2;
@@ -1815,12 +2028,12 @@ int napa_detect(napa_detector *det, const uint8_t *img, int width, int height, i
              * bias from the border's own width and undo it. Only when clipping is visible. */
             if (final_lv.white >= 250 || final_lv.black <= 4) {
                 double delta = 0;
-                if (border_bias(img, width, height, stride, finer, final_lv.black, final_lv.white, &delta) >= 4 &&
+                if (border_bias(&det->fam, &view, finer, final_lv.black, final_lv.white, &delta) >= 4 &&
                     fabs(delta) > 0.02 && fabs(delta) < 1.5) {
                     vec2 grown[4];
                     napa_detection d3;
                     grow_quad(finer, delta, grown);
-                    if (decode_quad(det, img, width, height, stride, grown, params, 0, &d3, NULL, NULL) && d3.id == d.id) d = d3;
+                    if (decode_quad(det, &view, grown, params, 0, &d3, NULL, NULL) && d3.id == d.id) d = d3;
                 }
             }
             if (already_found(out, found < max_out ? found : max_out, &d)) {

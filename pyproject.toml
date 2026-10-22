@@ -59,6 +59,11 @@ include = ["napa_vision*"]
 [tool.setuptools.package-data]
 napa_vision = ["py.typed"]
 
+# The C sources and code tables are built into the library: the sdist carries them, wheels don't need them.
+[tool.setuptools.exclude-package-data]
+"napa_vision._native" = ["*.c", "*.h", "families/*.h"]
+"napa_vision._native.families" = ["*.h"]
+
 [tool.setuptools.dynamic]
 version = { attr = "napa_vision._version.__version__" }
 

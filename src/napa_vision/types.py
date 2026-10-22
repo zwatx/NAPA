@@ -19,13 +19,15 @@ class FiducialImageObservation:
     decision threshold, in grey levels; both as in upstream AprilTag. Both are ``None`` for
     observations not produced by a detector that reports them.
 
-    ``homography`` and ``center`` are computed from the corners on each access.
+    ``family`` is the tag family, such as ``"tag36h11"``. ``homography`` and ``center`` are computed from
+    the corners on each access.
     """
 
     tag_id: int
     corners: np.ndarray
     hamming: int | None = None
     decision_margin: float | None = None
+    family: str = "tag36h11"
 
     @property
     def homography(self) -> np.ndarray:

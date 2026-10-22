@@ -4,11 +4,12 @@ Napa is licensed under the PolyForm Noncommercial License 1.0.0 (see LICENSE). T
 other projects and keep their own licenses.
 
 ------------------------------------------------------------------------------------------------------------
-tag36h11 codewords (src/napa_vision/_native/tag36h11_codes.h)
+Tag family codewords and layouts (src/napa_vision/_native/families/*.h)
 
-The tag36h11 family's 587 codewords, rearranged as 6x6 payload grids, come from AprilTag:
+The codewords and cell layouts of tag16h5, tag25h9, tag36h10, tag36h11, tagStandard41h12, tagStandard52h13,
+tagCircle21h7, tagCircle49h12, and tagCustom48h12, rearranged into Napa's bit order, come from AprilTag
+(https://github.com/AprilRobotics/apriltag, commit b7c0ebe9aa20f82ec7a828579004f9e706bfecd9):
 
-Upstream source: https://github.com/AprilRobotics/apriltag/blob/master/tag36h11.c
 Copyright (C) 2013-2016, The Regents of The University of Michigan.
 All rights reserved.
 This software was developed in the APRIL Robotics Lab under the

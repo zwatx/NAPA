@@ -12,7 +12,8 @@ numpy. Solving poses and covariances from corners, calibrating, and `napa-benchm
 `napa-vision[headless]` or `napa-vision[gui]`. Without it, the calls that need it raise a `RuntimeError` saying so.
 
 - [Conventions](#conventions)
-- [Detection](#detection): `NapaDetector`, `FiducialImageObservation`, `FiducialDetector`, `native_available`
+- [Detection](#detection): `NapaDetector`, `FiducialImageObservation`, `FiducialDetector`, `families`,
+  `native_available`
 - [Pose processing](#pose-processing): `VisionProcessor`, `FrameResult`, and the observations it holds
 - [Uncertainty](#uncertainty): `PoseWithCovariance`, `Pose2dWithCovariance`, `camera_pose_covariance`
 - [Solvers](#solvers): `SingleTagPoseSolver`, `CameraPoseSolver`, `TagAngleSolver`
@@ -58,19 +59,20 @@ the first frame in the transform's name: the field for `field_to_camera`, the ca
 ### `NapaDetector`
 
 ```python
-NapaDetector(*, min_tag_px=32, max_hamming=3, min_contrast=20, min_border_cells=22, sharpening=0.25,
-             max_detections=64)
+NapaDetector(*, family="tag36h11", min_tag_px=32, max_hamming=None, min_contrast=20, min_border_cells=22,
+             sharpening=0.25, max_detections=64)
 ```
 
-The native tag36h11 detector. [The guide](guide.md#detection) explains each parameter. Invalid values raise
-`ValueError`.
+The native detector for one tag family. [The guide](guide.md#detection) explains each parameter. Invalid values
+raise `ValueError`.
 
 | Parameter | Range | Meaning |
 | --- | --- | --- |
-| `min_tag_px` | 8–30000 | Smallest black-square side, in pixels, that is guaranteed to be sampled |
-| `max_hamming` | 0–3 | Payload bits that may be corrected |
+| `family` | `families()` | The tag family. The default, tag36h11, is the FRC family. To read several families, use one detector per family. |
+| `min_tag_px` | 8–30000 | Smallest tag-size square side, in pixels, that is guaranteed to be sampled (see [Tag families](#tag-families)) |
+| `max_hamming` | `None`, 0–3 | Payload bits that may be corrected. `None` uses the family's default (see [Tag families](#tag-families)); larger values are capped at what the family's code distance allows. Read back the value in use from `max_hamming`. |
 | `min_contrast` | 1–255 | Minimum grey-level difference between tag black and its white quiet zone |
-| `min_border_cells` | 0–28 | Border cells that must read dark before decoding |
+| `min_border_cells` | 0–28 | Border cells that must read dark before decoding, out of tag36h11's 28; scaled for other families |
 | `sharpening` | 0–1 | Cell sharpening before decoding |
 | `max_detections` | ≥ 1 | Results returned per frame |
 
@@ -89,10 +91,11 @@ One detected tag. A mutable dataclass.
 
 | Field | Type | Meaning |
 | --- | --- | --- |
-| `tag_id` | `int` | tag36h11 ID |
+| `tag_id` | `int` | ID within the family |
 | `corners` | `ndarray (4, 2)` | Sub-pixel corners, in the order and coordinates described under [Conventions](#conventions) |
 | `hamming` | `int \| None` | Payload bits corrected; 0 is a perfect read. As upstream AprilTag. |
 | `decision_margin` | `float \| None` | The smaller of the white and black payload bits' mean distance from the decision threshold, in grey levels. As upstream. |
+| `family` | `str` | The tag family, `"tag36h11"` unless the detector reads another |
 
 `hamming` and `decision_margin` are `None` when a custom detector doesn't report them.
 
@@ -105,6 +108,41 @@ Both are computed from `corners` each time you read them, so they stay consisten
 that don't form a quadrilateral raise `ValueError`. To map any tag point, for example to find where a cell lands,
 use `H @ [u, v, 1]` and divide by the third component. To compute a homography from your own corner array, use
 `geometry.tag_homography(corners)`.
+
+### `families() -> tuple[str, ...]`
+
+The families Napa detects, tag36h11 first. Also importable from the package root.
+
+### Tag families
+
+Napa reads every family upstream AprilTag defines. Each has a square whose corners Napa reports; its side is the tag
+size to give pose solvers, and `min_tag_px` is measured on it. Corners are in the same order for every family (see
+[Conventions](#conventions)).
+
+| Family | Codes | Min. distance | Square, cells | Printed, cells | Default `max_hamming` | Notes |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| `tag36h11` | 587 | 11 | 8 | 10 | 3 | FRC since 2024; the default |
+| `tag16h5` | 30 | 5 | 6 | 8 | 0 | FRC 2023. Codes are close: see below. |
+| `tag25h9` | 35 | 9 | 7 | 9 | 0 | |
+| `tag36h10` | 2320 | 10 | 8 | 10 | 2 | |
+| `tagStandard41h12` | 2115 | 12 | 5 | 9 | 3 | Upstream's recommended family |
+| `tagStandard52h13` | 48714 | 13 | 6 | 10 | 3 | |
+| `tagCircle21h7` | 38 | 7 | 5 | 9 | 0 | |
+| `tagCircle49h12` | 65535 | 12 | 5 | 11 | 3 | |
+| `tagCustom48h12` | 42211 | 12 | 6 | 10 | 3 | |
+
+**Classic families** (tag16h5, tag25h9, tag36h10, tag36h11) are a black square, with a one-cell black border around
+the payload and a white quiet zone around it. The square is the tag size. **tagStandard, tagCircle, and tagCustom**
+tags are the reverse: a white square inside a one-cell black frame, with more data cells outside the frame. The white
+square is the tag size. Napa reads them on the inverted image, where they look like a classic tag.
+
+**Default corrections.** Each family's default `max_hamming` is the most bits it can correct while a random
+tag-shaped pattern stays no likelier to decode than it is in tag36h11 at 3 bits (about 1 in 10,000 per candidate).
+Families whose codes are close together get fewer: tag16h5's 30 codes are only 5 bits apart, so correcting even one
+bit would let about 1 in 30 random patterns through. Those families also get a *soft* correction: up to three bits
+(at most what the code distance allows) may be corrected, but only when they are exactly the payload's least certain
+readings, the samples nearest the black/white threshold, as blur and compression leave them. A random pattern's
+wrong bits are its least certain ones only rarely, so this adds about as many false IDs as exact decoding has.
 
 ### `FiducialDetector`
 
@@ -503,10 +541,11 @@ AprilRobotics artwork and printed FRC tags are, which is what field layouts and 
 
 | Name | Returns |
 | --- | --- |
-| `TAG36H11_COUNT` | 587, the number of tag IDs |
-| `tag_cells(tag_id, *, quiet_zone_cells=1)` | Boolean `(8 + 2q, 8 + 2q)` grid, `True` for white: the 8-cell black square (its one-cell border around the 6×6 payload) inside `quiet_zone_cells` of white |
-| `tag_image(tag_id, *, cell_px=1, quiet_zone_cells=1)` | The grid as a `uint8` image, 0 black and 255 white, `cell_px` pixels per cell. The default is 10×10 px, like the official images. |
-| `tag_svg(tag_id, *, size_mm=165.1, quiet_zone_cells=1, label=True)` | An SVG document whose black square prints `size_mm` wide. `label` adds the family, ID, and size in grey below the quiet zone. |
+| `TAG36H11_COUNT` | 587, the number of tag36h11 IDs |
+| `family_layout(family="tag36h11")` | A frozen `FamilyLayout`: `name`, `ncodes`, `nbits`, `width` (cells across the tag-size square), `total_width` (cells across the printed tag), `reversed`, `min_distance`, `cells` (each code bit's cell, in the core's orientation), and `codes` |
+| `tag_cells(tag_id, *, family="tag36h11", quiet_zone_cells=1)` | Boolean grid, `True` for white: the printed pattern inside `quiet_zone_cells` of white. A classic family's pattern is its black square (8 cells for tag36h11), so the default is the official 10×10 image; a reversed family's pattern is the whole printed tag. Cells that carry nothing, such as tagCircle tags' corners, are white, as on the official images. |
+| `tag_image(tag_id, *, family="tag36h11", cell_px=1, quiet_zone_cells=1)` | The grid as a `uint8` image, 0 black and 255 white, `cell_px` pixels per cell |
+| `tag_svg(tag_id, *, family="tag36h11", size_mm=165.1, quiet_zone_cells=1, label=True)` | An SVG document whose tag-size square prints `size_mm` wide. `label` adds the family, ID, and size in grey below the quiet zone. |
 | `png_bytes(image)` | A `uint8` grayscale image encoded as PNG, with no imaging library |
 
 ## pupil_apriltags compatibility
@@ -530,19 +569,21 @@ Detector(
 )
 ```
 
-`families` must be `"tag36h11"`; anything else raises `ValueError`. `decode_sharpening` sets Napa's `sharpening`.
+`families` is a space-separated list of any of `families()`, as upstream; an unknown family raises `ValueError`.
+Napa runs one detector per family. `decode_sharpening` sets Napa's `sharpening`.
 The other upstream parameters are kept in `params` but have no effect. `napa_options` go to `NapaDetector`, for
 example `min_tag_px=24`.
 
 **`detect(img, estimate_tag_pose=False, camera_params=None, tag_size=None) -> list[Detection]`**: detects tags in a
-`uint8` grayscale image. With `estimate_tag_pose=True`, `camera_params` is `(fx, fy, cx, cy)` and `tag_size` the black
-square's side in metres; leaving either out raises `ValueError`. Poses need OpenCV.
+`uint8` grayscale image. With `estimate_tag_pose=True`, `camera_params` is `(fx, fy, cx, cy)` and `tag_size` the side
+of the tag-size square in metres (see [Tag families](#tag-families)); leaving either out raises `ValueError`. Poses need
+OpenCV.
 
 ### `Detection`
 
 | Attribute | Type | Meaning |
 | --- | --- | --- |
-| `tag_family` | `bytes` | `b"tag36h11"` |
+| `tag_family` | `bytes` | The family, such as `b"tag36h11"` |
 | `tag_id`, `hamming`, `decision_margin` | | As `FiducialImageObservation` |
 | `corners` | `ndarray (4, 2)` | Upstream's `p`: Napa's corners in the order `[1, 0, 3, 2]` (counter-clockwise in the image from the official artwork's bottom-left corner), plus 0.5 px, since `(0, 0)` is the top-left pixel's corner |
 | `center` | `ndarray (2,)` | Upstream's `c`, in the same coordinates |
@@ -573,6 +614,6 @@ describes the manifest.
 
 | Command | Arguments |
 | --- | --- |
-| `napa-tag IDS... [--output DIR] [--format svg\|png] [--size-mm MM] [--cell-px N] [--quiet-zone N] [--no-label]` | Writes `tag36h11-NNN.svg` or `.png` files; IDs like `3`, `0-9`, or `1,4,7-8`. Exits 2 on bad input. |
+| `napa-tag IDS... [--family NAME] [--output DIR] [--format svg\|png] [--size-mm MM] [--cell-px N] [--quiet-zone N] [--no-label]` | Writes `FAMILY-NNN.svg` or `.png` files (default family tag36h11); IDs like `3`, `0-9`, or `1,4,7-8`. Exits 2 on bad input. |
 | `napa-calibrate IMAGES --output FILE --columns N --rows N --square-size-m M [--minimum-views N]` | Calibrates from a directory of checkerboard photographs |
 | `napa-benchmark MANIFEST [--repetitions N] [--warmup-passes N] [--max-failure-samples N] [--no-verify-integrity] [--min-recall R] [--min-precision P] [--max-p95-total-ms T] [--output FILE] [--pretty]` | Scores Napa on an annotated corpus; exits 1 on a failed gate and 2 on bad input |

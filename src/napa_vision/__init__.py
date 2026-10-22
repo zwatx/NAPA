@@ -39,6 +39,7 @@ _EXPORT_MODULES = {
     "calibrate_checkerboard_images": "calibration",
     "camera_pose_covariance": "covariance",
     "discover_checkerboard_images": "calibration",
+    "families": "napa_detector",
     "load_calibration_data": "calibration",
     "native_available": "napa_detector",
     "save_calibration_data": "calibration",

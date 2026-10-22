@@ -90,6 +90,7 @@ def tag_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("ids", type=_tag_ids, nargs="+", help="Tag IDs or ranges, e.g. 3 or 0-9 or 1,4,7-8")
     parser.add_argument("--output", default=".", help="Directory to write into (created if missing)")
+    parser.add_argument("--family", default="tag36h11", help="Tag family (default: tag36h11, the FRC family)")
     parser.add_argument("--format", choices=("svg", "png"), default="svg", help="File format (default: svg)")
     parser.add_argument(
         "--size-mm", type=_positive_float, default=165.1, help="SVG: printed black-square side (default: 165.1, FRC)"
@@ -101,22 +102,30 @@ def tag_parser() -> argparse.ArgumentParser:
 
 
 def tag_main(argv: Sequence[str] | None = None) -> int:
-    from .tags import png_bytes, tag_image, tag_svg
+    from .tags import family_layout, png_bytes, tag_image, tag_svg
 
     args = tag_parser().parse_args(argv)
     output = Path(args.output).expanduser()
     written = []
     try:
         output.mkdir(parents=True, exist_ok=True)
+        digits = len(str(family_layout(args.family).ncodes - 1))
         for tag_id in dict.fromkeys(tag_id for group in args.ids for tag_id in group):
-            path = output / f"tag36h11-{tag_id:03d}.{args.format}"
+            path = output / f"{args.family}-{tag_id:0{digits}d}.{args.format}"
             if args.format == "svg":
                 path.write_text(
-                    tag_svg(tag_id, size_mm=args.size_mm, quiet_zone_cells=args.quiet_zone, label=not args.no_label),
+                    tag_svg(
+                        tag_id,
+                        family=args.family,
+                        size_mm=args.size_mm,
+                        quiet_zone_cells=args.quiet_zone,
+                        label=not args.no_label,
+                    ),
                     encoding="utf-8",
                 )
             else:
-                path.write_bytes(png_bytes(tag_image(tag_id, cell_px=args.cell_px, quiet_zone_cells=args.quiet_zone)))
+                image = tag_image(tag_id, family=args.family, cell_px=args.cell_px, quiet_zone_cells=args.quiet_zone)
+                path.write_bytes(png_bytes(image))
             written.append(str(path))
     except (OSError, ValueError) as exc:
         print(f"napa-tag: error: {exc}", file=sys.stderr)
