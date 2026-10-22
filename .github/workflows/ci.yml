@@ -63,6 +63,37 @@ jobs:
       - run: python -c "import napa_vision; assert napa_vision.native_available(), 'native core did not build'"
       - run: pytest tests/test_napa_detector.py
 
+  c-library:
+    # The core on its own, as C and C++ programs build it: CMake, no Python in the library.
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - run: cmake -S . -B build -DNAPA_BUILD_EXAMPLES=ON
+      - run: cmake --build build --config Release
+      - run: cmake --install build --config Release --prefix install
+      - run: python -m pip install -e .
+      - name: The C example finds a drawn tag
+        shell: bash
+        run: |
+          python -c "
+          import numpy as np
+          from napa_vision.tags import tag_image
+          image = np.full((240, 320), 255, np.uint8)
+          image[40:160, 60:180] = tag_image(7, cell_px=12)
+          open('tag.pgm', 'wb').write(b'P5 320 240 255\n' + image.tobytes())
+          "
+          example=$(find build -name 'napa_detect_pgm*' -type f | grep -E 'napa_detect_pgm(\.exe)?$' | head -1)
+          "$example" tag.pgm | tee found.txt
+          grep -q '^id 7 hamming 0 ' found.txt
+
   package-smoke:
     runs-on: ubuntu-latest
     steps:
@@ -89,6 +120,7 @@ jobs:
       - run: /tmp/napa-wheel/bin/python -m pip install opencv-python-headless
       - run: cd /tmp && /tmp/napa-wheel/bin/napa-benchmark --help
       - run: cd /tmp && /tmp/napa-wheel/bin/napa-calibrate --help
+      - run: cd /tmp && /tmp/napa-wheel/bin/napa-tag 0-3 --output /tmp/napa-tags && ls /tmp/napa-tags/tag36h11-003.svg
       - run: python -m venv /tmp/napa-sdist
       - run: /tmp/napa-sdist/bin/python -m pip install --no-deps dist/*.tar.gz
       - run: /tmp/napa-sdist/bin/python -c 'import importlib.metadata; assert importlib.metadata.version("napa-vision")'

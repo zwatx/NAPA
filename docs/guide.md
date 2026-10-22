@@ -44,10 +44,49 @@ A detector reuses its buffers between frames. Use one per camera stream, and don
 once. The native call releases the GIL, so separate detectors can run in parallel. Call `close()` to free the
 buffers early; a closed detector raises instead of detecting.
 
+### Switching from pupil_apriltags or dt-apriltags
+
+`napa_vision.compat.Detector` has the same constructor and `detect` method as `pupil_apriltags.Detector`, and returns
+`Detection` objects with the same attributes, in upstream's conventions: corners in upstream order, `(0, 0)` at the
+top-left pixel's corner, and poses (`pose_R`, `pose_t`, `pose_err`) from upstream's tag frame into the OpenCV camera
+frame. Change the import and nothing else.
+
+Only `families="tag36h11"` is supported. `decode_sharpening` is used; `nthreads`, `quad_decimate`, `quad_sigma`, and
+`refine_edges` are accepted and ignored, since Napa never decimates and always refines. Pass Napa's own parameters,
+such as `min_tag_px=24`, as extra keyword arguments. Poses need OpenCV. Like upstream, they ignore lens distortion.
+
+### Printing tags
+
+`napa-tag` writes tags to print. SVG files print at an exact size: `--size-mm` is the black square's side, which is
+the tag size pose solvers want.
+
+```bash
+napa-tag 0-7 --size-mm 165.1 --output tags/      # tags 0-7 as SVG, 6.5 in black squares (the FRC size)
+napa-tag 1,4,9 --format png --cell-px 40         # PNG, 40 px per cell
+```
+
+Print SVGs at 100% scale, then measure the black square. In Python, `napa_vision.tags.tag_image(tag_id, cell_px=...)`
+returns a tag as a `uint8` array, `tag_svg` as an SVG string, and `tag_cells` as a boolean grid. They're drawn as the
+official artwork, in the orientation field layouts assume; OpenCV's `DICT_APRILTAG_36h11` draws them turned 180°.
+
 ### From C or another language
 
 `src/napa_vision/_native/napa_core.h` is the whole API: create a detector, call `napa_detect` on a grayscale buffer
 with a stride, and destroy it. The library has no dependencies beyond the C standard library and `libm`.
+
+C and C++ projects can build the core with CMake, without Python:
+
+```bash
+cmake -S . -B build && cmake --build build && cmake --install build --prefix /usr/local
+```
+
+```cmake
+find_package(napa REQUIRED)
+target_link_libraries(your_app PRIVATE napa::napa)
+```
+
+The build is static by default; pass `-DBUILD_SHARED_LIBS=ON` for a shared library. `examples/c/detect_pgm.c`
+(built with `-DNAPA_BUILD_EXAMPLES=ON`) detects tags in a PGM image and prints them.
 
 ## Pose
 
@@ -212,14 +251,16 @@ To compare Napa with standard AprilTag on synthetic scenes, see [the benchmark g
 
 ## Building and packaging
 
-Installing from source compiles the C core (`src/napa_vision/_native`), so it needs a C99 compiler. Without one, the
+`pip install napa-vision` installs a prebuilt wheel on Linux (x86-64, ARM64), macOS, and Windows x64. Installing
+from source compiles the C core (`src/napa_vision/_native`), so it needs a C99 compiler. Without one, the
 install fails rather than leaving you without a detector. To use a library you built yourself, set
 `NAPA_CORE_LIBRARY` to its path.
 
 Wheels need no compiler. Python loads the core with `ctypes` rather than as an extension module, so each wheel is
 tagged `py3-none-<platform>` and serves every Python 3 version. The Wheels workflow builds and tests them with
-cibuildwheel on native Linux x86-64 and ARM64, macOS ARM and Intel, and Windows x64 runners. It runs on version tags
-or by hand, and uploads the wheels and sdist as artifacts; it doesn't publish them.
+cibuildwheel on native Linux x86-64 and ARM64, macOS ARM and Intel, and Windows x64 runners. Run by hand, it uploads
+the wheels and sdist as artifacts. On a `v*` tag it also publishes them to PyPI through trusted publishing, which
+needs a trusted publisher for the repository's `wheels.yml` workflow and `pypi` environment set up on PyPI.
 
 ```bash
 python -m pip install -e '.[headless,dev]'
@@ -229,4 +270,5 @@ python -m build && python -m twine check dist/*
 ```
 
 CI runs on Python 3.11–3.14 and on OpenCV 4.7 through the current release. It builds the C core on Linux, macOS, and
-Windows, checks that a fresh wheel detects tags without OpenCV installed, and smoke-tests the command-line tools.
+Windows, builds it again with CMake and runs the C example, checks that a fresh wheel detects tags without OpenCV
+installed, and smoke-tests the command-line tools.

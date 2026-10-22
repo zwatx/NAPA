@@ -18,6 +18,8 @@ numpy. Solving poses and covariances from corners, calibrating, and `napa-benchm
 - [Solvers](#solvers): `SingleTagPoseSolver`, `CameraPoseSolver`, `TagAngleSolver`
 - [Calibration](#calibration) and [provenance](#provenance)
 - [Geometry helpers](#geometry-helpers): `napa_vision.geometry`
+- [Drawing tags](#drawing-tags): `napa_vision.tags`
+- [pupil_apriltags compatibility](#pupil_apriltags-compatibility): `napa_vision.compat`
 - [Benchmarking](#benchmarking): `napa_vision.benchmark`
 - [Command-line tools](#command-line-tools)
 
@@ -493,6 +495,65 @@ Module `napa_vision.geometry`: plain numpy functions, apart from the two marked 
 `WPILIB_TO_OPENCV_ROTATION` and `OPENCV_TO_WPILIB_ROTATION` are the 3×3 basis changes, and `OPENCV_TO_WPILIB_BASIS`
 is the 4×4 form.
 
+## Drawing tags
+
+Module `napa_vision.tags`, behind the `napa-tag` command. Needs only numpy. Tags are drawn as the official
+AprilRobotics artwork and printed FRC tags are, which is what field layouts and Napa's pose solvers assume. OpenCV's
+`DICT_APRILTAG_36h11` draws the same tags turned 180°. Invalid arguments raise `ValueError`.
+
+| Name | Returns |
+| --- | --- |
+| `TAG36H11_COUNT` | 587, the number of tag IDs |
+| `tag_cells(tag_id, *, quiet_zone_cells=1)` | Boolean `(8 + 2q, 8 + 2q)` grid, `True` for white: the 8-cell black square (its one-cell border around the 6×6 payload) inside `quiet_zone_cells` of white |
+| `tag_image(tag_id, *, cell_px=1, quiet_zone_cells=1)` | The grid as a `uint8` image, 0 black and 255 white, `cell_px` pixels per cell. The default is 10×10 px, like the official images. |
+| `tag_svg(tag_id, *, size_mm=165.1, quiet_zone_cells=1, label=True)` | An SVG document whose black square prints `size_mm` wide. `label` adds the family, ID, and size in grey below the quiet zone. |
+| `png_bytes(image)` | A `uint8` grayscale image encoded as PNG, with no imaging library |
+
+## pupil_apriltags compatibility
+
+Module `napa_vision.compat`: the `pupil_apriltags` / `dt-apriltags` interface on Napa's detector. Its results use
+upstream AprilTag's conventions, not those under [Conventions](#conventions).
+
+### `Detector`
+
+```python
+Detector(
+    families="tag36h11",
+    nthreads=1,
+    quad_decimate=2.0,
+    quad_sigma=0.0,
+    refine_edges=1,
+    decode_sharpening=0.25,
+    debug=0,
+    searchpath=None,
+    **napa_options,
+)
+```
+
+`families` must be `"tag36h11"`; anything else raises `ValueError`. `decode_sharpening` sets Napa's `sharpening`.
+The other upstream parameters are kept in `params` but have no effect. `napa_options` go to `NapaDetector`, for
+example `min_tag_px=24`.
+
+**`detect(img, estimate_tag_pose=False, camera_params=None, tag_size=None) -> list[Detection]`**: detects tags in a
+`uint8` grayscale image. With `estimate_tag_pose=True`, `camera_params` is `(fx, fy, cx, cy)` and `tag_size` the black
+square's side in metres; leaving either out raises `ValueError`. Poses need OpenCV.
+
+### `Detection`
+
+| Attribute | Type | Meaning |
+| --- | --- | --- |
+| `tag_family` | `bytes` | `b"tag36h11"` |
+| `tag_id`, `hamming`, `decision_margin` | | As `FiducialImageObservation` |
+| `corners` | `ndarray (4, 2)` | Upstream's `p`: Napa's corners in the order `[1, 0, 3, 2]` (counter-clockwise in the image from the official artwork's bottom-left corner), plus 0.5 px, since `(0, 0)` is the top-left pixel's corner |
+| `center` | `ndarray (2,)` | Upstream's `c`, in the same coordinates |
+| `homography` | `ndarray (3, 3)` | Upstream's `H`, in the same coordinates, with `H[2, 2] == 1` |
+| `pose_R`, `pose_t` | `ndarray (3, 3)`, `(3, 1)` | With `estimate_tag_pose`: maps upstream's tag frame (+x right and +y down on the official artwork, +z into the tag) into the OpenCV camera frame. `None` otherwise. |
+| `pose_err` | `float` | Upstream's object-space error of that pose, m². `None` without `estimate_tag_pose`. |
+
+Poses follow upstream's `estimate_tag_pose`: both planar solutions (from OpenCV's IPPE), each refined by orthogonal
+iteration on upstream's object-space error, and the one with the lower error kept. Lens distortion is ignored, as
+upstream ignores it.
+
 ## Benchmarking
 
 Module `napa_vision.benchmark`, behind the `napa-benchmark` command. [The guide](guide.md#measuring-on-your-own-footage)
@@ -512,5 +573,6 @@ describes the manifest.
 
 | Command | Arguments |
 | --- | --- |
+| `napa-tag IDS... [--output DIR] [--format svg\|png] [--size-mm MM] [--cell-px N] [--quiet-zone N] [--no-label]` | Writes `tag36h11-NNN.svg` or `.png` files; IDs like `3`, `0-9`, or `1,4,7-8`. Exits 2 on bad input. |
 | `napa-calibrate IMAGES --output FILE --columns N --rows N --square-size-m M [--minimum-views N]` | Calibrates from a directory of checkerboard photographs |
 | `napa-benchmark MANIFEST [--repetitions N] [--warmup-passes N] [--max-failure-samples N] [--no-verify-integrity] [--min-recall R] [--min-precision P] [--max-p95-total-ms T] [--output FILE] [--pretty]` | Scores Napa on an annotated corpus; exits 1 on a failed gate and 2 on bad input |

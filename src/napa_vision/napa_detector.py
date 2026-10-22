@@ -137,6 +137,7 @@ class NapaDetector:
         self._finalizer = weakref.finalize(self, library.napa_destroy, self._handle)
         self._params = _Params(min_tag_px, max_hamming, min_contrast, min_border_cells, round(float(sharpening) * 100))
         self._results = (_Detection * max_detections)()
+        self._rows = np.ctypeslib.as_array(self._results)  # a numpy view of the same buffer
         self.min_tag_px = min_tag_px
         self.max_hamming = max_hamming
 
@@ -160,15 +161,14 @@ class NapaDetector:
         )
         if count < 0:
             raise RuntimeError(f"napa_detect failed with status {count}")
-        observations: list[FiducialImageObservation] = []
-        for result in self._results[:count]:
-            corners = np.array(result.corners, dtype=np.float64).reshape(4, 2)
-            observations.append(
-                FiducialImageObservation(
-                    int(result.id), corners, hamming=int(result.hamming), decision_margin=float(result.decision_margin)
-                )
+        rows = self._rows[:count]
+        corners = rows["corners"].reshape(count, 4, 2).copy()
+        return [
+            FiducialImageObservation(tag_id, tag_corners, hamming=hamming, decision_margin=margin)
+            for tag_id, tag_corners, hamming, margin in zip(
+                rows["id"].tolist(), corners, rows["hamming"].tolist(), rows["decision_margin"].tolist(), strict=True
             )
-        return observations
+        ]
 
     def close(self) -> None:
         """Release native buffers now instead of at garbage collection."""
