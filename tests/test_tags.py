@@ -13,10 +13,28 @@ from napa_vision.workflows import tag_main
 DICTIONARY = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_APRILTAG_36h11)
 
 
-def test_every_tag_matches_the_official_artwork() -> None:
+# AprilRobotics' official tag36h11 image for ID 0 (tag36_11_00000.png), "#" black.
+OFFICIAL_TAG_0 = [
+    "..........",
+    ".########.",
+    ".#..#.#.#.",
+    ".##...#.#.",
+    ".##..####.",
+    ".#.#.####.",
+    ".##.#..##.",
+    ".####.###.",
+    ".########.",
+    "..........",
+]
+
+
+def test_tags_are_drawn_as_the_official_artwork() -> None:
+    official = np.array([[cell == "." for cell in row] for row in OFFICIAL_TAG_0])
+    np.testing.assert_array_equal(tag_cells(0), official)
+    # OpenCV draws every tag turned 180 degrees from the official artwork.
     for tag_id in range(TAG36H11_COUNT):
-        official = cv2.aruco.generateImageMarker(DICTIONARY, tag_id, 8, borderBits=1) > 127
-        np.testing.assert_array_equal(tag_cells(tag_id, quiet_zone_cells=0), official, err_msg=f"tag {tag_id}")
+        opencv = cv2.aruco.generateImageMarker(DICTIONARY, tag_id, 8, borderBits=1) > 127
+        np.testing.assert_array_equal(tag_cells(tag_id, quiet_zone_cells=0), np.rot90(opencv, 2), err_msg=f"{tag_id}")
 
 
 def test_drawn_tags_decode() -> None:
@@ -72,3 +90,29 @@ def test_tag_command_writes_files(tmp_path) -> None:
     assert tag_main(["587", "--output", str(tmp_path)]) == 2
     with pytest.raises(SystemExit):
         tag_main(["5-2"])
+
+
+def test_a_printed_tag_in_the_field_yields_the_field_layout_corners() -> None:
+    """A tag drawn by napa-tag, mounted as field layouts assume, gives the corners the pose solvers expect."""
+
+    from conftest import example_profile, project_field_tag
+
+    from napa_vision.geometry import transform_matrix
+
+    profile = example_profile()
+    camera = profile.camera
+    field_to_camera = transform_matrix([0.0, 0.0, 0.5], [0.0, 0.0, 0.0])
+    # The tag 2 m ahead, a little left and above the camera, facing it (yawed 180 degrees) and turned slightly.
+    field_to_tag = transform_matrix([2.0, 0.3, 0.8], [0.0, 0.0, np.pi + 0.3])
+    expected = project_field_tag(
+        field_to_camera, field_to_tag, profile.tag_size_m, camera.calibration_matrix, camera.distortion_coefficients
+    )
+    artwork = tag_image(3, cell_px=40)  # black square from pixel 40 to 360
+    source = np.array([[40, 40], [360, 40], [360, 360], [40, 360]], np.float32) - 0.5
+    # tag_field_corners lists the official artwork's bottom-right, bottom-left, top-left, top-right.
+    destination = expected[[2, 3, 0, 1]].astype(np.float32)
+    warp = cv2.getPerspectiveTransform(source, destination)
+    image = cv2.warpPerspective(artwork, warp, (1280, 720), flags=cv2.INTER_AREA, borderValue=255)
+    [observation] = NapaDetector().detect(image)
+    assert observation.tag_id == 3
+    np.testing.assert_allclose(observation.corners, expected, atol=0.3)

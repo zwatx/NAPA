@@ -39,8 +39,10 @@ def _check_quiet_zone(quiet_zone_cells: int) -> None:
 
 
 def tag_cells(tag_id: int, *, quiet_zone_cells: int = 1) -> np.ndarray:
-    """The tag's cells as a boolean array, ``True`` for white, in the official artwork's orientation.
+    """The tag's cells as a boolean array, ``True`` for white, oriented as the official artwork.
 
+    That is the orientation of AprilRobotics' tag images and of printed FRC tags, which field layouts and
+    Napa's pose solvers assume. (OpenCV's ``DICT_APRILTAG_36h11`` draws tags turned 180 degrees from it.)
     The black square is 8 cells across (a one-cell black border around the 6x6 payload), surrounded by
     ``quiet_zone_cells`` of white on every side. Napa and other AprilTag detectors need at least one.
     """
@@ -52,7 +54,8 @@ def tag_cells(tag_id: int, *, quiet_zone_cells: int = 1) -> np.ndarray:
     cells = np.ones((8 + 2 * quiet_zone_cells,) * 2, dtype=bool)
     cells[quiet_zone_cells : quiet_zone_cells + 8, quiet_zone_cells : quiet_zone_cells + 8] = False
     cells[quiet_zone_cells + 1 : quiet_zone_cells + 7, quiet_zone_cells + 1 : quiet_zone_cells + 7] = payload
-    return cells
+    # The core stores codes in OpenCV's orientation, which fixes Napa's corner order; turn them to the official one.
+    return np.rot90(cells, 2).copy()
 
 
 def tag_image(tag_id: int, *, cell_px: int = 1, quiet_zone_cells: int = 1) -> np.ndarray:

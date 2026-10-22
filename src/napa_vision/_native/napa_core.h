@@ -41,9 +41,10 @@ NAPA_API void napa_destroy(napa_detector *det);
  * allocation fails. A detector handle is not thread-safe; use one per thread or camera stream. */
 NAPA_API int napa_detect(napa_detector *det, const uint8_t *img, int width, int height, int stride,
                          const napa_params *params, napa_detection *out, int max_out);
-/* The payload of tag36h11 tag `id` (0-586), for drawing tags: the 6x6 cells inside the black border,
- * row-major from the top-left cell of the official artwork, most significant of the 36 bits first, a set
- * bit for a white cell. Returns 0, or -1 for an invalid id or a NULL code. */
+/* The payload of tag36h11 tag `id` (0-586): the 6x6 cells inside the black border, row-major, most
+ * significant of the 36 bits first, a set bit for a white cell. The grid is in OpenCV's orientation, which
+ * is the official artwork turned 180 degrees: its first bit is the official tag's bottom-right payload
+ * cell. Returns 0, or -1 for an invalid id or a NULL code. */
 NAPA_API int napa_tag36h11_code(int id, uint64_t *code);
 
 #ifdef __cplusplus

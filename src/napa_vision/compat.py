@@ -2,7 +2,7 @@
 
 Change ``from pupil_apriltags import Detector`` to ``from napa_vision.compat import Detector``. Results use
 upstream AprilTag's conventions, not the rest of Napa's: corners in upstream order (counter-clockwise in the
-image, starting from the official artwork's top-right corner), with ``(0, 0)`` at the top-left pixel's
+image, starting from the official artwork's bottom-left corner), with ``(0, 0)`` at the top-left pixel's
 corner (Napa's other APIs put it at that pixel's centre).
 """
 
@@ -101,7 +101,7 @@ class Detector:
 
         With ``estimate_tag_pose=True``, also pass ``camera_params`` as ``(fx, fy, cx, cy)`` and
         ``tag_size``, the black square's side in metres. Each pose maps tag points into the camera frame
-        (+x right, +y down, +z forward), with upstream's tag frame (+x left and +y up on the official
+        (+x right, +y down, +z forward), with upstream's tag frame (+x right and +y down on the official
         artwork, +z into the tag), as upstream's ``estimate_tag_pose`` does: the better of the two planar
         solutions by upstream's object-space error, ``pose_err``. Poses need OpenCV. As upstream, lens
         distortion is not modelled; undistort the image first for a wide-angle lens.
@@ -144,8 +144,8 @@ def _estimate_pose(
     cv2 = _import_cv2()
     fx, fy, cx, cy = (float(value) for value in camera_params)
     half = 0.5 * float(tag_size)
-    # Upstream's tag frame: +x left and +y up on the official artwork, +z into the tag. p[0] is the
-    # artwork's top-right corner, and p[0..3] run counter-clockwise as seen in the image.
+    # Upstream's tag frame: +x right and +y down on the official artwork, +z into the tag. p[0] is the
+    # artwork's bottom-left corner, and p[0..3] run counter-clockwise as seen in the image.
     points = np.array([[-half, half, 0.0], [half, half, 0.0], [half, -half, 0.0], [-half, -half, 0.0]])
     camera_matrix = np.array([[fx, 0.0, cx], [0.0, fy, cy], [0.0, 0.0, 1.0]])
     count, rvecs, tvecs, _ = cv2.solvePnPGeneric(

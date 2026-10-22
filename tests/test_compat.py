@@ -13,8 +13,8 @@ CX, CY = 639.5, 359.5
 CAMERA = np.array([[FX, 0, CX], [0, FY, CY], [0, 0, 1]])
 TAG_SIZE = 0.1651
 # The official artwork's corners (top-left, top-right, bottom-right, bottom-left) in upstream's tag frame:
-# +x left and +y up on the artwork, +z into the tag.
-ARTWORK_CORNERS = np.array([[1, 1, 0], [-1, 1, 0], [-1, -1, 0], [1, -1, 0]], float) * TAG_SIZE / 2
+# +x right and +y down on the artwork, +z into the tag.
+ARTWORK_CORNERS = np.array([[-1, -1, 0], [1, -1, 0], [1, 1, 0], [-1, 1, 0]], float) * TAG_SIZE / 2
 
 
 def _scene(tag_id: int, rotation: np.ndarray, translation: np.ndarray) -> np.ndarray:

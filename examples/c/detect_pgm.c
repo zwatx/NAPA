@@ -6,8 +6,9 @@
  *   napa_detect_pgm frame.pgm
  *   id 7 hamming 0 margin 201.3 corners 120.52,80.31 220.47,80.12 220.66,180.40 120.71,180.58
  *
- * Corners are in OpenCV's ArUco order (top-left, top-right, bottom-right, bottom-left of the tag's
- * artwork), with (0, 0) at the centre of the top-left pixel. */
+ * Corners are in Napa's order: on the official tag artwork, its bottom-right, bottom-left, top-left, and
+ * top-right corners (OpenCV's order for its own tag drawings, which are turned 180 degrees). Coordinates
+ * put (0, 0) at the centre of the top-left pixel. */
 #include <stdio.h>
 #include <stdlib.h>
 

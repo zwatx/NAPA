@@ -66,8 +66,8 @@ napa-tag 1,4,9 --format png --cell-px 40         # PNG, 40 px per cell
 ```
 
 Print SVGs at 100% scale, then measure the black square. In Python, `napa_vision.tags.tag_image(tag_id, cell_px=...)`
-returns a tag as a `uint8` array, `tag_svg` as an SVG string, and `tag_cells` as a boolean grid. They match the
-official tag36h11 artwork.
+returns a tag as a `uint8` array, `tag_svg` as an SVG string, and `tag_cells` as a boolean grid. They're drawn as the
+official artwork, in the orientation field layouts assume; OpenCV's `DICT_APRILTAG_36h11` draws them turned 180°.
 
 ### From C or another language
 

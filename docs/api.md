@@ -497,8 +497,9 @@ is the 4×4 form.
 
 ## Drawing tags
 
-Module `napa_vision.tags`, behind the `napa-tag` command. Needs only numpy. The cells match the official tag36h11
-artwork (and OpenCV's `DICT_APRILTAG_36h11`). Invalid arguments raise `ValueError`.
+Module `napa_vision.tags`, behind the `napa-tag` command. Needs only numpy. Tags are drawn as the official
+AprilRobotics artwork and printed FRC tags are, which is what field layouts and Napa's pose solvers assume. OpenCV's
+`DICT_APRILTAG_36h11` draws the same tags turned 180°. Invalid arguments raise `ValueError`.
 
 | Name | Returns |
 | --- | --- |
@@ -543,10 +544,10 @@ square's side in metres; leaving either out raises `ValueError`. Poses need Open
 | --- | --- | --- |
 | `tag_family` | `bytes` | `b"tag36h11"` |
 | `tag_id`, `hamming`, `decision_margin` | | As `FiducialImageObservation` |
-| `corners` | `ndarray (4, 2)` | Upstream's `p`: Napa's corners in the order `[1, 0, 3, 2]` (counter-clockwise in the image from the artwork's top-right corner), plus 0.5 px, since `(0, 0)` is the top-left pixel's corner |
+| `corners` | `ndarray (4, 2)` | Upstream's `p`: Napa's corners in the order `[1, 0, 3, 2]` (counter-clockwise in the image from the official artwork's bottom-left corner), plus 0.5 px, since `(0, 0)` is the top-left pixel's corner |
 | `center` | `ndarray (2,)` | Upstream's `c`, in the same coordinates |
 | `homography` | `ndarray (3, 3)` | Upstream's `H`, in the same coordinates, with `H[2, 2] == 1` |
-| `pose_R`, `pose_t` | `ndarray (3, 3)`, `(3, 1)` | With `estimate_tag_pose`: maps upstream's tag frame (+x left and +y up on the official artwork, +z into the tag) into the OpenCV camera frame. `None` otherwise. |
+| `pose_R`, `pose_t` | `ndarray (3, 3)`, `(3, 1)` | With `estimate_tag_pose`: maps upstream's tag frame (+x right and +y down on the official artwork, +z into the tag) into the OpenCV camera frame. `None` otherwise. |
 | `pose_err` | `float` | Upstream's object-space error of that pose, m². `None` without `estimate_tag_pose`. |
 
 Poses follow upstream's `estimate_tag_pose`: both planar solutions (from OpenCV's IPPE), each refined by orthogonal
