@@ -23,6 +23,11 @@ class BuildNative(build_ext):
                 extension.libraries = ["m"]
         super().build_extensions()
 
+    def get_libraries(self, ext: Extension) -> list[str]:
+        # The core never calls Python's C API. Android's Python would link it to libpython3.X, tying the
+        # py3-none wheel to one Python version.
+        return list(ext.libraries)
+
 
 class PlatformWheel(bdist_wheel):
     """Tag wheels py3-none-<platform>: ctypes loads the library, so one wheel serves every Python 3."""

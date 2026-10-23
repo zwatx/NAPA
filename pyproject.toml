@@ -69,7 +69,8 @@ version = { attr = "napa_vision._version.__version__" }
 
 [tool.cibuildwheel]
 # Wheels are py3-none-<platform> (see setup.py), so one CPython build per platform covers every Python 3.
-build = "cp311-*"
+# Android's first official CPython is 3.13.
+build = ["cp311-*", "cp313-android_*"]
 skip = "*-musllinux_*"
 test-requires = ["pytest", "opencv-python-headless"]
 test-sources = ["tests"]
@@ -77,6 +78,18 @@ test-command = "pytest tests/test_napa_detector.py"
 
 [tool.cibuildwheel.windows]
 archs = ["AMD64"]
+
+[tool.cibuildwheel.android]
+# arm64_v8a for phones and Meta Quest headsets; x86_64 for emulators. Tests run on an emulator of the build
+# machine's architecture, so CI tests x86_64. PyPI has no Android NumPy or OpenCV: NumPy comes from
+# Chaquopy's index, and the tests need only Napa and NumPy. Chaquopy's NumPy links libc++_shared,
+# libgfortran, and libopenblas, which Chaquopy's own runtime puts on the library path; the plain test app
+# doesn't, so the test command loads them first.
+archs = ["arm64_v8a", "x86_64"]
+environment = { PIP_EXTRA_INDEX_URL = "https://chaquo.com/pypi-13.1" }
+test-requires = ["pytest"]
+test-sources = ["tests/test_mobile.py"]
+test-command = '''python -c "import ctypes, pathlib, sys, chaquopy, pytest; lib = pathlib.Path(list(chaquopy.__path__)[0], 'lib'); [ctypes.CDLL(str(lib / name), ctypes.RTLD_GLOBAL) for name in ('libc++_shared.so', 'libgfortran.so.3', 'libopenblas.so')]; sys.exit(pytest.main(['tests/test_mobile.py']))"'''
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

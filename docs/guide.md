@@ -96,6 +96,29 @@ target_link_libraries(your_app PRIVATE napa::napa)
 The build is static by default; pass `-DBUILD_SHARED_LIBS=ON` for a shared library. `examples/c/detect_pgm.c`
 (built with `-DNAPA_BUILD_EXAMPLES=ON`) detects tags in a PGM image and prints them.
 
+### Android and Meta Quest
+
+Each release has the core built for Android ARM64 (`arm64-v8a`, which covers phones and Meta Quest headsets),
+attached to its [GitHub release](https://github.com/zwatx/NAPA/releases) as
+`napa-<version>-android-arm64-v8a.zip`. It holds `lib/libnapa.so`, `include/napa_core.h`, and a CMake package. It
+needs Android 7.0 (API 24) or newer and supports 16 KB memory pages.
+
+- **NDK (C/C++) apps:** point CMake at the unzipped folder (`-Dnapa_DIR=<folder>/lib/cmake/napa`), then
+  `find_package(napa)` and link `napa::napa`. Package `libnapa.so` with the app (Gradle picks it up from
+  `src/main/jniLibs/arm64-v8a/`).
+- **Unity:** put `libnapa.so` in `Assets/Plugins/Android/arm64-v8a/`, and call it with
+  `[DllImport("napa")]`, following `napa_core.h`.
+- **Python on Android** (for example with Chaquopy): `pip install napa-vision` finds the `android_24_arm64_v8a`
+  wheel on PyPI. PyPI has no Android NumPy, so take NumPy from your Python distribution's own package index.
+
+To build it yourself, use the NDK's CMake toolchain:
+
+```bash
+cmake -S . -B build-android -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK/build/cmake/android.toolchain.cmake" \
+  -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=24 -DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON -DBUILD_SHARED_LIBS=ON
+cmake --build build-android && cmake --install build-android --prefix napa-android --strip
+```
+
 ## Pose
 
 `VisionProcessor` wraps a detector and, given a calibration and the tag size, adds poses:
@@ -259,16 +282,20 @@ To compare Napa with standard AprilTag on synthetic scenes, see [the benchmark g
 
 ## Building and packaging
 
-`pip install napa-vision` installs a prebuilt wheel on Linux (x86-64, ARM64), macOS, and Windows x64. Installing
+`pip install napa-vision` installs a prebuilt wheel on Linux (x86-64, ARM64), macOS, Windows x64, and Android
+(ARM64, x86-64). Installing
 from source compiles the C core (`src/napa_vision/_native`), so it needs a C99 compiler. Without one, the
 install fails rather than leaving you without a detector. To use a library you built yourself, set
 `NAPA_CORE_LIBRARY` to its path.
 
 Wheels need no compiler. Python loads the core with `ctypes` rather than as an extension module, so each wheel is
 tagged `py3-none-<platform>` and serves every Python 3 version. The Wheels workflow builds and tests them with
-cibuildwheel on native Linux x86-64 and ARM64, macOS ARM and Intel, and Windows x64 runners. Run by hand, it uploads
+cibuildwheel on native Linux x86-64 and ARM64, macOS ARM and Intel, and Windows x64 runners. Android wheels are
+cross-compiled with the NDK, and the x86-64 one is tested on an emulator (`tests/test_mobile.py`, which needs no
+OpenCV). Run by hand, it uploads
 the wheels and sdist as artifacts. On a `v*` tag it also publishes them to PyPI through trusted publishing, which
-needs a trusted publisher for the repository's `wheels.yml` workflow and `pypi` environment set up on PyPI.
+needs a trusted publisher for the repository's `wheels.yml` workflow and `pypi` environment set up on PyPI. A tag
+also creates the GitHub release and attaches the Android C library to it.
 
 ```bash
 python -m pip install -e '.[headless,dev]'
