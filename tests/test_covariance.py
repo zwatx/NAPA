@@ -310,6 +310,34 @@ def test_planar_multi_tag_covariance_is_never_overconfident(wall, field_to_camer
     _assert_consistent(_wall_samples(wall, field_to_camera, seed=9, count=300, sigma=sigma, camera=camera))
 
 
+@pytest.mark.parametrize("tag_count", [2, 16, 64])
+def test_planar_covariance_matches_full_svd_for_large_layouts(monkeypatch, tag_count: int) -> None:
+    wall = _wall(*[[8.0, (index % 8 - 3.5) * 0.4, 0.4 + (index // 8) * 0.2] for index in range(tag_count)])
+    rng = np.random.default_rng(17)
+    observations = [
+        FiducialImageObservation(
+            tag_id,
+            project_field_tag(HEAD_ON, tag, TAG_SIZE_M, CAMERA.calibration_matrix, CAMERA.distortion_coefficients)
+            + rng.normal(0.0, 0.1, (4, 2)),
+        )
+        for tag_id, tag in wall.items()
+    ]
+    solver = CameraPoseSolver()
+    current = solver.solve(observations, [], CAMERA, TAG_SIZE_M, wall)
+    assert current is not None and current.tag_ids == list(wall)
+    current_covariance = current.covariance_0
+    assert current_covariance is not None
+
+    # Compare the observable covariance with the previous full-matrix decomposition,
+    # including mirror selection and the deferred mirror-path computation.
+    svd = np.linalg.svd
+    with monkeypatch.context() as patch:
+        patch.setattr(np.linalg, "svd", lambda matrix, **kwargs: svd(matrix, full_matrices=True))
+        baseline = solver.solve(observations, [], CAMERA, TAG_SIZE_M, wall)
+        assert baseline is not None and baseline.covariance_0 is not None
+        np.testing.assert_allclose(current_covariance, baseline.covariance_0, rtol=1e-10, atol=1e-12)
+
+
 def test_far_oblique_pair_covers_its_mirror_solution() -> None:
     # Two tags 10 m away at 54 degrees: on some frames the solved pose is the mirror, 16 m and 108 degrees off.
     wall = _wall([10.0, -0.4, 0.8], [10.0, 0.4, 0.8])

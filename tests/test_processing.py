@@ -124,6 +124,27 @@ def test_optional_field_solving_preserves_prior_results() -> None:
     assert first.timestamp == 1.0
 
 
+def test_empty_calibrated_frame_refreshes_diagnostics_after_tags_disappear(monkeypatch) -> None:
+    calibration = _calibration()
+    detector = ProjectedDetector(calibration)
+    processor = VisionProcessor(detector=detector, calibration=calibration, tag_size_m=0.2, tag_layout={42: np.eye(4)})
+    image = np.full((480, 640), 255, dtype=np.uint8)
+    first = processor.process(image, timestamp=1.0)
+    assert first.camera_pose is not None
+    assert first.pose_diagnostics.accepted_tag_ids == [42]
+    monkeypatch.setattr(detector, "detect", lambda image: [])
+
+    empty = processor.process(image, timestamp=2.0)
+
+    assert empty.image_observations == empty.single_tag_poses == empty.tag_angles == []
+    assert empty.camera_pose is None
+    assert empty.pose_diagnostics is not first.pose_diagnostics
+    assert empty.pose_diagnostics.attempted_tag_ids == empty.pose_diagnostics.accepted_tag_ids == []
+    assert empty.pose_diagnostics.rejected_tag_reasons == {}
+    assert empty.pose_diagnostics.rejection_reason == "no unique observed tags are present in the field layout"
+    assert first.pose_diagnostics.accepted_tag_ids == [42]
+
+
 @pytest.mark.parametrize(
     ("image", "message"),
     [

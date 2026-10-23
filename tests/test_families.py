@@ -100,11 +100,27 @@ def test_detects_every_family_with_napa_corner_order(family: str) -> None:
             np.testing.assert_allclose(observation.corners, turned, atol=0.15)
 
 
-def test_weak_families_correct_fewer_bits_by_default() -> None:
-    assert NapaDetector().max_hamming == 3
-    assert NapaDetector(family="tag16h5").max_hamming == 0
-    assert NapaDetector(family="tag16h5", max_hamming=3).max_hamming == 2  # capped by the family
-    assert NapaDetector(family="tagStandard41h12").max_hamming == 3
+@pytest.mark.parametrize(
+    ("family", "recommended", "maximum"),
+    [
+        ("tag36h11", 3, 3),
+        ("tag16h5", 0, 2),
+        ("tag25h9", 0, 3),
+        ("tag36h10", 2, 3),
+        ("tagStandard41h12", 3, 3),
+        ("tagStandard52h13", 3, 3),
+        ("tagCircle21h7", 0, 3),
+        ("tagCircle49h12", 3, 3),
+        ("tagCustom48h12", 3, 3),
+    ],
+)
+def test_family_correction_limits(family: str, recommended: int, maximum: int) -> None:
+    detector = NapaDetector(family=family)
+    assert detector.max_hamming == recommended
+    detector.close()
+    detector = NapaDetector(family=family, max_hamming=3)
+    assert detector.max_hamming == maximum
+    detector.close()
 
 
 def test_tag16h5_rejects_random_patterns() -> None:

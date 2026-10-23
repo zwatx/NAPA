@@ -79,8 +79,7 @@ def wpilib_points_to_opencv(points: np.ndarray) -> np.ndarray:
 
 def transform_points(transform: np.ndarray, points: np.ndarray) -> np.ndarray:
     points = np.asarray(points, dtype=np.float64).reshape(-1, 3)
-    homogeneous = np.column_stack((points, np.ones(len(points), dtype=np.float64)))
-    return (transform @ homogeneous.T).T[:, :3]
+    return (transform[:3, :3] @ points.T).T + transform[:3, 3]
 
 
 @lru_cache(maxsize=16)

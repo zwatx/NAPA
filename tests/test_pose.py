@@ -15,9 +15,28 @@ from napa_vision.geometry import (
     opencv_translation_to_wpilib,
     tag_object_points,
     transform_matrix,
+    transform_points,
     wpilib_points_to_opencv,
 )
 from napa_vision.types import FiducialImageObservation
+
+
+@pytest.mark.parametrize("count", [0, 1, 4, 64])
+def test_transform_points_matches_homogeneous_coordinates(count: int) -> None:
+    rng = np.random.default_rng(12)
+    points = rng.normal(size=(count, 6)).astype(np.float32)[:, ::2]
+    transform = transform_matrix([1.2, -3.0, 2.1], [0.1, -0.6, 1.3])
+    before = points.copy()
+    homogeneous = np.column_stack((points, np.ones(count)))
+
+    transformed = transform_points(transform, points)
+
+    np.testing.assert_allclose(transformed, (transform @ homogeneous.T).T[:, :3], rtol=1e-14, atol=1e-14)
+    assert transformed.shape == (count, 3)
+    assert transformed.dtype == np.float64
+    np.testing.assert_array_equal(points, before)
+    assert not np.shares_memory(transformed, points)
+    assert not np.shares_memory(transformed, transform)
 
 
 def test_single_tag_pose_returns_ippe_solutions_and_distance() -> None:

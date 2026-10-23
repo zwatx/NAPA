@@ -282,6 +282,8 @@ class SingleTagPoseSolver:
         Covariances are deferred: the first one read computes every tag's in one batch.
         """
 
+        if not observations:
+            return []
         object_points = tag_object_points(tag_size_m)
         solved = [self._ippe_solutions(observation, camera, object_points) for observation in observations]
         covariances = _SingleTagCovariances(
@@ -500,7 +502,7 @@ class CameraPoseSolver:
         """
 
         centroid = object_points.mean(axis=0)
-        _, singular_values, plane = np.linalg.svd(object_points - centroid)
+        _, singular_values, plane = np.linalg.svd(object_points - centroid, full_matrices=False)
         if singular_values[2] > 0.25 * singular_values[0]:
             return None  # Depth across the target breaks the ambiguity.
         if np.linalg.det(plane) < 0.0:
