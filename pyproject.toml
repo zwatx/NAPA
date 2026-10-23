@@ -5,8 +5,9 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "napa-vision"
 dynamic = ["version"]
-description = "Napa: a fast, dependency-free tag36h11 AprilTag detector with optional pose processing"
-readme = "README.md"
+description = "A fast, dependency-free AprilTag detector for every tag family, with sub-pixel corners and poses with covariances"
+# PyPI's page: the README's essentials, with absolute links, since PyPI can't follow the repository's relative ones.
+readme = "docs/pypi.md"
 license = "PolyForm-Noncommercial-1.0.0"
 license-files = ["LICENSE", "THIRD_PARTY_NOTICES"]
 authors = [{ name = "Zachary Wilson" }]
