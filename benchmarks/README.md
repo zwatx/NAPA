@@ -184,3 +184,52 @@ scene, and the obstruction sweep.
   `min_tag_px` even when its long side is well above it.
 - The frames are synthetic and the timings come from one desktop CPU. Measure on your own camera and hardware
   (see `napa-benchmark` in [the guide](../docs/guide.md)) before relying on a specific number.
+
+## Stereo paired replay
+
+Run the joint solver on recorded, caller-paired images using a `StereoCalibration` artifact:
+
+```bash
+python benchmarks/stereo_replay.py corpus/pairs.json \
+  --calibration rig.json --max-capture-skew-s 0.005 --output stereo-results.json
+```
+
+The strict version-1 manifest embeds the field layout (rigid WPILib field-to-tag transforms in metres) and records
+each exposure midpoint on a common clock. For example, this layout places tag 1 at field x=3, facing the origin:
+
+```json
+{
+  "schema_version": 1,
+  "family": "tag36h11",
+  "tag_size_m": 0.1651,
+  "tag_layout": {"1": [[-1,0,0,3],[0,-1,0,0],[0,0,1,0],[0,0,0,1]]},
+  "pairs": [{
+    "left": {"camera_id": "left", "path": "left.png", "capture_time_s": 1.0},
+    "right": {"camera_id": "right", "path": "right.png", "capture_time_s": 1.002},
+    "ground_truth": [{
+      "timestamp_s": 1.001,
+      "field_to_rig": [[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1]]
+    }]
+  }]
+}
+```
+
+Image paths must remain inside the manifest directory, camera IDs must match the artifact, and resolutions must
+match the intrinsics. `ground_truth` is optional. Provide truth samples at each monocular capture time and the
+pair midpoint when scoring a moving rig. Errors and conditional NEES are `null` unless a truth timestamp matches
+the result within 1 ns; the evaluator does not interpolate or compare poses from different times.
+
+Each pair reports stereo, left/right monocular, and `independent_pose_fusion` results. The fusion baseline combines
+the best monocular poses using a local Gaussian information-weighted update in field axes. It assumes independent
+conditional uncertainties and a static pair, does not search alternate-mode combinations or compensate motion,
+and rejects pairs exceeding the same skew gate. It is a comparison baseline, not a second public solver API.
+
+Outputs include acceptance/rejection reasons, accepted camera/tag groups, candidate count and joint RMS values,
+translation/rotation errors, six conditional standard deviations, and conditional NEES (squared pose error weighted
+by inverse covariance). Calibration error and clock error are excluded from those uncertainty estimates. Timing
+reports p50/p95 for detecting both images and for joint solving; file loading and baseline solves are excluded.
+Calls are measured once per pair without warmup, so this is replay latency, not a controlled microbenchmark.
+
+Tests cover synthetic noisy geometry, ambiguity, calibration perturbations, timing mismatches, and rendered tags
+through the real native detector. No real-camera paired corpus is included, so these tests establish integration
+and numerical behavior rather than a measured stereo accuracy improvement.

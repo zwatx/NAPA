@@ -17,6 +17,7 @@ numpy. Solving poses and covariances from corners, calibrating, and `napa-benchm
 - [Pose processing](#pose-processing): `VisionProcessor`, `FrameResult`, and the observations it holds
 - [Uncertainty](#uncertainty): `PoseWithCovariance`, `Pose2dWithCovariance`, `camera_pose_covariance`
 - [Solvers](#solvers): `SingleTagPoseSolver`, `CameraPoseSolver`, `TagAngleSolver`
+- [Stereo](#stereo): `StereoCalibration`, `StereoPoseSolver`, results, and paired calibration
 - [Calibration](#calibration) and [provenance](#provenance)
 - [Geometry helpers](#geometry-helpers): `napa_vision.geometry`
 - [Drawing tags](#drawing-tags): `napa_vision.tags`
@@ -617,3 +618,75 @@ describes the manifest.
 | `napa-tag IDS... [--family NAME] [--output DIR] [--format svg\|png] [--size-mm MM] [--cell-px N] [--quiet-zone N] [--no-label]` | Writes `FAMILY-NNN.svg` or `.png` files (default family tag36h11); IDs like `3`, `0-9`, or `1,4,7-8`. Exits 2 on bad input. |
 | `napa-calibrate IMAGES --output FILE --columns N --rows N --square-size-m M [--minimum-views N]` | Calibrates from a directory of checkerboard photographs |
 | `napa-benchmark MANIFEST [--repetitions N] [--warmup-passes N] [--max-failure-samples N] [--no-verify-integrity] [--min-recall R] [--min-precision P] [--max-p95-total-ms T] [--output FILE] [--pretty]` | Scores Napa on an annotated corpus; exits 1 on a failed gate and 2 on bad input |
+
+## Stereo
+
+The [stereo guide](guide.md#stereo-rig-pose) covers timing, calibration, and uncertainty assumptions. These names
+are available from `napa_vision`; loading calibration artifacts needs only NumPy, while fitting and solving
+require OpenCV.
+
+### `StereoCalibration`
+
+```python
+StereoCalibration(
+    left,
+    right,
+    rig_to_left,
+    rig_to_right,
+    provenance,
+    left_id="left",
+    right_id="right",
+    rms_reprojection_error_px=None,
+    views_used=None,
+)
+```
+
+`left` and `right` are `CameraCalibration` objects with recorded resolutions. Mounts are rigid 4×4 camera poses
+in WPILib rig axes, not OpenCV left-to-right extrinsics. Intrinsics and mounts are owned, read-only snapshots.
+Camera IDs must be distinct nonempty strings. `require_production()` requires measured provenance for all three
+artifacts and recorded fit RMS/view counts. `epipolar_errors(left_points, right_points)` returns one symmetric
+undistorted-pixel epipolar distance per matched point; both inputs are finite nonempty N×2 arrays.
+
+`save_stereo_calibration(path, calibration)` and `load_stereo_calibration(path)` write/read strict version-1 JSON,
+including `coordinate_convention="wpilib_camera_to_rig"`. Invalid artifacts raise `CalibrationError`.
+
+`calibrate_stereo_points(object_points, left_image_points, right_image_points, left, right, *, source)` returns
+`StereoCalibration` with fixed intrinsics and the left camera as rig origin. Inputs are matched lists of N×3
+object points (metres) and N×2 image points (pixels), at least three views and four corners per view. Both cameras
+must have equal recorded resolutions for this fitting helper.
+
+### `StereoPoseSolver`
+
+```python
+StereoPoseSolver(calibration, tag_layout, tag_size_m, *, max_capture_skew_s,
+                 max_reprojection_error_px=5.0, max_outlier_iterations=2,
+                 max_iterations=50, corner_noise_px=(1.0, 1.0))
+solver.solve(left_observations, right_observations, *,
+             left_capture_time_s, right_capture_time_s,
+             allow_monocular_fallback=False)
+```
+
+`tag_layout` maps nonnegative integer IDs to rigid field-to-tag transforms. All tags use `tag_size_m`.
+`corner_noise_px` contains one positive standard deviation per camera. `max_iterations` bounds each seed's
+refinement; `max_outlier_iterations` bounds discarded camera/tag groups. The raw pixel RMS limit applies to each
+accepted group. Inputs are sequences of `FiducialImageObservation` in unrectified calibrated pixels. Times are
+finite exposure-midpoint seconds on one clock; `max_capture_skew_s` is nonnegative and intentionally has no default.
+
+### `StereoPoseResult` and `StereoSolveDiagnostics`
+
+| Result field | Meaning |
+| --- | --- |
+| `status` | `"stereo"`, explicitly requested `"monocular"` fallback, or `"rejected"`. |
+| `timestamp` | Pair midpoint for stereo/rejection; selected capture time for fallback. |
+| `poses` | Tuple of distinct retained `PoseWithCovariance` candidates, best first; empty on rejection. |
+| `pose` | First candidate, or `None`. |
+| `diagnostics` | Fresh `StereoSolveDiagnostics` for this solve. |
+
+Diagnostics contain `capture_skew_s`, `attempted_groups`, `accepted_groups`, `rejected_group_reasons`, and
+`per_group_rms_px`, keyed by `(camera_id, tag_id)`. `candidate_rms_px` follows the retained joint candidates;
+`iterations` counts refinement iterations of converged fits across rejection rounds. `rejection_reason` explains a
+rejected result and `fallback_reason` explains why an accepted monocular result could not use stereo.
+
+Each pose maps rig coordinates into field coordinates. Its 6×6 covariance uses field-frame translation (metres)
+and left-applied small rotations (radians), ordered x/y/z/rx/ry/rz. Covariance includes retained-mode ambiguity,
+conditional on exact calibration/layout and independent pixel noise, with no temporal or calibration uncertainty.

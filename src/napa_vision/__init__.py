@@ -33,16 +33,23 @@ _EXPORT_MODULES = {
     "ProvenanceKind": "provenance",
     "SingleTagPoseObservation": "types",
     "SingleTagPoseSolver": "solvers",
+    "StereoCalibration": "stereo_calibration",
+    "StereoPoseResult": "stereo",
+    "StereoPoseSolver": "stereo",
+    "StereoSolveDiagnostics": "stereo",
     "TagAngleObservation": "types",
     "TagAngleSolver": "solvers",
     "VisionProcessor": "processing",
     "calibrate_checkerboard_images": "calibration",
+    "calibrate_stereo_points": "stereo_calibration",
     "camera_pose_covariance": "covariance",
     "discover_checkerboard_images": "calibration",
     "families": "napa_detector",
     "load_calibration_data": "calibration",
+    "load_stereo_calibration": "stereo_calibration",
     "native_available": "napa_detector",
     "save_calibration_data": "calibration",
+    "save_stereo_calibration": "stereo_calibration",
 }
 
 __all__ = [*_EXPORT_MODULES, "__version__"]
