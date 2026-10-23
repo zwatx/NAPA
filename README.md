@@ -214,8 +214,8 @@ bits are read. Obstruction tolerance is best-effort, with no guaranteed percenta
   washed-out scenes, at a cost in speed on every frame.
 - Motion blur longer than a cell (an eighth of the tag) is the hardest case for corner accuracy: most corners stay
   within a tenth of a pixel, but the worst can be off by a few pixels.
-- Prebuilt wheels cover Linux (x86-64, ARM64), macOS (Apple silicon, Intel), and Windows x64. Elsewhere, pip builds
-  from source, which needs a C99 compiler.
+- Prebuilt wheels cover Linux (x86-64, ARM64), macOS (Apple silicon, Intel), Windows x64, and Android (ARM64,
+  x86-64). Elsewhere, pip builds from source, which needs a C99 compiler.
 
 ## Quick start
 
@@ -254,7 +254,9 @@ detector per camera stream. The native call releases the GIL, so separate stream
 
 The C library has a plain C API (`src/napa_vision/_native/napa_core.h`), so other languages can call it directly.
 C and C++ projects can build and install it with CMake and link `napa::napa`; see
-[the guide](docs/guide.md#from-c-or-another-language).
+[the guide](docs/guide.md#from-c-or-another-language). Android apps, including Meta Quest ones, can use the prebuilt
+ARM64 library attached to each [release](https://github.com/zwatx/NAPA/releases); see
+[Android and Meta Quest](docs/guide.md#android-and-meta-quest).
 [The guide](docs/guide.md) covers tuning, poses, Kalman filters, coordinate conventions, and calibration, and
 [the API reference](docs/api.md) lists every class, method, and field.
 
