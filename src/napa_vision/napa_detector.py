@@ -204,6 +204,8 @@ class NapaDetector:
         )
         if count < 0:
             raise RuntimeError(f"napa_detect failed with status {count}")
+        if count == 0:
+            return []
         rows = self._rows[:count]
         corners = rows["corners"].reshape(count, 4, 2).copy()
         return [
@@ -238,7 +240,25 @@ def _bgr_to_gray(image: np.ndarray) -> np.ndarray:
     try:
         import cv2
     except ImportError:
-        b, g, r = (image[..., channel].astype(np.uint32) for channel in range(3))
-        return ((b * 1868 + g * 9617 + r * 4899 + (1 << 13)) >> 14).astype(np.uint8)
+        gray = np.empty(image.shape[:2], dtype=np.uint8)
+        if gray.size == 0:
+            return gray
+        # Keep the two uint32 scratch blocks within 256 KiB for ordinary frame widths,
+        # instead of allocating full-resolution channel arrays and arithmetic temporaries.
+        rows = min(image.shape[0], max(1, 32768 // image.shape[1]))
+        total = np.empty((rows, image.shape[1]), dtype=np.uint32)
+        scratch = np.empty_like(total)
+        for y in range(0, image.shape[0], rows):
+            block = image[y : y + rows]
+            acc, tmp = total[: len(block)], scratch[: len(block)]
+            np.multiply(block[..., 0], 1868, out=acc, dtype=np.uint32)
+            np.multiply(block[..., 1], 9617, out=tmp, dtype=np.uint32)
+            acc += tmp
+            np.multiply(block[..., 2], 4899, out=tmp, dtype=np.uint32)
+            acc += tmp
+            acc += 1 << 13
+            acc >>= 14
+            gray[y : y + rows] = acc
+        return gray
     conversion = cv2.COLOR_BGRA2GRAY if image.shape[2] == 4 else cv2.COLOR_BGR2GRAY
     return cv2.cvtColor(np.ascontiguousarray(image), conversion)

@@ -147,19 +147,15 @@ def _positive_integer(value: object, name: str) -> int:
     return value
 
 
-def load_calibration_data(path: str | Path) -> CameraCalibration:
-    """Load and validate a versioned or legacy Northstar calibration file."""
+def _camera_calibration_from_dict(
+    data: object,
+    *,
+    default_source: str,
+    require_schema_version: bool = False,
+    require_complete: bool = False,
+) -> CameraCalibration:
+    """Parse a calibration payload for standalone and embedded artifacts."""
 
-    source = Path(path).expanduser()
-    try:
-        with source.open("r", encoding="utf-8") as file:
-            data = json.load(file)
-    except FileNotFoundError as exc:
-        raise CalibrationError(f"calibration file not found: {source}") from exc
-    except json.JSONDecodeError as exc:
-        raise CalibrationError(f"invalid calibration JSON at line {exc.lineno}: {exc.msg}") from exc
-    except OSError as exc:
-        raise CalibrationError(f"could not read calibration {source}: {exc}") from exc
     if not isinstance(data, dict):
         raise CalibrationError("calibration must be a JSON object")
     allowed = {
@@ -177,6 +173,12 @@ def load_calibration_data(path: str | Path) -> CameraCalibration:
     unknown = set(data) - allowed
     if unknown:
         raise CalibrationError(f"unknown calibration field(s): {', '.join(sorted(unknown))}")
+    if require_schema_version and "schema_version" not in data:
+        raise CalibrationError("calibration is missing schema_version")
+    if require_complete:
+        missing = (allowed - {"checkerboard"}) - set(data)
+        if missing:
+            raise CalibrationError(f"calibration is missing field(s): {', '.join(sorted(missing))}")
     schema_version = data.get("schema_version", 1)
     if isinstance(schema_version, bool) or not isinstance(schema_version, int) or schema_version != 1:
         raise CalibrationError(f"unsupported calibration schema_version {schema_version!r}; expected 1")
@@ -214,7 +216,7 @@ def load_calibration_data(path: str | Path) -> CameraCalibration:
     if not isinstance(rejected, list) or not all(isinstance(value, str) for value in rejected):
         raise CalibrationError("rejected_images must be an array of strings")
     try:
-        provenance = ArtifactProvenance.from_dict(data.get("provenance"), default_source=str(source))
+        provenance = ArtifactProvenance.from_dict(data.get("provenance"), default_source=default_source)
         return CameraCalibration(
             camera_matrix=np.asarray(data["camera_matrix"], dtype=np.float64),
             distortion_coefficients=np.asarray(
@@ -244,8 +246,8 @@ def load_calibration_data(path: str | Path) -> CameraCalibration:
         raise CalibrationError("calibration arrays must contain finite numbers") from exc
 
 
-def save_calibration_data(path: str | Path, calibration: CameraCalibration) -> None:
-    """Write a validated, self-describing calibration artifact."""
+def _camera_calibration_to_dict(calibration: CameraCalibration) -> dict[str, object]:
+    """Serialize a calibration payload for standalone and embedded artifacts."""
 
     payload: dict[str, object] = {
         "schema_version": 1,
@@ -268,6 +270,29 @@ def save_calibration_data(path: str | Path, calibration: CameraCalibration) -> N
             "rows": calibration.checkerboard.rows,
             "square_size_m": calibration.checkerboard.square_size_m,
         }
+    return payload
+
+
+def load_calibration_data(path: str | Path) -> CameraCalibration:
+    """Load and validate a versioned or legacy Northstar calibration file."""
+
+    source = Path(path).expanduser()
+    try:
+        with source.open("r", encoding="utf-8") as file:
+            data = json.load(file)
+    except FileNotFoundError as exc:
+        raise CalibrationError(f"calibration file not found: {source}") from exc
+    except json.JSONDecodeError as exc:
+        raise CalibrationError(f"invalid calibration JSON at line {exc.lineno}: {exc.msg}") from exc
+    except OSError as exc:
+        raise CalibrationError(f"could not read calibration {source}: {exc}") from exc
+    return _camera_calibration_from_dict(data, default_source=str(source))
+
+
+def save_calibration_data(path: str | Path, calibration: CameraCalibration) -> None:
+    """Write a validated, self-describing calibration artifact."""
+
+    payload = _camera_calibration_to_dict(calibration)
     destination = Path(path).expanduser()
     destination.parent.mkdir(parents=True, exist_ok=True)
     try:

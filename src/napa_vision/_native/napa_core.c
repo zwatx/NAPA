@@ -246,8 +246,8 @@ static void free_family(family_layout *L) {
     free_index(&L->index5);
 }
 
-/* Lay a family out for decoding: grid cells, rotations, neighbours, and the code indexes. */
-static int load_family(family_layout *L, const napa_family *f) {
+/* Geometry and correction limits need no code tables, including for metadata-only queries. */
+static int init_layout(family_layout *L, const napa_family *f, int8_t perm[64]) {
     memset(L, 0, sizeof *L);
     L->f = f;
     L->width = f->width, L->nbits = f->nbits, L->ncodes = f->ncodes, L->nrot = 4 * f->ncodes;
@@ -263,7 +263,6 @@ static int load_family(family_layout *L, const napa_family *f) {
     }
     L->outer = -lo, L->grid = hi - lo + 1;
     if (L->outer != hi - (f->width - 1) || L->grid > 16 || f->nbits > 64) return -1; /* not symmetric */
-    int8_t perm[64];
     for (int k = 0; k < f->nbits; k++) {
         int gx = f->x[k] + L->outer, gy = f->y[k] + L->outer;
         L->cell[k] = (int8_t)(gy * L->grid + gx);
@@ -282,6 +281,33 @@ static int load_family(family_layout *L, const napa_family *f) {
             if (j != k && dx >= -1 && dx <= 1 && dy >= -1 && dy <= 1) L->near[k] |= (uint64_t)1 << (f->nbits - 1 - j);
         }
     }
+    /* How likely a random pattern is to fall within h bits of some rotated code: nrot * sum_k C(n, k) / 2^n,
+     * with three-bit corrections counted only for touching cells (errors_connected). Recommend the
+     * largest h whose chance is at most 1e-4, about three times tag36h11's at its default of 3. */
+    double placements[4] = {1, f->nbits, 0.5 * f->nbits * (f->nbits - 1), 0};
+    for (int a = 0; a < f->nbits; a++)
+        for (int b = a + 1; b < f->nbits; b++)
+            for (int c = b + 1; c < f->nbits; c++) {
+                uint64_t bits = ((uint64_t)1 << (f->nbits - 1 - a)) | ((uint64_t)1 << (f->nbits - 1 - b)) |
+                                ((uint64_t)1 << (f->nbits - 1 - c));
+                placements[3] += errors_connected(L, bits);
+            }
+    double chance = 0;
+    for (int h = 0; h <= 3 && h <= L->max_hamming; h++) {
+        chance += L->nrot * placements[h] / ldexp(1.0, f->nbits);
+        if (h == 0 || chance <= 1e-4) L->recommended_hamming = h;
+        if (chance > 1e-4) break;
+    }
+    /* Families that can't afford three hard corrections get soft ones (decode_quad), up to 3 bits. */
+    int cap = L->max_hamming < 3 ? L->max_hamming : 3;
+    L->soft_hamming = L->recommended_hamming < cap ? cap : 0;
+    return 0;
+}
+
+/* Allocate and populate the tables only when creating a detector. */
+static int load_family(family_layout *L, const napa_family *f) {
+    int8_t perm[64];
+    if (init_layout(L, f, perm) != 0) return -1;
     L->codes = (uint64_t *)malloc(sizeof(uint64_t) * (size_t)L->nrot);
     L->ids = (int32_t *)malloc(sizeof(int32_t) * (size_t)L->nrot);
     L->rotations = (int8_t *)malloc((size_t)L->nrot);
@@ -314,26 +340,6 @@ static int load_family(family_layout *L, const napa_family *f) {
      * rejected above 0.95 of the grown quad. Other families keep the same slack over their own bound. */
     int dark_cells = 4 * (f->width - 1) + max_dark;
     L->fill_limit = 0.95 + ((double)dark_cells / (f->width * f->width) - 54.0 / 64.0);
-    /* How likely a random pattern is to fall within h bits of some rotated code: nrot * sum_k C(n, k) / 2^n,
-     * with three-bit corrections counted only for touching cells (errors_connected). Recommend the
-     * largest h whose chance is at most 1e-4, about three times tag36h11's at its default of 3. */
-    double placements[4] = {1, f->nbits, 0.5 * f->nbits * (f->nbits - 1), 0};
-    for (int a = 0; a < f->nbits; a++)
-        for (int b = a + 1; b < f->nbits; b++)
-            for (int c = b + 1; c < f->nbits; c++) {
-                uint64_t bits = ((uint64_t)1 << (f->nbits - 1 - a)) | ((uint64_t)1 << (f->nbits - 1 - b)) |
-                                ((uint64_t)1 << (f->nbits - 1 - c));
-                placements[3] += errors_connected(L, bits);
-            }
-    double chance = 0;
-    for (int h = 0; h <= 3 && h <= L->max_hamming; h++) {
-        chance += L->nrot * placements[h] / ldexp(1.0, f->nbits);
-        if (h == 0 || chance <= 1e-4) L->recommended_hamming = h;
-        if (chance > 1e-4) break;
-    }
-    /* Families that can't afford three hard corrections get soft ones (decode_quad), up to 3 bits. */
-    int cap = L->max_hamming < 3 ? L->max_hamming : 3;
-    L->soft_hamming = L->recommended_hamming < cap ? cap : 0;
     if (build_index(&L->index3, L->codes, L->nrot, f->nbits, 4, 0) != 0) return -1;
     /* Up to 5 wrong bits: six exact blocks, or for large families three blocks probed with one changed bit
      * each (five errors leave some block with at most one), whose buckets are far smaller. */
@@ -365,13 +371,10 @@ int napa_family_info(const char *family, napa_family_layout *info) {
     info->ncodes = f->ncodes, info->nbits = f->nbits, info->width = f->width, info->total_width = f->total_width;
     info->reversed = f->reversed, info->min_distance = f->min_distance;
     family_layout L;
-    if (load_family(&L, f) != 0) {
-        free_family(&L);
-        return -1;
-    }
+    int8_t perm[64];
+    if (init_layout(&L, f, perm) != 0) return -1;
     info->max_hamming = L.max_hamming < 3 ? L.max_hamming : 3;
     info->recommended_hamming = L.recommended_hamming;
-    free_family(&L);
     for (int k = 0; k < 64; k++) {
         info->x[k] = k < f->nbits ? f->x[k] : 0;
         info->y[k] = k < f->nbits ? f->y[k] : 0;
@@ -1120,6 +1123,7 @@ static int fit_sides(const image_view *im, const vec2 in[4], vec2 out[4], double
                     }
                 }
                 /* Drop outliers only when most samples agree; otherwise keep the full fit. */
+                if (kept == good) break; /* unchanged samples would produce the same fit again */
                 if (kept >= 3 && 2 * kept >= good) good = kept;
             }
         }
@@ -1343,11 +1347,10 @@ static int read_border(const family_layout *L, const image_view *im, const doubl
         p = project(H, (W + 0.5) / cells, v);
         ring[nr++] = sample_bilinear(im, p.x, p.y);
     }
-    double bs[4 * 16], rs[4 * 16 + 4];
+    double bs[4 * 16];
     memcpy(bs, border, sizeof(double) * (size_t)nb);
-    memcpy(rs, ring, sizeof(double) * (size_t)nr);
     double black = median_even(bs, nb);
-    double white = median_even(rs, nr);
+    double white = median_even(ring, nr);
     *black_out = black, *white_out = white;
     if (white - black < min_contrast) return -1;
     double thr = 0.5 * (black + white);
@@ -1414,8 +1417,18 @@ static int decode_quad(napa_detector *det, const image_view *im, vec2 q[4],
             }
         }
     }
-    double raw[256];
-    memcpy(raw, grid, sizeof(double) * (size_t)(G * G));
+    if (side_level != NULL) {
+        /* Each side's non-corner border cells (top, right, bottom, left, unsharpened), as a fraction of
+         * the way from the tag's black to its white: about 0 for a true border side. */
+        for (int k = 0; k < 4; k++) side_level[k] = 0;
+        for (int k = 1; k < W - 1; k++) {
+            side_level[0] += grid[o * G + k + o];
+            side_level[1] += grid[(k + o) * G + W - 1 + o];
+            side_level[2] += grid[(W - 1 + o) * G + k + o];
+            side_level[3] += grid[(k + o) * G + o];
+        }
+        for (int k = 0; k < 4; k++) side_level[k] = (side_level[k] / (W - 2) - black) / (white - black);
+    }
     /* Sharpen the cell samples, as upstream AprilTag does, to undo blur between neighbouring cells. */
     if (params->sharpening_x100 > 0) {
         double k = params->sharpening_x100 / 100.0;
@@ -1431,18 +1444,6 @@ static int decode_quad(napa_detector *det, const image_view *im, vec2 q[4],
             }
         }
         memcpy(grid, sharp, sizeof(double) * (size_t)(G * G));
-    }
-    if (side_level != NULL) {
-        /* Each side's non-corner border cells (top, right, bottom, left, unsharpened), as a fraction of
-         * the way from the tag's black to its white: about 0 for a true border side. */
-        for (int k = 0; k < 4; k++) side_level[k] = 0;
-        for (int k = 1; k < W - 1; k++) {
-            side_level[0] += raw[o * G + k + o];
-            side_level[1] += raw[(k + o) * G + W - 1 + o];
-            side_level[2] += raw[(W - 1 + o) * G + k + o];
-            side_level[3] += raw[(k + o) * G + o];
-        }
-        for (int k = 0; k < 4; k++) side_level[k] = (side_level[k] / (W - 2) - black) / (white - black);
     }
 
     uint64_t code = 0;

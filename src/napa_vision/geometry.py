@@ -48,6 +48,21 @@ def invert_transform(transform: np.ndarray) -> np.ndarray:
     return out
 
 
+def _rigid_transform(value: np.ndarray, name: str) -> np.ndarray:
+    """Return an independent finite rigid transform snapshot."""
+
+    transform = np.asarray(value, dtype=np.float64)
+    if (
+        transform.shape != (4, 4)
+        or not np.all(np.isfinite(transform))
+        or not np.allclose(transform[3], [0.0, 0.0, 0.0, 1.0], rtol=0.0, atol=1e-9)
+        or not np.allclose(transform[:3, :3].T @ transform[:3, :3], np.eye(3), rtol=0.0, atol=1e-6)
+        or not np.isclose(np.linalg.det(transform[:3, :3]), 1.0, rtol=0.0, atol=1e-6)
+    ):
+        raise ValueError(f"{name} must be a finite rigid 4x4 transform")
+    return transform.copy()
+
+
 def rvec_tvec_to_transform(rvec: np.ndarray, tvec: np.ndarray) -> np.ndarray:
     cv2 = _import_cv2()
     r, _ = cv2.Rodrigues(np.asarray(rvec, dtype=np.float64).reshape(3, 1))
@@ -79,8 +94,7 @@ def wpilib_points_to_opencv(points: np.ndarray) -> np.ndarray:
 
 def transform_points(transform: np.ndarray, points: np.ndarray) -> np.ndarray:
     points = np.asarray(points, dtype=np.float64).reshape(-1, 3)
-    homogeneous = np.column_stack((points, np.ones(len(points), dtype=np.float64)))
-    return (transform @ homogeneous.T).T[:, :3]
+    return (transform[:3, :3] @ points.T).T + transform[:3, 3]
 
 
 @lru_cache(maxsize=16)

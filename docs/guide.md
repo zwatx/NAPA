@@ -280,6 +280,100 @@ input. Use the gates in CI to catch regressions on footage you trust.
 
 To compare Napa with standard AprilTag on synthetic scenes, see [the benchmark guide](../benchmarks/README.md).
 
+## Stereo rig pose
+
+`StereoPoseSolver` fits one rig pose directly to both cameras' tag corners. Each camera must see at least one
+known tag, but the cameras can see different tags. Detection still uses the native C core; stereo fitting is in
+the optional Python/OpenCV pose layer (`pip install 'napa-vision[headless]'`).
+
+```python
+from napa_vision import NapaDetector, StereoPoseSolver, load_stereo_calibration
+
+calibration = load_stereo_calibration("rig.json")
+calibration.require_production()
+solver = StereoPoseSolver(
+    calibration,
+    tag_layout,
+    tag_size_m=0.1651,
+    max_capture_skew_s=0.005,  # Choose for your motion and capture system.
+)
+detector = NapaDetector()
+try:
+    left = detector.detect(left_image)
+    right = detector.detect(right_image)
+finally:
+    detector.close()
+result = solver.solve(
+    left,
+    right,
+    left_capture_time_s=left_exposure_midpoint_s,
+    right_capture_time_s=right_exposure_midpoint_s,
+)
+if result.status == "stereo":
+    field_to_rig = result.pose.transform
+    covariance = result.pose.covariance
+else:
+    print(result.diagnostics.rejection_reason)
+```
+
+Supply raw, unrectified pixels at each calibration's resolution. Validate image sizes before detection with
+`calibration.left.validate_for_image_size(width, height)` and the right-camera equivalent. Capture times must be
+exposure midpoints in seconds on the same clock. The solver rejects excessive skew; it does not synchronize
+cameras, pair frames, estimate clock offsets, or compensate motion and rolling shutter. Its stereo timestamp is
+the pair midpoint. Capture, queues, threads, and temporal filtering remain caller-owned.
+
+Transforms follow Napa's usual pose convention: `rig_to_left` and `rig_to_right` are camera poses in the rig,
+mapping WPILib camera coordinates into WPILib rig coordinates. The returned pose maps rig coordinates into field
+coordinates. Calibration and layout are snapshotted when the solver is created.
+
+The solver starts from multiple monocular solutions, fits raw corners jointly, and retains distinct plausible
+minima in `result.poses`, best first. Bounded local optimization does not guarantee every minimum is found.
+Noisy observations can be rejected when refinement fails to converge, even if a usable low-residual pose exists;
+raising `max_iterations` trades latency for more attempts but does not guarantee convergence. The covariance of each candidate includes spread from retained alternatives, conditional on exact intrinsics,
+extrinsics, and field layout and on independent corner noise. It excludes calibration uncertainty, clock error,
+and mount flex. A small covariance alone does not prove that stereo improved accuracy.
+
+Diagnostics identify each observation by `(camera_id, tag_id)`, with residuals and rejection reasons. The
+reprojection limit applies to every retained group; the solver can remove at most two failing groups by default
+while retaining observations from both cameras. Rejected results have no pose. Set `allow_monocular_fallback=True`
+only when your caller accepts one-camera results: their status is `"monocular"`, their timestamp is that camera's
+capture time, and `fallback_reason` explains why stereo failed. The newest usable camera is tried first.
+
+### Calibrating and checking a rig
+
+Calibrate each camera independently first, using varied target positions and angles. Then collect simultaneous
+matched target corners with fixed intrinsics and a rigid camera mount:
+
+```python
+from napa_vision import calibrate_stereo_points, save_stereo_calibration
+
+rig = calibrate_stereo_points(
+    object_points,
+    left_image_points,
+    right_image_points,
+    left_calibration,
+    right_calibration,
+    source="paired checkerboard session",
+)
+save_stereo_calibration("rig.json", rig)
+errors_px = rig.epipolar_errors(held_out_left_corners, held_out_right_corners)
+```
+
+The fitting helper accepts lists of corresponding target points in metres and image points in pixels, with at
+least three views and four points per view. It fixes both intrinsics, currently requires equal image sizes, and
+chooses the left camera as rig origin. You can also construct `StereoCalibration` from independently measured
+mount poses; the solver itself permits different camera resolutions.
+
+Artifacts embed both intrinsic calibrations, camera IDs, the explicit `wpilib_camera_to_rig` convention, measured
+provenance, fit RMS, and view count. `require_production()` checks measured provenance and fit metadata; it is not
+an accuracy certification. Check held-out epipolar residuals, physically measured baseline scale, varied target
+coverage, and timestamp consistency before deployment. Epipolar errors cannot establish baseline scale or
+synchronization and are undefined for coincident camera centers. Choose quality thresholds for your hardware.
+
+Use the [paired replay evaluator](../benchmarks/README.md#stereo-paired-replay) to compare joint solving, each
+camera alone, and independent pose fusion against timestamped ground truth. The repository has synthetic
+regressions, including real tag detection, but no held-out real-camera stereo corpus or measured accuracy claim.
+
 ## Building and packaging
 
 `pip install napa-vision` installs a prebuilt wheel on Linux (x86-64, ARM64), macOS, Windows x64, and Android

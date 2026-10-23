@@ -11,6 +11,7 @@ import numpy as np
 
 from .calibration import CameraCalibration
 from .covariance import DEFAULT_CORNER_NOISE_PX
+from .geometry import _rigid_transform
 from .napa_detector import NapaDetector
 from .solvers import CameraPoseSolver, SingleTagPoseSolver, TagAngleSolver
 from .types import CameraPoseBounds, FiducialDetector, FrameResult
@@ -20,19 +21,6 @@ from .types import CameraPoseBounds, FiducialDetector, FrameResult
 class _CameraGeometry:
     calibration_matrix: np.ndarray
     distortion_coefficients: np.ndarray
-
-
-def _rigid_transform(value: np.ndarray, name: str) -> np.ndarray:
-    transform = np.asarray(value, dtype=np.float64)
-    if (
-        transform.shape != (4, 4)
-        or not np.all(np.isfinite(transform))
-        or not np.allclose(transform[3], [0.0, 0.0, 0.0, 1.0], rtol=0.0, atol=1e-9)
-        or not np.allclose(transform[:3, :3].T @ transform[:3, :3], np.eye(3), rtol=0.0, atol=1e-6)
-        or not np.isclose(np.linalg.det(transform[:3, :3]), 1.0, rtol=0.0, atol=1e-6)
-    ):
-        raise ValueError(f"{name} must be a finite rigid 4x4 transform")
-    return transform.copy()
 
 
 class VisionProcessor:

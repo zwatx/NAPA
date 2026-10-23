@@ -8,6 +8,8 @@ corners, plus poses if you supply a calibration. It opens no cameras, starts no 
 webcam, a Raspberry Pi, a headset, recorded video, or a camera SDK can all feed it the same way.
 
 The detector is a small C library with no dependencies, plus a Python binding that needs only numpy.
+The optional OpenCV pose layer also supports [joint stereo rig localization](docs/guide.md#stereo-rig-pose)
+from two calibrated, synchronized cameras and a known tag layout.
 
 ## Compared with standard AprilTag
 
