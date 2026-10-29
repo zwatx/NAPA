@@ -100,3 +100,38 @@ def test_resource_summary_keeps_skipped_backends_apart_from_measured_ones() -> N
     assert measured["wall_ms_per_frame"] == 1.0 and measured["rss_peak_over_constructed_mib"] == 1.0
     assert skipped == {"backend": "locus", "failures": [], "skip_reason": ["no locus"]}
     assert "skipped: no locus" in cc.resources_markdown(summary, "t")
+
+
+def test_published_tables_report_recall_wrong_ids_speedups_and_range() -> None:
+    def row(frame, scenario, backend, ms, found, tags=2, false_id=0, side=""):
+        return {
+            "frame": frame,
+            "scenario": scenario,
+            "resolution": "640x480",
+            "backend": backend,
+            "tags": tags,
+            "true_positive": found,
+            "false_id": false_id,
+            "duplicate": 0,
+            "median_ms": ms,
+            "samples_ns": str(int(ms * 1e6)),
+            "corner_errors_px": ";".join(["0.02"] * found),
+            "detail_side_px": side,
+        }
+
+    rows = [
+        row("a", "one-tag", "napa", 1.0, 2),
+        row("a", "one-tag", "locus", 4.0, 1, false_id=1),
+        row("b", "noise", "napa", 2.0, 2),
+        row("b", "noise", "locus", 3.0, 2),
+        row("r0", "range", "napa", 1.0, 0, 1, side="12.0"),
+        row("r0", "range", "locus", 1.0, 1, 1, side="12.0"),
+        row("r1", "range", "napa", 1.0, 1, 1, side="16.0"),
+        row("r1", "range", "locus", 1.0, 1, 1, side="16.0"),
+    ]
+    text = cc.published_tables(rows)
+    assert "| Tags found | 75.0% | 100.0% |" in text  # Locus first (label order), NAPA last
+    assert "| Smallest tag found every time (range test) | 12 px | 16 px |" in text
+    assert "| Wrong IDs in 2 frames | 1 | 0 |" in text
+    assert "| All frames | 2.8× (1.5×) |" in text  # per-frame ratios 4.0 and 1.5: median 2.75, slowest 1.5
+    assert "| one-tag | 2 | 1 (1) | 2 |" in text

@@ -641,6 +641,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     report_parser.add_argument("--groups", type=pm._name_list, default=("all-corpus", "all-stress"))
     report_parser.add_argument("--output", type=Path)
 
+    published = commands.add_parser("published")
+    published.add_argument("latency_json", type=Path)
+    published.add_argument("--output", type=Path)
+
     agreement_parser = commands.add_parser("real-agreement")
     agreement_parser.add_argument("latency_json", type=Path)
     agreement_parser.add_argument("--output", type=Path, required=True)
@@ -686,6 +690,14 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "resources":
         return run_resources(args)
+
+    if args.command == "published":
+        with args.latency_json.with_suffix(".csv").open(newline="", encoding="utf-8") as file:
+            text = published_tables(list(csv.DictReader(file)))
+        if args.output:
+            args.output.write_text(text)
+        print(text)
+        return 0
 
     if args.command == "real-agreement":
         with args.latency_json.with_suffix(".csv").open(newline="", encoding="utf-8") as file:
@@ -1001,6 +1013,148 @@ def resources_markdown(summary: Sequence[dict[str, object]], title: str) -> str:
             f"| {s['rss_import_construct_mib']:.1f} | {s['rss_peak_over_constructed_mib']:.1f} | {s['os_threads']} "
             f"| {','.join(map(str, s['thread_cpus']))} |"
         )
+    return "\n".join(lines) + "\n"
+
+
+PUBLISHED_LABELS = {
+    "wpilib-d2": "WPILib AprilTag, decimate 2",
+    "apriltag3-d2": "AprilTag, decimate 2",
+    "apriltag3-d1": "AprilTag, decimate 1",
+    "locus": "Locus",
+    "opencv": "OpenCV ArUco",
+    "aruco-nano": "ArUco Nano",
+    "rapidtag": "RapidTag",
+    "napa": "NAPA",
+}
+
+
+def _times(value: float) -> str:
+    return f"{value:.0f}×" if value >= 10 else f"{value:.1f}×"
+
+
+def published_tables(rows: Sequence[dict[str, object]], baseline: str = "napa") -> str:
+    """The README and benchmark-guide tables, from one ``latency`` run's rows (corpus, range sweep)."""
+
+    present = {str(r["backend"]) for r in rows}
+    backends = [b for b in PUBLISHED_LABELS if b in present]
+    others = [b for b in backends if b != baseline]
+    corpus = [r for r in rows if r["scenario"] in pm.SCENARIO_NAMES]
+    ranged = [r for r in rows if r["scenario"] == "range"]
+    resolutions = sorted({str(r["resolution"]) for r in corpus}, key=lambda v: int(v.split("x")[0]))
+    by = defaultdict(list)
+    for row in corpus:
+        by[str(row["backend"])].append(row)
+    frames = len(by[baseline])
+    if not frames:
+        raise ValueError("published tables need the corpus scenarios in the run")
+    lines = [
+        "#### Summary\n",
+        "| | " + " | ".join(PUBLISHED_LABELS[b] for b in backends) + " |",
+        "| --- |" + " ---: |" * len(backends),
+    ]
+
+    def found(members):
+        return sum(int(r["true_positive"]) for r in members), sum(int(r["tags"]) for r in members)
+
+    smallest = {}
+    if ranged:
+        counts = defaultdict(lambda: [0, 0])
+        for row in ranged:
+            key = (str(row["backend"]), float(row["detail_side_px"]))
+            counts[key][0] += int(row["true_positive"])
+            counts[key][1] += 1
+        sides = sorted({side for _, side in counts})
+        for backend in backends:
+            full = [s for s in sides if counts[(backend, s)][0] == counts[(backend, s)][1]]
+            smallest[backend] = next((s for s in sides if all(t in full for t in sides if t >= s)), None)
+    cells = {
+        "Tags found": [f"{100 * found(by[b])[0] / found(by[b])[1]:.1f}%" for b in backends],
+        "Smallest tag found every time (range test)": [
+            f"{smallest[b]:g} px" if smallest.get(b) else "—" for b in backends
+        ]
+        if ranged
+        else None,
+        "Median error of a tag's worst corner": [
+            f"{np.median([e for r in by[b] for e in _split(r['corner_errors_px'])]):.3f} px" for b in backends
+        ],
+        f"Wrong IDs in {frames:,} frames": [
+            str(sum(int(r["false_id"]) + int(r["duplicate"]) for r in by[b])) for b in backends
+        ],
+    }
+    lines += [f"| {name} | " + " | ".join(values) + " |" for name, values in cells.items() if values]
+
+    def ratio_groups(group: Callable[[dict], str | None]) -> dict[tuple[str, str], dict]:
+        return {(e["group"], e["versus"]): e for e in frame_ratios(corpus, baseline, group)}
+
+    per_resolution = ratio_groups(lambda r: str(r["resolution"]))
+    overall = ratio_groups(lambda r: "all")
+    lines += [
+        "\n#### NAPA's speedup per frame: median (slowest frame)\n",
+        "| Resolution | " + " | ".join(PUBLISHED_LABELS[b] for b in others) + " |",
+        "| --- |" + " ---: |" * len(others),
+    ]
+    for name, table in [(res, per_resolution) for res in resolutions] + [("all", overall)]:
+        label = "All frames" if name == "all" else name.replace("x", "×")
+        values = [table[(name, b)] for b in others]
+        lines.append(f"| {label} | " + " | ".join(f"{_times(v['median'])} ({_times(v['min'])})" for v in values) + " |")
+    slower = {b: overall[("all", b)]["frames_baseline_slower"] for b in others}
+    lines.append(f"\nFrames where NAPA was slower: {slower}\n")
+
+    results = defaultdict(list)
+    for row in corpus:
+        results[(str(row["scenario"]), str(row["resolution"]), str(row["backend"]))].append(row)
+    scene_ratios = ratio_groups(lambda r: f"{r['scenario']}|{r['resolution']}")
+    for resolution in resolutions:
+        lines += [
+            f"\n#### {resolution}: median call (NAPA's per-frame speedup, median)\n",
+            "| Scene | Frames | Tags | " + " | ".join(PUBLISHED_LABELS[b] for b in backends) + " |",
+            "| --- | ---: | ---: |" + " ---: |" * len(backends),
+        ]
+        for scenario in pm.SCENARIO_NAMES:
+            members = results.get((scenario, resolution, baseline))
+            if not members:
+                continue
+            values = []
+            for b in backends:
+                samples = [v for r in results[(scenario, resolution, b)] for v in _split(r["samples_ns"], int)]
+                p50 = float(np.median(samples)) / 1e6
+                ratio = scene_ratios.get((f"{scenario}|{resolution}", b))
+                values.append(f"{p50:.2f} ms" + (f" ({_times(ratio['median'])})" if ratio else ""))
+            tags = sum(int(r["tags"]) for r in members)
+            lines.append(f"| {scenario} | {len(members)} | {tags} | " + " | ".join(values) + " |")
+        lines += [
+            f"\n#### {resolution}: tags found (wrong IDs)\n",
+            "| Scene | Tags | " + " | ".join(PUBLISHED_LABELS[b] for b in backends) + " |",
+            "| --- | ---: |" + " ---: |" * len(backends),
+        ]
+        for scenario in pm.SCENARIO_NAMES:
+            members = results.get((scenario, resolution, baseline))
+            if not members:
+                continue
+            tags = sum(int(r["tags"]) for r in members)
+            values = []
+            for b in backends:
+                got, _ = found(results[(scenario, resolution, b)])
+                wrong = sum(int(r["false_id"]) + int(r["duplicate"]) for r in results[(scenario, resolution, b)])
+                text = "—" if not tags else str(got)
+                values.append(text + (f" ({wrong})" if wrong else ""))
+            lines.append(f"| {scenario} | {tags} | " + " | ".join(values) + " |")
+
+    if ranged:
+        sides = sorted({side for _, side in counts})
+        groups: list[list[float]] = []
+        for side in sides:
+            same = groups and all(counts[(b, groups[-1][-1])][0] == counts[(b, side)][0] for b in backends)
+            groups[-1].append(side) if same else groups.append([side])
+        cases = counts[(baseline, sides[0])][1]
+        header = [f"{g[0]:g}" if len(g) == 1 else f"{g[0]:g}–{g[-1]:g}" for g in groups]
+        lines += [
+            f"\n#### Range: tags found out of {cases} at each black-square size (px)\n",
+            "| Detector | " + " | ".join(header) + " |",
+            "| --- |" + " ---: |" * len(groups),
+        ]
+        for b in backends:
+            lines.append(f"| {PUBLISHED_LABELS[b]} | " + " | ".join(str(counts[(b, g[0])][0]) for g in groups) + " |")
     return "\n".join(lines) + "\n"
 
 
