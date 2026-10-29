@@ -32,3 +32,4 @@ benchmarks/notes/
 !README.md
 !benchmarks/README.md
 !docs/*.md
+!benchmarks/results/**/*.md
