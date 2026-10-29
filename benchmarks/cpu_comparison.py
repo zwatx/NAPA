@@ -1065,15 +1065,18 @@ def published_tables(rows: Sequence[dict[str, object]], baseline: str = "napa") 
             counts[key][1] += 1
         sides = sorted({side for _, side in counts})
         for backend in backends:
-            full = [s for s in sides if counts[(backend, s)][0] == counts[(backend, s)][1]]
-            smallest[backend] = next((s for s in sides if all(t in full for t in sides if t >= s)), None)
+            misses = {s: counts[(backend, s)][1] - counts[(backend, s)][0] for s in sides}
+            exact = next((s for s in sides if not any(misses[t] for t in sides if t >= s)), None)
+            if exact is not None:
+                smallest[backend] = f"{exact:g} px"
+                continue
+            # Not one size from which every tag was found: say so, unless a single missed tag is what prevents it.
+            near = next((s for s in sides if sum(misses[t] for t in sides if t >= s) == 1), None)
+            missed = next((t for t in sides if near is not None and t >= near and misses[t]), None)
+            smallest[backend] = f"{near:g} px (one {missed:g} px tag missed)" if near is not None else "—"
     cells = {
         "Tags found": [f"{100 * found(by[b])[0] / found(by[b])[1]:.1f}%" for b in backends],
-        "Smallest tag found every time (range test)": [
-            f"{smallest[b]:g} px" if smallest.get(b) else "—" for b in backends
-        ]
-        if ranged
-        else None,
+        "Smallest tag found every time (range test)": [smallest[b] for b in backends] if ranged else None,
         "Median error of a tag's worst corner": [
             f"{np.median([e for r in by[b] for e in _split(r['corner_errors_px'])]):.3f} px" for b in backends
         ],
