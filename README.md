@@ -1,10 +1,8 @@
 # NAPA
 
-**Not Another Pixel Algorithm**: NAPA skips most of the pixels in each frame.
-
-NAPA is a fast AprilTag detector. Give it a greyscale frame and it returns tag IDs and sub-pixel corners, plus poses
-with covariances if you give it a camera calibration. It reads every AprilTag family, with tag36h11, the FRC family,
-as the default.
+NAPA is a fast AprilTag detector that skips most of the pixels in each frame. Give it a greyscale frame and it returns
+tag IDs and sub-pixel corners, plus poses with covariances if you give it a camera calibration. It reads every
+AprilTag family, with tag36h11, the FRC family, as the default.
 
 ```bash
 python -m pip install napa-vision
