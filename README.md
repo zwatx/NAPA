@@ -39,10 +39,11 @@ NAPA was faster than every one of them on every frame:
 
 Each cell is NAPA's speedup on the median frame, then on the frame where it was closest.
 
-Range scales with the inverse of the smallest tag found, so on the same camera NAPA's default sees about 3.6× as far
-as WPILib's AprilTag and slightly farther than upstream AprilTag at decimate 2. Upstream at decimate 1, Locus,
-OpenCV, and ArUco Nano find smaller tags than NAPA's default does. Setting `min_tag_px=16` finds every tag down to
-12 px, at two to four times NAPA's default time.
+A tag's size in the image falls with distance, so the smallest tag found suggests relative range: under this
+test's conditions (light noise, up to 15° of tilt), NAPA's default would see about 3.6× as far as WPILib's AprilTag
+and slightly farther than upstream AprilTag at decimate 2. Upstream at decimate 1, Locus, OpenCV, and ArUco Nano find
+smaller tags than NAPA's default does. Setting `min_tag_px=16` found every tag down to 12 px in a separate run; on
+the median frame it took two to four times NAPA's default time, and much longer on very noisy frames.
 
 NAPA's one wrong ID was a tag-shaped decoy whose random pattern fell within 2 bits of a real code. On tag16h5, the
 2023 FRC family, AprilTag at its default two-bit correction reported 581 wrong IDs in the family benchmark, and NAPA

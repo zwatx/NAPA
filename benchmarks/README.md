@@ -98,9 +98,9 @@ module (`DICT_APRILTAG_36h11`, no corner refinement, as it defaults); ArUco Nano
 is the median detector call across all frames and repetitions in a row. Earlier checked-in results came from other
 machines, so their absolute times differ.
 
-WPILib's AprilTag keeps only candidate regions of at least 300 pixels and quads with corners sharper than 45°
-(upstream: 24 pixels and 10°). That is why it finds fewer small and steeply tilted tags than upstream at the same
-decimation.
+WPILib's AprilTag keeps only candidate regions of at least 300 pixels, and rejects quads with a corner sharper than
+45° or wider than 135° (upstream: 24 pixels, and 10° or 170°). That is why it finds fewer small and steeply tilted
+tags than upstream at the same decimation.
 
 #### 640x480: median call, and NAPA's median per-frame speedup in brackets
 
@@ -273,9 +273,10 @@ From the same run: tags found out of 50 at each black-square size, in pixels.
 NAPA's default found every tag from 22 px, upstream AprilTag at decimate 2 from 24 px, Locus from 20 px, ArUco Nano
 from 16 px, and upstream AprilTag at decimate 1 from 14 px. WPILib's AprilTag at decimate 2 needed 80 px. OpenCV
 found every tag from 18 px except one at 96 px, and RapidTag never found all of any size. A tag's size in the image
-is inversely proportional to its distance, so on the same camera NAPA's default sees about 3.6× as far as WPILib's
-AprilTag; detectors that find smaller tags see farther. With `min_tag_px=16`, NAPA found every tag down to 12 px
-(`results/2026-10-28_cpu_comparison/range_sweep_latency.json`, 30 tags per size).
+is inversely proportional to its distance, so under this test's conditions (light noise, up to 15° of tilt) NAPA's
+default would see about 3.6× as far as WPILib's AprilTag, and detectors that find smaller tags would see farther.
+With `min_tag_px=16`, NAPA found every tag down to 12 px (`results/2026-10-28_cpu_comparison/range_sweep_latency.json`,
+30 tags per size).
 
 ## Tag families
 
