@@ -476,8 +476,17 @@ needs only numpy. Fitting one, checking epipolar errors, and solving poses need 
 ### `StereoCalibration`
 
 ```python
-StereoCalibration(left, right, rig_to_left, rig_to_right, provenance, left_id="left", right_id="right",
-                  rms_reprojection_error_px=None, views_used=None)
+StereoCalibration(
+    left,
+    right,
+    rig_to_left,
+    rig_to_right,
+    provenance,
+    left_id="left",
+    right_id="right",
+    rms_reprojection_error_px=None,
+    views_used=None,
+)
 ```
 
 `left` and `right` are `CameraCalibration` objects with recorded resolutions. `rig_to_left` and `rig_to_right` are
