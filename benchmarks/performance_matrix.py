@@ -44,7 +44,7 @@ OCCLUSION_FRACTIONS = (0.0, 0.05, 0.10, 0.20, 0.30, 0.40)
 OCCLUSION_REGIONS = ("payload-center", "border-strip", "corner")
 OCCLUSION_VALUES = (255, 127)
 DEFAULT_RANGE_CASES = 50
-RANGE_SIDES_PX = (12, 14, 16, 20, 24, 28, 32, 40, 48, 64, 96)
+RANGE_SIDES_PX = (12, 14, 16, 18, 20, 22, 24, 28, 32, 36, 40, 48, 56, 64, 72, 80, 88, 96)
 
 Corners = np.ndarray  # (4, 2) float64, black-square corners in OpenCV order, pixel-centre coordinates
 Detection = tuple[int, Corners]
