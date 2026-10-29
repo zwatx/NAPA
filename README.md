@@ -8,37 +8,50 @@ AprilTag family, with tag36h11, the FRC family, as the default.
 python -m pip install napa-vision
 ```
 
-## Compared with AprilTag
+## Compared with other detectors
 
-These results compare NAPA with upstream AprilTag 3 at decimate 2 (WPILib's default) and decimate 1 (full resolution,
-PhotonVision's default). The benchmark is 3,000 rendered frames holding 5,521 tags, each with exact ground truth, and
-every detector ran single-threaded on the same CPU core.
+These results compare NAPA with AprilTag 3 as WPILib runs it (decimate 2 with WPILib's defaults), upstream AprilTag 3
+at decimate 2 and at decimate 1 (full resolution), [Locus](https://github.com/NoeFontana/locus-tag), OpenCV's ArUco
+module, [ArUco Nano](https://github.com/rmsalinas/aruco_nano), and [RapidTag](https://github.com/SujithChristopher/rapidtag),
+each at its own defaults. The benchmark is 3,000 rendered frames holding 5,521 tags, each with exact ground truth,
+and every detector ran single-threaded on the same CPU core.
 
-| | AprilTag, decimate 2 | AprilTag, decimate 1 | NAPA |
-| --- | ---: | ---: | ---: |
-| Tags found | 86.2% | 99.4% | 99.8% |
-| Smallest tag found every time ([range test](benchmarks/README.md#range)) | 80 px | 36 px | 22 px |
-| Median error of a tag's worst corner | 0.099 px | 0.098 px | 0.021 px |
-| Wrong IDs in 3,000 frames | 0 | 3 | 1 |
+| | WPILib AprilTag, decimate 2 | AprilTag, decimate 2 | AprilTag, decimate 1 | Locus | OpenCV ArUco | ArUco Nano | RapidTag | NAPA |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Tags found | 86.2% | 99.7% | 99.9% | 97.7% | 99.4% | 99.9% | 75.5% | 99.8% |
+| Smallest tag found every time ([range test](benchmarks/README.md#range)) | 80 px | 24 px | 14 px | 20 px | 18 px¹ | 16 px | — | 22 px |
+| Median error of a tag's worst corner | 0.099 px | 0.043 px | 0.042 px | 0.044 px | 0.987 px | 0.044 px | 1.000 px | 0.021 px |
+| Wrong IDs in 3,000 frames | 0 | 3 | 3 | 1 | 1 | 0 | 19 | 1 |
 
-NAPA was faster than both on every frame:
+¹ Except one 96 px tag.
 
-| Resolution | vs. decimate 2, median (slowest frame) | vs. decimate 1, median (slowest frame) |
-| --- | ---: | ---: |
-| 640×480 | 13× (3.6×) | 62× (12×) |
-| 1280×720 | 30× (4.2×) | 142× (14×) |
-| 1920×1080 | 60× (4.5×) | 273× (13×) |
-| All frames | 19× (3.6×) | 87× (12×) |
+WPILib's build keeps only candidate regions of 300 pixels or more (upstream keeps 24), so at the same decimation it
+drops small and steeply tilted tags that upstream AprilTag finds.
 
-Range scales with the inverse of the smallest tag found, so on the same camera NAPA sees about 3.6× as far as decimate
-2 and 1.6× as far as decimate 1.
+NAPA was faster than every one of them on every frame:
+
+| Resolution | WPILib AprilTag, decimate 2 | AprilTag, decimate 2 | AprilTag, decimate 1 | Locus | OpenCV ArUco | ArUco Nano | RapidTag |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 640×480 | 17× (3.8×) | 24× (4.4×) | 88× (11×) | 19× (6.6×) | 45× (6.6×) | 4.7× (1.8×) | 10× (4.6×) |
+| 1280×720 | 37× (4.9×) | 47× (7.3×) | 199× (19×) | 31× (7.4×) | 45× (9.9×) | 6.9× (2.2×) | 17× (5.7×) |
+| 1920×1080 | 72× (5.0×) | 89× (9.7×) | 359× (21×) | 44× (7.3×) | 44× (9.9×) | 8.8× (2.4×) | 23× (5.9×) |
+| All frames | 25× (3.8×) | 33× (4.4×) | 125× (11×) | 27× (6.6×) | 44× (6.6×) | 6.9× (1.8×) | 16× (4.6×) |
+
+Each cell is NAPA's speedup on the median frame, then on the frame where it was closest.
+
+Range scales with the inverse of the smallest tag found, so on the same camera NAPA's default sees about 3.6× as far
+as WPILib's AprilTag and slightly farther than upstream AprilTag at decimate 2. Upstream at decimate 1, Locus,
+OpenCV, and ArUco Nano find smaller tags than NAPA's default does. Setting `min_tag_px=16` finds every tag down to
+12 px, at two to four times NAPA's default time.
 
 NAPA's one wrong ID was a tag-shaped decoy whose random pattern fell within 2 bits of a real code. On tag16h5, the
 2023 FRC family, AprilTag at its default two-bit correction reported 581 wrong IDs in the family benchmark, and NAPA
 reported none.
 
 The frames are synthetic. To check NAPA on your own camera, [score it on your own footage](docs/measuring.md). The
-[benchmark guide](benchmarks/README.md) has the results for every scene, resolution, and tag family.
+[benchmark guide](benchmarks/README.md) has the results for every scene, resolution, and tag family, and the
+[detector comparison](benchmarks/results/2026-10-28_cpu_comparison/report.md) covers multicore runs, memory, and the
+other libraries' faster settings.
 
 ## How it works
 
