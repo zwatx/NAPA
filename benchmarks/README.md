@@ -226,6 +226,27 @@ explains how NAPA sets each family's correction.
 - The frames are synthetic and the timings come from one laptop CPU. Measure on your own camera and hardware (see
   [Measuring on your own footage](../docs/measuring.md)) before relying on a specific number.
 
+## Other CPU detectors
+
+`cpu_comparison.py` runs the same corpus, plus stress cases (tags under 32 px, noise σ 15–30, 30–80 tags per frame,
+noisy clutter) and the range sweep, through other CPU tag36h11 detectors: upstream AprilTag 3 (C library),
+[Locus](https://github.com/NoeFontana/locus-tag), OpenCV ArUco (including `useAruco3Detection`),
+[ArUco Nano](https://github.com/rmsalinas/aruco_nano), and [RapidTag](https://github.com/SujithChristopher/rapidtag),
+each at its defaults and in labelled tuned configurations. `cpu_backends.py` holds one adapter per library, which
+converts every library's pixel origin and reports its corner order; the C shims for AprilTag and ArUco Nano are in
+`cpu_comparison_shims/`.
+
+- `validate` checks each adapter against known geometry (quarter turns, tilts, a rotated frame, blank frames) before
+  any score is used.
+- `latency` runs every backend on every frame in one process, interleaved in a shuffled order. It keeps false IDs,
+  duplicates, corner error after aligning corner order, and the corner order itself as separate results.
+- `resources` runs each backend alone in its own pinned process, for CPU time per frame, peak memory, and threading:
+  several threads per frame, or one detector per worker thread processing frames in parallel.
+
+The libraries are not dependencies of this package: build them in a scratch directory, as
+`results/2026-10-28_cpu_comparison/commands.md` shows. That directory holds the first comparison: the raw timings,
+the configuration and machine details, and a report with its methods, tradeoffs, and open questions.
+
 ## Stereo paired replay
 
 `stereo_replay.py` runs the [stereo solver](../docs/stereo.md) over recorded image pairs, alongside each camera on its

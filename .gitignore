@@ -12,6 +12,8 @@ build/
 dist/
 *.jsonl
 simulation-output/
+# Third-party builds, venvs and scratch for benchmarks/cpu_comparison.py
+work/
 
 # Native core built in place by editable installs
 src/napa_vision/_native/*.so
@@ -30,3 +32,4 @@ benchmarks/notes/
 !README.md
 !benchmarks/README.md
 !docs/*.md
+!benchmarks/results/**/*.md
