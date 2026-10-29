@@ -29,6 +29,4 @@ benchmarks/notes/
 *.md
 !README.md
 !benchmarks/README.md
-!docs/guide.md
-!docs/api.md
-!docs/pypi.md
+!docs/*.md

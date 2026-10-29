@@ -1,7 +1,7 @@
-# Napa API reference
+# NAPA API reference
 
-Every class, method, and field Napa exposes. [The guide](guide.md) explains how to use them together; this page is
-the lookup. Everything listed under `napa_vision` imports from the package root:
+Every class, method, and field NAPA exposes. [The guides](README.md) explain how to use them together, and this page
+is the lookup. Everything listed under `napa_vision` imports from the package root:
 
 ```python
 from napa_vision import NapaDetector, VisionProcessor, PoseWithCovariance
@@ -64,7 +64,7 @@ NapaDetector(*, family="tag36h11", min_tag_px=32, max_hamming=None, min_contrast
              sharpening=0.25, max_detections=64)
 ```
 
-The native detector for one tag family. [The guide](guide.md#detection) explains each parameter. Invalid values
+The native detector for one tag family. [Detection](detection.md#tuning) explains each parameter. Invalid values
 raise `ValueError`.
 
 | Parameter | Range | Meaning |
@@ -83,8 +83,8 @@ raise `ValueError`.
 
 **`close()`**: frees the native buffers now. Later `detect` calls raise `RuntimeError`.
 
-One instance reuses buffers between calls. Don't call one instance from two threads at once; use one per camera
-stream. The native call releases the GIL, so separate instances run in parallel.
+One instance reuses buffers between calls. Use one instance per camera stream, and don't call it from two threads at
+once. The native call releases the GIL, so separate instances run in parallel.
 
 ### `FiducialImageObservation`
 
@@ -112,11 +112,11 @@ use `H @ [u, v, 1]` and divide by the third component. To compute a homography f
 
 ### `families() -> tuple[str, ...]`
 
-The families Napa detects, tag36h11 first. Also importable from the package root.
+The families NAPA detects, tag36h11 first. Also importable from the package root.
 
 ### Tag families
 
-Napa reads every family upstream AprilTag defines. Each has a square whose corners Napa reports; its side is the tag
+NAPA reads every family upstream AprilTag defines. Each has a square whose corners NAPA reports. Its side is the tag
 size to give pose solvers, and `min_tag_px` is measured on it. Corners are in the same order for every family (see
 [Conventions](#conventions)).
 
@@ -135,7 +135,7 @@ size to give pose solvers, and `min_tag_px` is measured on it. Corners are in th
 **Classic families** (tag16h5, tag25h9, tag36h10, tag36h11) are a black square, with a one-cell black border around
 the payload and a white quiet zone around it. The square is the tag size. **tagStandard, tagCircle, and tagCustom**
 tags are the reverse: a white square inside a one-cell black frame, with more data cells outside the frame. The white
-square is the tag size. Napa reads them on the inverted image, where they look like a classic tag.
+square is the tag size. NAPA reads them on the inverted image, where they look like a classic tag.
 
 **Default corrections.** Each family's default `max_hamming` is the most bits it can correct while a random
 tag-shaped pattern stays no likelier to decode than it is in tag36h11 at 3 bits (about 1 in 10,000 per candidate).
@@ -185,7 +185,7 @@ starts no thread, and keeps no image.
 Inconsistent arguments raise `ValueError`.
 
 **`process(image, *, timestamp, capture_monotonic_s=None) -> FrameResult`**: detects and solves one frame.
-`timestamp` (seconds, any clock) and `capture_monotonic_s` are copied into the result unchanged; use the frame's
+`timestamp` (seconds, any clock) and `capture_monotonic_s` are copied into the result unchanged. Use the frame's
 capture time so a filter can align it with odometry. Raises `ValueError` for a non-`uint8`, empty, or wrongly shaped
 image or non-finite times, and `CalibrationError` if the frame's size isn't the calibration's. Detector exceptions
 propagate.
@@ -244,7 +244,7 @@ The camera's pose in the field, from every accepted tag.
 | `ambiguity` | `error_0 / error_1` for a single-tag pose, `None` for a multi-tag pose |
 
 With one tag, a pose is reported only when both IPPE solutions are within `max_reprojection_error_px`. With two or
-more, Napa solves all corners jointly (SQPnP), falls back to RANSAC when three or more tags disagree, and drops the
+more, NAPA solves all corners jointly (SQPnP), falls back to RANSAC when three or more tags disagree, and drops the
 worst tag and retries until every tag is within the limits.
 
 ### `PoseSolveDiagnostics`
@@ -290,7 +290,7 @@ position fails, or returns `None`.
 
 ## Uncertainty
 
-Module `napa_vision.covariance`. Napa attaches a covariance to every pose and tag angle it computes, so a Kalman
+Module `napa_vision.covariance`. NAPA attaches a covariance to every pose and tag angle it computes, so a Kalman
 filter can weight each measurement by how well it is actually constrained. A distant tag, a steep view, or a lone
 tag gets a large covariance; many well-spread tags get a small one. You don't have to tune standard deviations
 against distance by hand.
@@ -316,7 +316,7 @@ copied and validated; bad shapes or non-finite values raise `ValueError`.
 
 Transforms passed to `transform_by` and `relative_to` are treated as exact: measure your camera mount well.
 
-A pose you construct yourself is propagated to first order. A pose from Napa's solvers for a planar target, one tag
+A pose you construct yourself is propagated to first order. A pose from NAPA's solvers for a planar target, one tag
 or several on one wall, also carries the weighted solutions its covariance summarizes (see
 [Ambiguity](#ambiguity)). Every operation then moves each solution exactly and recomputes the spread between them in
 the new frame. That matters because the spread can cover tens of degrees, which a first-order propagation would
@@ -343,7 +343,7 @@ The covariance of a camera pose you solved yourself, from the `(K, 3)` field poi
 solved from (`geometry.tag_field_corners` gives a tag's four). Returns `None` when the points don't constrain all
 six degrees of freedom. It gives the linearized covariance with the [correlation cap](#curved-error-surfaces), but it
 can't know about a second solution, so it leaves out the [ambiguity widening](#ambiguity). For one tag, or tags on
-one wall seen nearly head-on, prefer the covariances Napa's solvers attach.
+one wall seen nearly head-on, prefer the covariances NAPA's solvers attach.
 
 ### `pose_difference`
 
@@ -364,7 +364,7 @@ Cramér–Rao bound: the scatter an efficient solver reaches when the noise mode
 Tag angles use the same noise, propagated through undistortion and `atan` to each corner's angle, then averaged.
 
 A linearization alone isn't safe to give a filter, because planar targets seen from far away or nearly head-on have
-error distributions that no single Gaussian at the estimate describes. Napa makes the two adjustments below. Monte
+error distributions that no single Gaussian at the estimate describes. NAPA makes the two adjustments below. Monte
 Carlo tests checked the result on single tags at 1–4 m and 5–40°, and on 144 random walls of 1–4 tags, 2–10 m away,
 seen head-on to 60°, with 0.3–1 px of noise, with and without lens distortion. A correct covariance leaves 5% of
 errors outside its 95% ellipse. In the median geometry, 1% fell outside; in the worst, a pair of tags 10 m away at
@@ -376,21 +376,21 @@ mirror solution is plausible, frames on which it fits well get deliberately wide
 
 A planar target, whether one tag or several on one wall, has two pose solutions that fit its corners, mirror
 images about the line of sight. Seen nearly head-on or from far away, its tilt is barely observable, and the two can
-trade places under noise. A linearized covariance about one of them then understates the error badly: in Napa's
+trade places under noise. A linearized covariance about one of them then understates the error badly: in NAPA's
 tests, a lone tag 2–4 m away within a few degrees of head-on had normalized errors 20–30 times what it allowed.
 
-So Napa describes such a pose as a weighted set of solutions, and reports the set's spread about the solved pose.
+So NAPA describes such a pose as a weighted set of solutions, and reports the set's spread about the solved pose.
 Each solution is weighted by how well it fits the corners, by its tempered likelihood `exp(-SSR / 2Tσ²)`, where SSR
 is its sum of squared corner residuals. An unambiguous target is unaffected; a truly ambiguous one's covariance
 grows to cover both solutions, so a filter isn't misled by the wrong one.
 
 - **One tag.** The set is its two IPPE solutions, tempered by T = 2. The error surface between them isn't
   quadratic, and untempered weights left ambiguous tags overconfident.
-- **Several tags in (nearly) one plane.** Napa finds the plane's mirror solution, then steps along the rotation from
+- **Several tags in (nearly) one plane.** NAPA finds the plane's mirror solution, then steps along the rotation from
   the solved pose to it and beyond: −¼, ¼, ½, ¾, 1, and 1¼ of the way. At each step it re-solves the other five
   degrees of freedom against the true corners, so every step's fit is honest. The steps, untempered, cover both a
   separate mirror solution and the long, flat valley a wall has when seen head-on, which a single mirror candidate
-  misjudges in either direction. Tags at clearly different depths break the ambiguity and get no set. Napa skips the
+  misjudges in either direction. Tags at clearly different depths break the ambiguity and get no set. NAPA skips the
   steps when the mirror is both more than 30 standard deviations away and fits far worse (by 100σ²). Over 4,080
   frames of random walls, that skipped 61% of them, and none of the skipped steps would have changed a standard
   deviation.
@@ -400,13 +400,13 @@ grows to cover both solutions, so a filter isn't misled by the wrong one.
 Even with one clear solution, the error surface of a distant or nearly flat target is curved. The linearization can
 then report some combination of axes, typically a rotation and the translation it mimics, as far more certain than
 it is, even when every individual axis is right: in tests, that left mean NEES at 50–90 for 6 dimensions, against 6
-expected. Napa therefore adds 10% of each variance back to the diagonal of every reported pose covariance
+expected. NAPA therefore adds 10% of each variance back to the diagonal of every reported pose covariance
 (`covariance.CORRELATION_SLACK`). That caps every correlation at 0.91 and widens each axis's standard deviation by
 5%. A 2% cap still left up to 21% of errors outside the 95% ellipse on wide walls of tags.
 
 #### Cost
 
-Napa computes covariances lazily: `process()` returns poses without them, and a covariance is computed the first time
+NAPA computes covariances lazily: `process()` returns poses without them, and a covariance is computed the first time
 you read it, through the field or through `field_to_camera()` and `camera_to_tag()`. Reading one tag's covariance
 computes every tag's from that frame in one batch. Results that are never read cost nothing, and results remain
 picklable with their deferred work. The deferred work keeps its own copies of what it needs, so changing the camera
@@ -421,7 +421,7 @@ costs more, about 0.6 ms extra with three tags, for its mirror steps.
 
 #### Choosing `corner_noise_px`
 
-The default of 1 px is deliberately conservative. Napa's corners are far more accurate than that on clean synthetic
+The default of 1 px is deliberately conservative. NAPA's corners are far more accurate than that on clean synthetic
 frames, but a real camera adds motion blur, rolling shutter, calibration error, and an imperfectly flat or
 mismeasured tag. All of these look like corner noise to the solver. Calibration error is also correlated from frame
 to frame, which no per-frame covariance can capture. To tune, log poses of a stationary robot and compare the
@@ -467,6 +467,75 @@ TagAngleSolver(*, corner_noise_px=1.0)
 - **`solve(observation, camera, single_tag_pose) -> TagAngleObservation`**.
 - **`solve_many(observations, camera, single_tag_poses) -> list[TagAngleObservation]`** takes paired lists with
   matching tag IDs and raises `ValueError` otherwise.
+
+## Stereo
+
+[Stereo rigs](stereo.md) explains timing, calibration, and what the covariance covers. Loading a rig calibration
+needs only numpy. Fitting one, checking epipolar errors, and solving poses need OpenCV.
+
+### `StereoCalibration`
+
+```python
+StereoCalibration(left, right, rig_to_left, rig_to_right, provenance, left_id="left", right_id="right",
+                  rms_reprojection_error_px=None, views_used=None)
+```
+
+`left` and `right` are `CameraCalibration` objects with recorded resolutions. `rig_to_left` and `rig_to_right` are
+4×4 camera poses in the rig, in WPILib axes, not OpenCV's left-to-right extrinsics. Camera IDs must be distinct,
+non-empty strings. All inputs are copied and stored read-only.
+
+| Member | Does |
+| --- | --- |
+| `require_production()` | Raises unless both cameras' calibrations and the rig's are measured, and the fit's RMS error and view count are recorded |
+| `epipolar_errors(left_points, right_points)` | One symmetric epipolar distance per matched point, in undistorted pixels. Both inputs are N×2. |
+
+`save_stereo_calibration(path, calibration)` and `load_stereo_calibration(path)` write and read version-1 JSON, with
+`coordinate_convention="wpilib_camera_to_rig"`. Invalid files raise `CalibrationError`.
+
+`calibrate_stereo_points(object_points, left_image_points, right_image_points, left, right, *, source)` returns a
+`StereoCalibration` with both intrinsics fixed and the left camera as the rig's origin. Inputs are matched lists of
+N×3 target points (metres) and N×2 image points (pixels), with at least three views and four points per view. Both
+cameras must have the same recorded resolution.
+
+### `StereoPoseSolver`
+
+```python
+StereoPoseSolver(calibration, tag_layout, tag_size_m, *, max_capture_skew_s, max_reprojection_error_px=5.0,
+                 max_outlier_iterations=2, max_iterations=50, corner_noise_px=(1.0, 1.0))
+solver.solve(left_observations, right_observations, *, left_capture_time_s, right_capture_time_s,
+             allow_monocular_fallback=False) -> StereoPoseResult
+```
+
+| Parameter | Meaning |
+| --- | --- |
+| `tag_layout` | `{tag_id: field_to_tag}`, 4×4 rigid transforms. Every tag is `tag_size_m` across. |
+| `max_capture_skew_s` | Largest accepted gap between the two capture times. Required, with no default. |
+| `max_reprojection_error_px` | Largest accepted RMS corner error for each camera/tag observation |
+| `max_outlier_iterations` | How many camera/tag observations may be dropped as outliers |
+| `max_iterations` | Refinement iterations allowed for each starting pose |
+| `corner_noise_px` | Corner noise standard deviation for each camera, in pixels |
+
+Observations are `FiducialImageObservation` lists from unrectified frames at the calibrated resolutions. Capture
+times are exposure midpoints, in seconds, on one clock.
+
+### `StereoPoseResult` and `StereoSolveDiagnostics`
+
+| Result field | Meaning |
+| --- | --- |
+| `status` | `"stereo"`, `"rejected"`, or `"monocular"` when fallback is allowed |
+| `timestamp` | The pair's midpoint, or the chosen camera's capture time for a monocular result |
+| `poses` | Every distinct candidate kept, as `PoseWithCovariance`, best first. Empty when rejected. |
+| `pose` | The best candidate, or `None` |
+| `diagnostics` | A `StereoSolveDiagnostics` for this solve |
+
+Each pose maps rig coordinates into field coordinates, with a covariance in the convention under
+[Conventions](#conventions). It covers the spread between candidates and independent corner noise, and treats the
+calibration, mounts, and layout as exact.
+
+Diagnostics hold `capture_skew_s`, `attempted_groups`, `accepted_groups`, `rejected_group_reasons`, and
+`per_group_rms_px`, keyed by `(camera_id, tag_id)`. `candidate_rms_px` lists each kept candidate's joint RMS error,
+and `iterations` counts the refinement iterations of fits that converged. `rejection_reason` explains a rejected
+result, and `fallback_reason` explains why a monocular result couldn't use stereo.
 
 ## Calibration
 
@@ -526,8 +595,8 @@ Module `napa_vision.geometry`: plain numpy functions, apart from the two marked 
 | `opencv_pose_to_wpilib_transform(rvec, tvec)` | The same pose re-expressed in WPILib axes on both sides (needs OpenCV) |
 | `opencv_translation_to_wpilib(translation)` | One vector from OpenCV to WPILib axes |
 | `wpilib_points_to_opencv(points)` | `(N, 3)` points from WPILib to OpenCV axes |
-| `tag_object_points(tag_size_m)` | A tag's corners in the OpenCV tag frame, in Napa's corner order (read-only, cached) |
-| `tag_field_corners(field_to_tag, tag_size_m)` | A tag's corners in the world frame, in Napa's corner order |
+| `tag_object_points(tag_size_m)` | A tag's corners in the OpenCV tag frame, in NAPA's corner order (read-only, cached) |
+| `tag_field_corners(field_to_tag, tag_size_m)` | A tag's corners in the world frame, in NAPA's corner order |
 | `tag_homography(corners)` | The upstream-convention homography of four corners (see `FiducialImageObservation.homography`) |
 | `rotation_matrix_to_quaternion_wxyz(transform)` | Unit quaternion `(w, x, y, z)` of a transform's rotation |
 
@@ -537,7 +606,7 @@ is the 4×4 form.
 ## Drawing tags
 
 Module `napa_vision.tags`, behind the `napa-tag` command. Needs only numpy. Tags are drawn as the official
-AprilRobotics artwork and printed FRC tags are, which is what field layouts and Napa's pose solvers assume. OpenCV's
+AprilRobotics artwork and printed FRC tags are, which is what field layouts and NAPA's pose solvers assume. OpenCV's
 `DICT_APRILTAG_36h11` draws the same tags turned 180°. Invalid arguments raise `ValueError`.
 
 | Name | Returns |
@@ -551,7 +620,7 @@ AprilRobotics artwork and printed FRC tags are, which is what field layouts and 
 
 ## pupil_apriltags compatibility
 
-Module `napa_vision.compat`: the `pupil_apriltags` / `dt-apriltags` interface on Napa's detector. Its results use
+Module `napa_vision.compat`: the `pupil_apriltags` / `dt-apriltags` interface on NAPA's detector. Its results use
 upstream AprilTag's conventions, not those under [Conventions](#conventions).
 
 ### `Detector`
@@ -570,14 +639,14 @@ Detector(
 )
 ```
 
-`families` is a space-separated list of any of `families()`, as upstream; an unknown family raises `ValueError`.
-Napa runs one detector per family. `decode_sharpening` sets Napa's `sharpening`.
+`families` is a space-separated list of any of `families()`, as upstream. An unknown family raises `ValueError`.
+NAPA runs one detector per family. `decode_sharpening` sets NAPA's `sharpening`.
 The other upstream parameters are kept in `params` but have no effect. `napa_options` go to `NapaDetector`, for
 example `min_tag_px=24`.
 
 **`detect(img, estimate_tag_pose=False, camera_params=None, tag_size=None) -> list[Detection]`**: detects tags in a
 `uint8` grayscale image. With `estimate_tag_pose=True`, `camera_params` is `(fx, fy, cx, cy)` and `tag_size` the side
-of the tag-size square in metres (see [Tag families](#tag-families)); leaving either out raises `ValueError`. Poses need
+of the tag-size square in metres (see [Tag families](#tag-families)). Leaving either out raises `ValueError`. Poses need
 OpenCV.
 
 ### `Detection`
@@ -586,7 +655,7 @@ OpenCV.
 | --- | --- | --- |
 | `tag_family` | `bytes` | The family, such as `b"tag36h11"` |
 | `tag_id`, `hamming`, `decision_margin` | | As `FiducialImageObservation` |
-| `corners` | `ndarray (4, 2)` | Upstream's `p`: Napa's corners in the order `[1, 0, 3, 2]` (counter-clockwise in the image from the official artwork's bottom-left corner), plus 0.5 px, since `(0, 0)` is the top-left pixel's corner |
+| `corners` | `ndarray (4, 2)` | Upstream's `p`: NAPA's corners in the order `[1, 0, 3, 2]` (counter-clockwise in the image from the official artwork's bottom-left corner), plus 0.5 px, since `(0, 0)` is the top-left pixel's corner |
 | `center` | `ndarray (2,)` | Upstream's `c`, in the same coordinates |
 | `homography` | `ndarray (3, 3)` | Upstream's `H`, in the same coordinates, with `H[2, 2] == 1` |
 | `pose_R`, `pose_t` | `ndarray (3, 3)`, `(3, 1)` | With `estimate_tag_pose`: maps upstream's tag frame (+x right and +y down on the official artwork, +z into the tag) into the OpenCV camera frame. `None` otherwise. |
@@ -598,7 +667,7 @@ upstream ignores it.
 
 ## Benchmarking
 
-Module `napa_vision.benchmark`, behind the `napa-benchmark` command. [The guide](guide.md#measuring-on-your-own-footage)
+Module `napa_vision.benchmark`, behind the `napa-benchmark` command. [Measuring on your own footage](measuring.md)
 describes the manifest.
 
 | Name | Does |
@@ -617,76 +686,4 @@ describes the manifest.
 | --- | --- |
 | `napa-tag IDS... [--family NAME] [--output DIR] [--format svg\|png] [--size-mm MM] [--cell-px N] [--quiet-zone N] [--no-label]` | Writes `FAMILY-NNN.svg` or `.png` files (default family tag36h11); IDs like `3`, `0-9`, or `1,4,7-8`. Exits 2 on bad input. |
 | `napa-calibrate IMAGES --output FILE --columns N --rows N --square-size-m M [--minimum-views N]` | Calibrates from a directory of checkerboard photographs |
-| `napa-benchmark MANIFEST [--repetitions N] [--warmup-passes N] [--max-failure-samples N] [--no-verify-integrity] [--min-recall R] [--min-precision P] [--max-p95-total-ms T] [--output FILE] [--pretty]` | Scores Napa on an annotated corpus; exits 1 on a failed gate and 2 on bad input |
-
-## Stereo
-
-The [stereo guide](guide.md#stereo-rig-pose) covers timing, calibration, and uncertainty assumptions. These names
-are available from `napa_vision`; loading calibration artifacts needs only NumPy, while fitting and solving
-require OpenCV.
-
-### `StereoCalibration`
-
-```python
-StereoCalibration(
-    left,
-    right,
-    rig_to_left,
-    rig_to_right,
-    provenance,
-    left_id="left",
-    right_id="right",
-    rms_reprojection_error_px=None,
-    views_used=None,
-)
-```
-
-`left` and `right` are `CameraCalibration` objects with recorded resolutions. Mounts are rigid 4×4 camera poses
-in WPILib rig axes, not OpenCV left-to-right extrinsics. Intrinsics and mounts are owned, read-only snapshots.
-Camera IDs must be distinct nonempty strings. `require_production()` requires measured provenance for all three
-artifacts and recorded fit RMS/view counts. `epipolar_errors(left_points, right_points)` returns one symmetric
-undistorted-pixel epipolar distance per matched point; both inputs are finite nonempty N×2 arrays.
-
-`save_stereo_calibration(path, calibration)` and `load_stereo_calibration(path)` write/read strict version-1 JSON,
-including `coordinate_convention="wpilib_camera_to_rig"`. Invalid artifacts raise `CalibrationError`.
-
-`calibrate_stereo_points(object_points, left_image_points, right_image_points, left, right, *, source)` returns
-`StereoCalibration` with fixed intrinsics and the left camera as rig origin. Inputs are matched lists of N×3
-object points (metres) and N×2 image points (pixels), at least three views and four corners per view. Both cameras
-must have equal recorded resolutions for this fitting helper.
-
-### `StereoPoseSolver`
-
-```python
-StereoPoseSolver(calibration, tag_layout, tag_size_m, *, max_capture_skew_s,
-                 max_reprojection_error_px=5.0, max_outlier_iterations=2,
-                 max_iterations=50, corner_noise_px=(1.0, 1.0))
-solver.solve(left_observations, right_observations, *,
-             left_capture_time_s, right_capture_time_s,
-             allow_monocular_fallback=False)
-```
-
-`tag_layout` maps nonnegative integer IDs to rigid field-to-tag transforms. All tags use `tag_size_m`.
-`corner_noise_px` contains one positive standard deviation per camera. `max_iterations` bounds each seed's
-refinement; `max_outlier_iterations` bounds discarded camera/tag groups. The raw pixel RMS limit applies to each
-accepted group. Inputs are sequences of `FiducialImageObservation` in unrectified calibrated pixels. Times are
-finite exposure-midpoint seconds on one clock; `max_capture_skew_s` is nonnegative and intentionally has no default.
-
-### `StereoPoseResult` and `StereoSolveDiagnostics`
-
-| Result field | Meaning |
-| --- | --- |
-| `status` | `"stereo"`, explicitly requested `"monocular"` fallback, or `"rejected"`. |
-| `timestamp` | Pair midpoint for stereo/rejection; selected capture time for fallback. |
-| `poses` | Tuple of distinct retained `PoseWithCovariance` candidates, best first; empty on rejection. |
-| `pose` | First candidate, or `None`. |
-| `diagnostics` | Fresh `StereoSolveDiagnostics` for this solve. |
-
-Diagnostics contain `capture_skew_s`, `attempted_groups`, `accepted_groups`, `rejected_group_reasons`, and
-`per_group_rms_px`, keyed by `(camera_id, tag_id)`. `candidate_rms_px` follows the retained joint candidates;
-`iterations` counts refinement iterations of converged fits across rejection rounds. `rejection_reason` explains a
-rejected result and `fallback_reason` explains why an accepted monocular result could not use stereo.
-
-Each pose maps rig coordinates into field coordinates. Its 6×6 covariance uses field-frame translation (metres)
-and left-applied small rotations (radians), ordered x/y/z/rx/ry/rz. Covariance includes retained-mode ambiguity,
-conditional on exact calibration/layout and independent pixel noise, with no temporal or calibration uncertainty.
+| `napa-benchmark MANIFEST [--repetitions N] [--warmup-passes N] [--max-failure-samples N] [--no-verify-integrity] [--min-recall R] [--min-precision P] [--max-p95-total-ms T] [--output FILE] [--pretty]` | Scores NAPA on an annotated corpus; exits 1 on a failed gate and 2 on bad input |
