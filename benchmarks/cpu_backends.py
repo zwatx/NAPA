@@ -35,6 +35,7 @@ WORK = ROOT / "work"
 SHIM_DIR = Path(os.environ.get("NAPA_BENCH_SHIMS", WORK / "build" / "shims"))
 THIRD_PARTY = Path(os.environ.get("NAPA_BENCH_THIRD_PARTY", WORK / "thirdparty"))
 MAX_OUT = 1024
+SKIPPED_EXIT = 3  # resource worker: the backend's library or shim isn't available
 
 Detection = tuple[int, np.ndarray]
 DetectFn = Callable[[np.ndarray], list[Detection]]
@@ -685,7 +686,11 @@ def resource_main(argv: list[str] | None = None) -> int:
     # warm-up and the timed passes. "Peak over constructed" therefore covers warm-up and detection only.
     rss_before = memory_status()["VmRSS"]
     cpu0, wall0 = time.process_time_ns(), time.perf_counter_ns()
-    (backend,), skipped = build_backends([args.backend], args.threads)  # imports + probes the library
+    backends, skipped = build_backends([args.backend], args.threads)  # imports + probes the library
+    if not backends:
+        print(skipped[args.backend], file=sys.stderr)
+        return SKIPPED_EXIT
+    (backend,) = backends
     import_ms = (time.perf_counter_ns() - wall0) / 1e6
     rss_after_import = memory_status()["VmRSS"]
 

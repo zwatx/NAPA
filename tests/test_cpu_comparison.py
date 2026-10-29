@@ -70,3 +70,30 @@ def test_adapter_conventions_on_known_geometry(name: str) -> None:
     assert entry["false_ids"] == entry["duplicates"] == entry["blank_detections"] == 0
     assert np.all(np.abs(entry["mean_offset_px"]) < 0.15)
     assert entry["order_consistent"]
+
+
+def test_resource_summary_keeps_skipped_backends_apart_from_measured_ones() -> None:
+    run = {
+        "backend": "napa",
+        "round": 0,
+        "skipped": {},
+        "config": {},
+        "mode": "serial",
+        "workers": 1,
+        "threads_per_detector": 1,
+        "cpus": [2],
+        "wall_ms_per_frame": 1.0,
+        "cpu_ms_per_frame": 1.0,
+        "frames_per_s": 1000.0,
+        "mean_busy_cpus": 1.0,
+        "latency_ms": {"p50": 1.0, "p95": 1.0, "p99": 1.0},
+        "setup": {"wall_ms": 1.0},
+        "frame_median_ms": [1.0],
+        "threads_end": [{"cpus": [2]}],
+        "rss_kib": {"before_backend": 0, "after_construct": 1024, "after_warmup": 2048, "end": 2048, "peak": 2048},
+    }
+    summary = cc.resources_summary({"results": [run, {"backend": "locus", "round": 0, "skip_reason": "no locus"}]})
+    measured, skipped = summary
+    assert measured["wall_ms_per_frame"] == 1.0 and measured["rss_peak_over_constructed_mib"] == 1.0
+    assert skipped == {"backend": "locus", "failures": [], "skip_reason": ["no locus"]}
+    assert "skipped: no locus" in cc.resources_markdown(summary, "t")

@@ -3,10 +3,10 @@
 All third-party code is built under `work/` (untracked); nothing is installed system-wide.
 
 ```bash
-# Sources (record their commits; these runs used the ones in report.md)
+# Sources, at the commits these runs measured
 mkdir -p work/thirdparty && cd work/thirdparty
-git clone https://github.com/AprilRobotics/apriltag.git          # b7c0ebe
-git clone https://github.com/rmsalinas/aruco_nano.git            # c99989b
+git clone https://github.com/AprilRobotics/apriltag.git && git -C apriltag checkout b7c0ebe9aa20f82ec7a828579004f9e706bfecd9
+git clone https://github.com/rmsalinas/aruco_nano.git && git -C aruco_nano checkout c99989bcab795ffa65d9e12df9de15f27677a835
 git clone --depth 1 --branch 4.14.0 https://github.com/opencv/opencv.git opencv-4.14.0
 cd ../..
 

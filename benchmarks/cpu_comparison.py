@@ -916,7 +916,7 @@ def resources_summary(data: dict[str, object], baseline: str = "napa") -> list[d
     """Per backend over rounds: medians of throughput and CPU, worst peak RSS, and per-frame ratios to NAPA
     taken within the same round (same frames, adjacent in time)."""
 
-    ok = [r for r in data["results"] if "error" not in r]
+    ok = [r for r in data["results"] if "error" not in r and "skip_reason" not in r]
     by_round = defaultdict(dict)
     for result in ok:
         by_round[result["round"]][result["backend"]] = result
@@ -924,8 +924,9 @@ def resources_summary(data: dict[str, object], baseline: str = "napa") -> list[d
     for backend in dict.fromkeys(r["backend"] for r in data["results"]):
         runs = [r for r in ok if r["backend"] == backend]
         failures = [r["error"] for r in data["results"] if r["backend"] == backend and "error" in r]
+        skips = [r["skip_reason"] for r in data["results"] if r["backend"] == backend and "skip_reason" in r]
         if not runs:
-            summary.append({"backend": backend, "failures": failures})
+            summary.append({"backend": backend, "failures": failures, "skip_reason": skips[:1]})
             continue
         ratios = []
         for rounds in by_round.values():
@@ -987,7 +988,8 @@ def resources_markdown(summary: Sequence[dict[str, object]], title: str) -> str:
     ]
     for s in summary:
         if "wall_ms_per_frame" not in s:
-            lines.append(f"| {s['backend']} | failed: {s['failures'][:1]} |" + " |" * 10)
+            status = f"skipped: {s['skip_reason'][0]}" if s.get("skip_reason") else f"failed: {s['failures'][:1]}"
+            lines.append(f"| {s['backend']} | {status} |" + " |" * 10)
             continue
         ratio = s["per_frame_ratio_to_napa"]
         ratio = f"{ratio['median']:.2f}× ({ratio['min']:.2f}–{ratio['max']:.2f})" if ratio else "—"
@@ -1099,6 +1101,11 @@ def run_resources(args: argparse.Namespace) -> int:
                 str(out),
             ]
             completed = subprocess.run(command, env=env, capture_output=True, text=True)
+            if completed.returncode == cb.SKIPPED_EXIT:
+                reason = completed.stderr.strip().splitlines()[-1:] or ["unavailable"]
+                results.append({"backend": name, "round": round_index, "skip_reason": reason[0]})
+                print(f"{name}: skipped ({reason[0]})", file=sys.stderr)
+                continue
             if completed.returncode != 0:
                 results.append({"backend": name, "round": round_index, "error": completed.stderr[-2000:]})
                 print(f"{name}: failed\n{completed.stderr[-500:]}", file=sys.stderr)
