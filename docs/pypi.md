@@ -1,10 +1,8 @@
 # NAPA
 
-**Not Another Pixel Algorithm**: NAPA skips most of the pixels in each frame.
-
-NAPA is a fast AprilTag detector. Give it a greyscale frame and it returns tag IDs and sub-pixel
-corners, plus poses with covariances if you give it a camera calibration. It reads every AprilTag family, with
-tag36h11, the FRC family, as the default.
+NAPA is a fast AprilTag detector that skips most of the pixels in each frame. Give it a greyscale frame and it returns
+tag IDs and sub-pixel corners, plus poses with covariances if you give it a camera calibration. It reads every
+AprilTag family, with tag36h11, the FRC family, as the default.
 
 ```bash
 python -m pip install napa-vision
@@ -12,9 +10,9 @@ python -m pip install napa-vision
 
 ## Compared with AprilTag
 
-These results compare NAPA with upstream AprilTag 3 at decimate 2 (WPILib's default) and decimate 1 (full
-resolution, PhotonVision's default). The benchmark is 3,000 rendered frames holding 5,521 tags, each with exact
-ground truth, and every detector ran single-threaded on the same CPU core.
+These results compare NAPA with upstream AprilTag 3 at decimate 2 (WPILib's default) and decimate 1 (full resolution,
+PhotonVision's default). The benchmark is 3,000 rendered frames holding 5,521 tags, each with exact ground truth, and
+every detector ran single-threaded on the same CPU core.
 
 | | AprilTag, decimate 2 | AprilTag, decimate 1 | NAPA |
 | --- | ---: | ---: | ---: |
@@ -32,8 +30,8 @@ NAPA was faster than both on every frame:
 | 1920×1080 | 60× (4.5×) | 273× (13×) |
 | All frames | 19× (3.6×) | 87× (12×) |
 
-Range scales with the inverse of the smallest tag found, so on the same camera NAPA sees about 3.6× as far as
-decimate 2 and 1.6× as far as decimate 1.
+Range scales with the inverse of the smallest tag found, so on the same camera NAPA sees about 3.6× as far as decimate
+2 and 1.6× as far as decimate 1.
 
 NAPA's one wrong ID was a tag-shaped decoy whose random pattern fell within 2 bits of a real code. On tag16h5, the
 2023 FRC family, AprilTag at its default two-bit correction reported 581 wrong IDs in the family benchmark, and NAPA
@@ -99,11 +97,11 @@ result = processor.process(frame, timestamp=capture_time)
 
 ## License
 
-Copyright © 2026 Zachary Wilson. NAPA is free for noncommercial use under the
-[PolyForm Noncommercial License 1.0.0](https://github.com/zwatx/NAPA/blob/master/LICENSE): personal projects, research, education, student robotics teams,
-and other noncommercial organizations can use, modify, and share it. Copies, forks, and works based on NAPA must
-include the license and its notices crediting Zachary Wilson. Commercial use, including selling NAPA or products
-built on it, needs a separate license. Ask through [the repository](https://github.com/zwatx/NAPA).
+Copyright © 2026 Zachary Wilson. NAPA is free for noncommercial use under the [PolyForm Noncommercial License
+1.0.0](https://github.com/zwatx/NAPA/blob/master/LICENSE): personal projects, research, education, student robotics teams, and other noncommercial organizations
+can use, modify, and share it. Copies, forks, and works based on NAPA must include the license and its notices
+crediting Zachary Wilson. Commercial use, including selling NAPA or products built on it, needs a separate license.
+Ask through [the repository](https://github.com/zwatx/NAPA).
 
 The tag families' codewords come from [AprilTag](https://github.com/AprilRobotics/apriltag) under its BSD license. See
 [THIRD_PARTY_NOTICES](https://github.com/zwatx/NAPA/blob/master/THIRD_PARTY_NOTICES).

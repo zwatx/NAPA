@@ -1,4 +1,4 @@
-/* Napa: Not Another Pixel Algorithm. Copyright (c) 2026 Zachary Wilson.
+/* NAPA. Copyright (c) 2026 Zachary Wilson.
  * Licensed under the PolyForm Noncommercial License 1.0.0: see LICENSE. Commercial use needs a separate
  * license. Copies and works based on this file must keep this notice and credit Zachary Wilson. */
 /* Detect tag36h11 tags in a binary PGM (P5) image and print one line per tag.

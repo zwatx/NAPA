@@ -1,4 +1,4 @@
-/* Napa: Not Another Pixel Algorithm. Copyright (c) 2026 Zachary Wilson.
+/* NAPA. Copyright (c) 2026 Zachary Wilson.
  * Licensed under the PolyForm Noncommercial License 1.0.0: see LICENSE. Commercial use needs a separate
  * license. Copies and works based on this file must keep this notice and credit Zachary Wilson. */
 /* Napa core: plain C ABI for the sparse-sampling AprilTag 36h11 detector. */
