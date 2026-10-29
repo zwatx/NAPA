@@ -1,50 +1,71 @@
-# Napa
+# NAPA
 
-**Not Another Pixel Algorithm**: a fast AprilTag detector that skips most of the pixels in each frame.
+**Not Another Pixel Algorithm**: NAPA skips most of the pixels in each frame.
 
-Give Napa a frame and it returns tag IDs and sub-pixel corners, plus metric poses with covariances if you supply a
-camera calibration. The detector is a small C library with no dependencies, and the Python package needs only numpy.
-It opens no cameras, starts no threads, and publishes nothing, so a webcam, a Raspberry Pi, a Meta Quest, recorded
-video, or a camera SDK can all feed it the same way.
+NAPA is a fast AprilTag detector. Give it a greyscale frame and it returns tag IDs and sub-pixel
+corners, plus poses with covariances if you give it a camera calibration. It reads every AprilTag family, with
+tag36h11, the FRC family, as the default.
 
 ```bash
 python -m pip install napa-vision
 ```
 
-## Why Napa
+## Compared with AprilTag
 
-Compared with upstream AprilTag 3 at its default settings, both single-threaded on the same 3,000 synthetic frames
-(5,521 tags with exact ground truth):
+These results compare NAPA with upstream AprilTag 3 at decimate 2 (WPILib's default) and decimate 1 (full
+resolution, PhotonVision's default). The benchmark is 3,000 rendered frames holding 5,521 tags, each with exact
+ground truth, and every detector ran single-threaded on the same CPU core.
 
-- **About 21× faster** on realistic, noisy frames (median per frame), and faster on every one of the 3,000 frames.
-  At 1280×720, Napa's median call stays under about 0.5 ms; AprilTag's is 10–15 ms in most noisy scenes.
-- **4× the range.** In a tag-size sweep, Napa found every tag down to 24 px across the black square, where AprilTag
-  needed 96 px. A 6.5-inch FRC tag seen by a 1280×720, 70° camera is still 24 px across at 6.3 m.
-- **More tags found:** 99.8%, against AprilTag's 86.2%.
-- **About 5× more accurate corners:** a median worst-corner error of 0.020 px, against AprilTag's 0.099 px.
-- **Every AprilTag family**, including tag16h5 without its flood of false IDs (581 for AprilTag, 0 for Napa in the
-  family benchmark).
+| | AprilTag, decimate 2 | AprilTag, decimate 1 | NAPA |
+| --- | ---: | ---: | ---: |
+| Tags found | 86.2% | 99.4% | 99.8% |
+| Smallest tag found every time ([range test](https://github.com/zwatx/NAPA/blob/master/benchmarks/README.md#range)) | 80 px | 36 px | 22 px |
+| Median error of a tag's worst corner | 0.099 px | 0.098 px | 0.021 px |
+| Wrong IDs in 3,000 frames | 0 | 3 | 1 |
 
-These are synthetic frames on one laptop CPU. Measure on your own camera and hardware before relying on a number:
-`napa-benchmark` scores Napa on your own annotated images. [The README](https://github.com/zwatx/NAPA#readme) has
-the full results, scene by scene, and explains how Napa gets its speed.
+NAPA was faster than both on every frame:
+
+| Resolution | vs. decimate 2, median (slowest frame) | vs. decimate 1, median (slowest frame) |
+| --- | ---: | ---: |
+| 640×480 | 13× (3.6×) | 62× (12×) |
+| 1280×720 | 30× (4.2×) | 142× (14×) |
+| 1920×1080 | 60× (4.5×) | 273× (13×) |
+| All frames | 19× (3.6×) | 87× (12×) |
+
+Range scales with the inverse of the smallest tag found, so on the same camera NAPA sees about 3.6× as far as
+decimate 2 and 1.6× as far as decimate 1.
+
+NAPA's one wrong ID was a tag-shaped decoy whose random pattern fell within 2 bits of a real code. On tag16h5, the
+2023 FRC family, AprilTag at its default two-bit correction reported 581 wrong IDs in the family benchmark, and NAPA
+reported none.
+
+The frames are synthetic. To check NAPA on your own camera, [score it on your own footage](https://github.com/zwatx/NAPA/blob/master/docs/measuring.md). The
+[benchmark guide](https://github.com/zwatx/NAPA/blob/master/benchmarks/README.md) has the results for every scene, resolution, and tag family.
+
+## How it works
+
+NAPA finds likely tags on a sparse grid of pixels and only does full-resolution work on the tags themselves.
+[How NAPA works](https://github.com/zwatx/NAPA/blob/master/docs/how-it-works.md) explains each step.
 
 ## Quick start
+
+Requires Python 3.11 or newer.
 
 ```python
 from napa_vision import NapaDetector
 
-detector = NapaDetector()  # tag36h11, the FRC family; or NapaDetector(family="tagStandard41h12")
-for tag in detector.detect(image):  # uint8 grayscale, BGR, or BGRA
+detector = NapaDetector()
+for tag in detector.detect(image):  # uint8 greyscale, BGR, or BGRA
     print(tag.tag_id, tag.corners)
 ```
 
-Each detection also has `tag.center` and `tag.homography`, as upstream AprilTag reports them. Use one detector per
-camera stream. The native call releases the GIL, so separate streams can run on separate threads.
+Code written for `pupil_apriltags` or `dt-apriltags` works after changing one import:
 
-### Poses
+```python
+from napa_vision.compat import Detector  # was: from pupil_apriltags import Detector
+```
 
-Install the `headless` extra (or `gui`, for OpenCV with windows) for poses, calibration, and `napa-benchmark`:
+For poses, install OpenCV with the `headless` extra and give NAPA a calibration:
 
 ```bash
 python -m pip install "napa-vision[headless]"
@@ -55,55 +76,34 @@ from napa_vision import VisionProcessor, load_calibration_data
 
 processor = VisionProcessor(calibration=load_calibration_data("camera.json"), tag_size_m=0.1651)
 result = processor.process(frame, timestamp=capture_time)
-result.single_tag_poses  # both planar solutions for each tag, each with a 6×6 covariance
 ```
 
-Pass a tag layout to also get the camera's pose in your world frame, solved jointly from every visible tag. Every
-pose carries a covariance, so it can go straight into a Kalman filter, including WPILib's pose estimators.
+## Documentation
 
-### Switching from pupil_apriltags or dt-apriltags
-
-Change the import and keep the rest of your code:
-
-```python
-from napa_vision.compat import Detector  # was: from pupil_apriltags import Detector
-
-detector = Detector(families="tag36h11")
-detections = detector.detect(gray, estimate_tag_pose=True, camera_params=(fx, fy, cx, cy), tag_size=0.1651)
-```
-
-Results keep upstream's corner order, pixel origin, and pose frames.
+- [Detection](https://github.com/zwatx/NAPA/blob/master/docs/detection.md): tuning, tag families, printing tags, and switching from `pupil_apriltags`
+- [Poses and filters](https://github.com/zwatx/NAPA/blob/master/docs/poses.md): metric poses, coordinate frames, and WPILib pose estimators
+- [Camera calibration](https://github.com/zwatx/NAPA/blob/master/docs/calibration.md)
+- [Stereo rigs](https://github.com/zwatx/NAPA/blob/master/docs/stereo.md): one pose from two calibrated cameras
+- [Platforms](https://github.com/zwatx/NAPA/blob/master/docs/platforms.md): C and C++, Android and Meta Quest, and building from source
+- [Measuring on your own footage](https://github.com/zwatx/NAPA/blob/master/docs/measuring.md)
+- [How NAPA works](https://github.com/zwatx/NAPA/blob/master/docs/how-it-works.md): the pipeline, obstructions, and limits
+- [API reference](https://github.com/zwatx/NAPA/blob/master/docs/api.md): every class, method, and field
 
 ## Command-line tools
 
 | Command | Purpose |
 | --- | --- |
-| `napa-tag` | Write tags to print, at an exact printed size |
+| `napa-tag` | Write tags to print: SVG at an exact printed size, or PNG |
 | `napa-calibrate` | Measure camera intrinsics from checkerboard photographs |
-| `napa-benchmark` | Score Napa on your own annotated images, with optional recall, precision, and latency gates |
-
-## Platforms
-
-Requires Python 3.11 or newer. Prebuilt wheels cover Linux (x86-64, ARM64), macOS (Apple silicon, Intel), Windows
-x64, and Android (ARM64, x86-64); elsewhere, pip builds from source, which needs a C99 compiler. Other languages can
-call the C library's plain C API directly, and C and C++ projects can build it with CMake. Android apps, including
-Meta Quest ones, can use the prebuilt ARM64 library attached to each
-[release](https://github.com/zwatx/NAPA/releases).
-
-## Documentation
-
-- [Guide](https://github.com/zwatx/NAPA/blob/master/docs/guide.md): tuning, poses, Kalman filters, coordinate
-  conventions, calibration, and using Napa from C or Android
-- [API reference](https://github.com/zwatx/NAPA/blob/master/docs/api.md): every class, method, and field
-- [Benchmark guide](https://github.com/zwatx/NAPA/blob/master/benchmarks/README.md): how each test scene is built
+| `napa-benchmark` | Score NAPA on your own labeled images, with optional recall, precision, and latency gates |
 
 ## License
 
-Copyright © 2026 Zachary Wilson. Napa is free for noncommercial use under the
-[PolyForm Noncommercial License 1.0.0](https://github.com/zwatx/NAPA/blob/master/LICENSE): personal projects,
-research, education, student robotics teams, and other noncommercial organizations can use, modify, and share it.
-Copies, forks, and works based on Napa must include the license and its notices crediting Zachary Wilson.
-Commercial use, including selling Napa or products built on it, needs a separate license; ask through
-[the repository](https://github.com/zwatx/NAPA). The tag families' codewords come from
-[AprilTag](https://github.com/AprilRobotics/apriltag) under its BSD license; see
+Copyright © 2026 Zachary Wilson. NAPA is free for noncommercial use under the
+[PolyForm Noncommercial License 1.0.0](https://github.com/zwatx/NAPA/blob/master/LICENSE): personal projects, research, education, student robotics teams,
+and other noncommercial organizations can use, modify, and share it. Copies, forks, and works based on NAPA must
+include the license and its notices crediting Zachary Wilson. Commercial use, including selling NAPA or products
+built on it, needs a separate license. Ask through [the repository](https://github.com/zwatx/NAPA).
+
+The tag families' codewords come from [AprilTag](https://github.com/AprilRobotics/apriltag) under its BSD license. See
 [THIRD_PARTY_NOTICES](https://github.com/zwatx/NAPA/blob/master/THIRD_PARTY_NOTICES).

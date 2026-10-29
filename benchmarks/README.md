@@ -1,19 +1,18 @@
-# Napa benchmarks
+# NAPA benchmarks
 
-`performance_matrix.py` compares Napa with standard AprilTag (AprilTag 3 through `robotpy-apriltag`, at its default
+`performance_matrix.py` compares NAPA with upstream AprilTag (AprilTag 3 through `robotpy-apriltag`, at its default
 `quad_decimate=2` and at full resolution) on a large set of generated grayscale frames. It measures detector calls
 only. Camera delivery, colour conversion, and pose solving are outside the timed region.
 
 ## What's in the corpus
 
-Every frame is rendered on its own: no image is reused, and none is a copy of another with a different label. Each
-tag gets a random ID from all 587, a random position, any in-plane angle, a random 3D tilt (and therefore
-perspective), and random black and white levels. Tags never overlap, and each keeps its white quiet zone inside the
-frame.
+Every frame is rendered on its own: no image is reused, and none is a copy of another with a different label. Each tag
+gets a random ID from all 587, a random position, any in-plane angle, a random 3D tilt (and therefore perspective),
+and random black and white levels. Tags never overlap, and each keeps its white quiet zone inside the frame.
 
 Tags are rendered with exact sub-pixel ground truth: every pixel is the mean of a 4×4 grid of point samples, as a
-sensor integrates light. So the benchmark scores whether each tag was found, any invented ID, and how far each
-corner landed from where it really is.
+sensor integrates light. So the benchmark scores whether each tag was found, any invented ID, and how far each corner
+landed from where it really is.
 
 | Scenario | What varies |
 | --- | --- |
@@ -22,7 +21,7 @@ corner landed from where it really is.
 | `decoys` | Black-bordered squares with random payloads: tag-shaped, but not valid codes. |
 | `one-tag` | One tag on a plain background. |
 | `many-tags` | 2–12 tags of mixed sizes on mixed backgrounds. |
-| `small-tags` | 1–4 tags with a 32–53 px black square, at and just above Napa's default `min_tag_px`. |
+| `small-tags` | 1–4 tags with a 32–53 px black square, at and just above NAPA's default `min_tag_px`. |
 | `large-tags` | One tag filling 45–80% of the frame height. |
 | `steep-angle` | Tags tilted 40–65° away from the camera. |
 | `blur` | Gaussian defocus, σ 0.8–2.0 px. |
@@ -38,26 +37,26 @@ corner landed from where it really is.
 | `noise-free` | 1–3 tags on a plain background with no noise at all: the best case for both detectors. |
 | `dark-background` | Tags whose one-cell white margin is all that separates them from a dark or mid-grey background. |
 
-Unless a scenario says otherwise, positive frames hold 1–3 tags on a random background, and tag size scales with
-the frame (48–170 px at 480 lines). Every scenario except `noise-free` adds at least light sensor noise
-(σ ≈ 1.5 grey levels), as a real sensor would. The default run renders 50 frames per scenario at each of 640×480,
-1280×720, and 1920×1080: 3,000 frames in all.
+Unless a scenario says otherwise, positive frames hold 1–3 tags on a random background, and tag size scales with the
+frame (48–170 px at 480 lines). Every scenario except `noise-free` adds at least light sensor noise (σ ≈ 1.5 grey
+levels), as a real sensor would. The default run renders 50 frames per scenario at each of 640×480, 1280×720, and
+1920×1080: 3,000 frames in all.
 
 A separate obstruction sweep hides part of one tag per frame with a white or grey patch. The patch sits over the
-payload centre, along one border, or over a corner, and covers 0–40% of the black square. There are 24 random tags
-for each combination (864 frames), at the smallest resolution.
+payload centre, along one border, or over a corner, and covers 0–40% of the black square. There are 24 random tags for
+each combination (864 frames), at the smallest resolution.
 
 A range sweep measures how small a tag each detector can still find, which sets how far away it can see one. It
-renders one tag per frame with a black square of exactly 12, 14, 16, 20, 24, 28, 32, 40, 48, 64, or 96 px, at a
-random ID and angle, up to 15° of tilt, and light noise (σ ≈ 1.5). There are 50 tags at each size (550 frames), at
-the smallest resolution. Results are in `benchmarks/results/2026-10-19_range_sweep.json`.
+renders one tag per frame with a black square of exactly 12 to 96 px, at a random ID and angle, up to 15° of tilt, and
+light noise (σ ≈ 1.5). There are 50 tags at each size, at the smallest resolution. See [Range](#range) for the
+results.
 
 ## Timing
 
-Backends take turns on each frame in a shuffled order, ten timed calls each after one untimed warm-up call. The
-report gives every backend's latency percentiles per scenario and resolution. It also gives Napa's speedup **per
-frame**: AprilTag's median time on a frame divided by Napa's median time on the same frame. "Worst frame" is the
-smallest of those ratios, so a single slow frame can't hide behind a good median.
+Backends take turns on each frame in a shuffled order, ten timed calls each after one untimed warm-up call. The report
+gives every backend's latency percentiles per scenario and resolution. It also gives NAPA's speedup **per frame**:
+AprilTag's median time on a frame divided by NAPA's median time on the same frame. "Worst frame" is the smallest of
+those ratios, so a single slow frame can't hide behind a good median.
 
 ## Running it
 
@@ -73,31 +72,30 @@ Useful options:
 - `--scenarios noise,jpeg`, `--resolutions 1280x720`, and `--frames 10` select a quick subset.
 - `--backends napa,apriltag,apriltag-full-res,opencv-aruco` chooses what to compare (OpenCV is off by default).
 - `--occlusion-cases 0` skips the obstruction sweep, and `--range-cases 0` the range sweep.
-- `--frames 0` runs only the sweeps. The range results in the main README came from
+- `--frames 0` runs only the sweeps. The range results came from
   `--frames 0 --resolutions 640x480 --occlusion-cases 0`. They count tags found, not time, so any machine gives the
   same numbers.
-- `--seed` changes every frame. Each frame's seed depends only on the run seed, its scenario, resolution, and
-  index, so any frame can be re-rendered on its own with `render_frame()`.
+- `--seed` changes every frame. Each frame's seed depends only on the run seed, its scenario, resolution, and index,
+  so any frame can be re-rendered on its own with `render_frame()`.
 
-The script prints the summary tables used in the main README and writes two files:
+The script prints the per-scene tables below and writes two files:
 
 - `*.json`: run configuration, machine details, per-scenario results (frames, tags, found, false IDs, latency
   percentiles, corner error), per-frame speedup statistics, and the obstruction sweep.
-- `*.csv`: one row per frame and backend, with expected and detected IDs, corner errors, every raw timing sample,
-  and the scenario's random parameters (`detail_*` columns). Use it to find and re-render any frame a detector
-  missed.
+- `*.csv`: one row per frame and backend, with expected and detected IDs, corner errors, every raw timing sample, and
+  the scenario's random parameters (`detail_*` columns). Use it to find and re-render any frame a detector missed.
 
 ## Latest results
 
-Standard AprilTag (`quad_decimate=2`) against Napa, from the checked-in run
-(`results/2026-10-19_detector_matrix.json`) on one pinned core of an Intel Core Ultra 7 256V laptop: Windows 11 with
-the best-performance power mode, the benchmark running under WSL2 (Ubuntu-like Linux, Python 3.13, gcc 15). Earlier
-checked-in results came from a desktop Intel i7-12700H (Ubuntu), so their absolute times differ. p50 is the median
-detector call across all frames and repetitions in a row.
+AprilTag at decimate 2 against NAPA, from the checked-in run (`results/2026-10-19_detector_matrix.json`, which records
+napa-vision 0.3.0) on one pinned core of an Intel Core Ultra 7 256V laptop: Windows 11 with the best-performance power
+mode, the benchmark running under WSL2 (Ubuntu-like Linux, Python 3.13, gcc 15). Earlier checked-in results came from
+a desktop Intel i7-12700H (Ubuntu), so their absolute times differ. p50 is the median detector call across all frames
+and repetitions in a row.
 
 #### 640x480
 
-| Scene | Frames | Tags | AprilTag p50 | Napa p50 | Speedup (median / worst frame) | Found (AprilTag → Napa) | False IDs (AprilTag → Napa) |
+| Scene | Frames | Tags | AprilTag p50 | NAPA p50 | Speedup (median / worst frame) | Found (AprilTag → NAPA) | False IDs (AprilTag → NAPA) |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | empty | 50 | 0 | 4.66 ms | 0.07 ms | 53.9× / 12.1× | — | 0 → 0 |
 | clutter-only | 50 | 0 | 3.08 ms | 0.16 ms | 14.7× / 7.0× | — | 0 → 0 |
@@ -122,7 +120,7 @@ detector call across all frames and repetitions in a row.
 
 #### 1280x720
 
-| Scene | Frames | Tags | AprilTag p50 | Napa p50 | Speedup (median / worst frame) | Found (AprilTag → Napa) | False IDs (AprilTag → Napa) |
+| Scene | Frames | Tags | AprilTag p50 | NAPA p50 | Speedup (median / worst frame) | Found (AprilTag → NAPA) | False IDs (AprilTag → NAPA) |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | empty | 50 | 0 | 14.89 ms | 0.12 ms | 100.6× / 12.1× | — | 0 → 0 |
 | clutter-only | 50 | 0 | 9.16 ms | 0.31 ms | 18.8× / 5.1× | — | 0 → 0 |
@@ -147,7 +145,7 @@ detector call across all frames and repetitions in a row.
 
 #### 1920x1080
 
-| Scene | Frames | Tags | AprilTag p50 | Napa p50 | Speedup (median / worst frame) | Found (AprilTag → Napa) | False IDs (AprilTag → Napa) |
+| Scene | Frames | Tags | AprilTag p50 | NAPA p50 | Speedup (median / worst frame) | Found (AprilTag → NAPA) | False IDs (AprilTag → NAPA) |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | empty | 50 | 0 | 38.10 ms | 0.16 ms | 162.0× / 18.0× | — | 0 → 0 |
 | clutter-only | 50 | 0 | 25.54 ms | 0.42 ms | 50.3× / 6.1× | — | 0 → 0 |
@@ -173,29 +171,73 @@ detector call across all frames and repetitions in a row.
 The JSON report also holds full-resolution AprilTag (`quad_decimate=1`), the 95th/99th percentiles, corner error by
 scene, and the obstruction sweep.
 
+## Range
+
+From `results/2026-10-28_range_sweep.json`, measured with napa-vision 0.4.1: tags found out of 50 at each black-square
+size in pixels.
+
+| Detector | 12–14 | 16 | 18 | 20 | 22 | 24 | 28 | 32 | 36 | 40–48 | 56 | 64 | 72 | 80–96 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| AprilTag, decimate 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 26 | 39 | 48 | 50 |
+| AprilTag, decimate 1 | 0 | 0 | 0 | 0 | 0 | 0 | 17 | 37 | 50 | 50 | 50 | 50 | 50 | 50 |
+| NAPA | 0 | 14 | 37 | 47 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 |
+
+NAPA found every tag from 22 px, AprilTag at decimate 1 from 36 px, and at decimate 2 from 80 px. A tag's size in the
+image is inversely proportional to its distance, so on the same camera NAPA sees about 3.6× as far as decimate 2 and
+1.6× as far as decimate 1.
+
+## Tag families
+
+A separate family-by-family run, not part of `performance_matrix.py`, used the same scenes with each family's own
+tags, spaced by their printed size, at 640×480 and 1280×720. Speedups are against AprilTag at decimate 2, per frame,
+from a timing pass over 80 frames per family on one pinned core.
+
+| Family | Tags | Found: AprilTag → NAPA | Wrong IDs: AprilTag → NAPA | Median corner error: AprilTag → NAPA | Speedup: median (slowest frame) |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| tag36h11 | 289 | 288 → 287 | 0 → 0 | 0.097 → 0.022 px | 40× (7.9×) |
+| tag16h5 | 282 | 282 → 280 | **581 → 0** | 0.107 → 0.022 px | 38× (5.5×) |
+| tag25h9 | 287 | 286 → 286 | 3 → 0 | 0.098 → 0.021 px | 36× (7.2×) |
+| tagStandard41h12 | 232 | 232 → 231 | 0 → 0 | 0.097 → 0.025 px | 42× (8.5×) |
+| tagCircle21h7 | 231 | 231 → 230 | 9 → 0 | 0.097 → 0.025 px | 42× (9.3×) |
+
+Every tag that only AprilTag found was small (40–60 px) and steeply tilted, which narrows the white margin to a pixel
+or two. Either its narrow side was under `min_tag_px`, or a dark line in the background touched the tag and joined its
+border. On tagStandard52h13, tagCircle49h12, tagCustom48h12, and tag36h10, which the reference Python binding doesn't
+include, NAPA found 99.2–99.6% of tags with no wrong IDs. Upstream's decode tables for the three largest families need
+several gigabytes, where NAPA's take megabytes.
+
+tag16h5's 30 codes are only 5 bits apart, so a decoder that corrects two wrong bits, as AprilTag does by default,
+accepts about one in four random tag-shaped patterns. [Tag families](../docs/api.md#tag-families) in the API reference
+explains how NAPA sets each family's correction.
+
 ## Reading the results
 
 - Compare scenario rows at the same resolution rather than overall averages: the scenarios differ a lot in cost.
 - Corner error is the worst corner's distance from the truth, for each tag found. AprilTag's corners are shifted by
-  −0.5 px to the pixel-centre convention, and its corner order is aligned to the truth before scoring. Napa's are
-  scored as returned.
-- A "false ID" is any detection whose ID isn't in the frame, or a second detection of the same tag.
+  −0.5 px to the pixel-centre convention, and its corner order is aligned to the truth before scoring. NAPA's are
+  scored as returned. Over the 3,000 frames, NAPA's median was 0.021 px and its 95th percentile 0.093 px, against
+  AprilTag's 0.099 px and 0.303 px at decimate 2.
+- A wrong ID ("False IDs" in the tables) is any detection whose ID isn't in the frame, or a second detection of the
+  same tag.
 - Recall in `small-tags` and `steep-angle` depends on apparent size. A steeply tilted tag can look narrower than
   `min_tag_px` even when its long side is well above it.
-- The frames are synthetic and the timings come from one desktop CPU. Measure on your own camera and hardware
-  (see `napa-benchmark` in [the guide](../docs/guide.md)) before relying on a specific number.
+- NAPA's one wrong ID was a tag-shaped decoy whose random payload fell within 2 bits of a real code, the same
+  tolerance AprilTag uses by default. In a separate test of 80,000 such decoys, NAPA reported none.
+- The frames are synthetic and the timings come from one laptop CPU. Measure on your own camera and hardware (see
+  [Measuring on your own footage](../docs/measuring.md)) before relying on a specific number.
 
 ## Stereo paired replay
 
-Run the joint solver on recorded, caller-paired images using a `StereoCalibration` artifact:
+`stereo_replay.py` runs the [stereo solver](../docs/stereo.md) over recorded image pairs, alongside each camera on its
+own and a simple fusion of the two, and scores them against ground truth when you have it:
 
 ```bash
 python benchmarks/stereo_replay.py corpus/pairs.json \
   --calibration rig.json --max-capture-skew-s 0.005 --output stereo-results.json
 ```
 
-The strict version-1 manifest embeds the field layout (rigid WPILib field-to-tag transforms in metres) and records
-each exposure midpoint on a common clock. For example, this layout places tag 1 at field x=3, facing the origin:
+The manifest holds the field layout (field-to-tag transforms in metres, in WPILib axes) and each frame's exposure
+midpoint on a shared clock. This one places tag 1 at field x = 3 m, facing the origin:
 
 ```json
 {
@@ -214,22 +256,15 @@ each exposure midpoint on a common clock. For example, this layout places tag 1 
 }
 ```
 
-Image paths must remain inside the manifest directory, camera IDs must match the artifact, and resolutions must
-match the intrinsics. `ground_truth` is optional. Provide truth samples at each monocular capture time and the
-pair midpoint when scoring a moving rig. Errors and conditional NEES are `null` unless a truth timestamp matches
-the result within 1 ns; the evaluator does not interpolate or compare poses from different times.
+Image paths must stay inside the manifest's folder, camera IDs must match the calibration, and resolutions must match
+the intrinsics. `ground_truth` is optional. To score a moving rig, give a truth sample at each camera's capture time
+and at the pair's midpoint: results are scored only against a truth sample within 1 ns of their timestamp, with no
+interpolation.
 
-Each pair reports stereo, left/right monocular, and `independent_pose_fusion` results. The fusion baseline combines
-the best monocular poses using a local Gaussian information-weighted update in field axes. It assumes independent
-conditional uncertainties and a static pair, does not search alternate-mode combinations or compensate motion,
-and rejects pairs exceeding the same skew gate. It is a comparison baseline, not a second public solver API.
-
-Outputs include acceptance/rejection reasons, accepted camera/tag groups, candidate count and joint RMS values,
-translation/rotation errors, six conditional standard deviations, and conditional NEES (squared pose error weighted
-by inverse covariance). Calibration error and clock error are excluded from those uncertainty estimates. Timing
-reports p50/p95 for detecting both images and for joint solving; file loading and baseline solves are excluded.
-Calls are measured once per pair without warmup, so this is replay latency, not a controlled microbenchmark.
-
-Tests cover synthetic noisy geometry, ambiguity, calibration perturbations, timing mismatches, and rendered tags
-through the real native detector. No real-camera paired corpus is included, so these tests establish integration
-and numerical behavior rather than a measured stereo accuracy improvement.
+For each pair, the output has the stereo result, each camera's own result, and `independent_pose_fusion`, which
+combines each camera's best pose weighted by their covariances. It assumes the rig didn't move between the two frames,
+uses the same capture-skew limit, and is a baseline to compare against, not a public solver. Each result records
+whether it was accepted and why, the observations used, the RMS error, the translation and rotation error, six
+standard deviations, and NEES, the squared pose error weighted by the inverse covariance. Timing reports p50 and p95
+separately for detecting both images and for the joint solve, measured once per pair without warm-up. File loading and
+the baseline solves aren't timed.
