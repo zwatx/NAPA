@@ -7,6 +7,7 @@ import json
 import re
 import statistics as st
 import sys
+import textwrap
 from collections import defaultdict
 from pathlib import Path
 
@@ -34,6 +35,25 @@ LABELS = {
     "rapidtag": "RapidTag",
     "rapidtag-subpix": "RapidTag SUBPIX",
 }
+DOC_LABELS = {
+    "napa": "NAPA",
+    "napa-mtp16": "NAPA, `min_tag_px=16`",
+    "wpilib-d2": "AprilTag, WPILib's defaults",
+    "apriltag3-d2": "AprilTag, decimate 2",
+    "apriltag3-d1": "AprilTag, full resolution",
+    "locus": "Locus",
+    "locus-d2": "Locus, decimate 2",
+    "opencv": "OpenCV ArUco",
+    "opencv-subpix": "OpenCV ArUco, subpixel",
+    "opencv-aruco3": "ArUco3",
+    "opencv-aruco3-min32": "ArUco3, tags over 64 px",
+    "opencv-aruco3-half16": "ArUco3, tags over 32 px",
+    "aruco-nano": "ArUco Nano",
+    "rapidtag": "RapidTag",
+    "rapidtag-subpix": "RapidTag, subpixel",
+}
+# The README table leaves out the two configurations that differ from a listed one only by skipping corner refinement.
+README_ROWS = [b for b in DOC_LABELS if b not in ("napa-mtp16", "opencv", "rapidtag")]
 OWN = ("napa", "napa-mtp16")
 LINK = "benchmarks/results/2026-10-30_cpu_full_corpus"
 
@@ -63,6 +83,46 @@ def stats(rows):
         "cpu_mean_ms": float(np.mean(cpu)) / 1e6,
         "corner_median_p95_max_px": np.percentile(errors, [50, 95, 100]).tolist(),
     }
+
+
+def times(value):
+    """Format a speed ratio the way the public docs print it."""
+    if round(value, 2) == 1:
+        return "1×"
+    return f"{value:.0f}×" if value >= 10 else f"{value:.1f}×" if value >= 1 else f"{value:.2f}×"
+
+
+def reflow(text):
+    """Rewrap prose paragraphs to 120 columns, leaving headings, tables, and lists alone."""
+    blocks = []
+    for block in text.split("\n\n"):
+        if block.strip() and not block.lstrip().startswith(("|", "#", "-", "```")):
+            block = textwrap.fill(" ".join(block.split()), 120, break_long_words=False, break_on_hyphens=False)
+        blocks.append(block)
+    return "\n\n".join(blocks)
+
+
+def per_frame(rows, numerator, denominator):
+    """Per-frame ratios of two backends' median call times, keyed by frame."""
+    medians = defaultdict(dict)
+    for r in rows:
+        medians[r["frame"]][r["backend"]] = st.median(values(r, "samples_ns"))
+    return {frame: m[numerator] / m[denominator] for frame, m in medians.items()}
+
+
+def guide_summary_table(summary):
+    return table(
+        ["Detector", "Median ms", "p95 ms", "p99 ms", "Tags found", "Wrong IDs"],
+        [
+            [
+                DOC_LABELS[b],
+                *[f"{v:.3f}" for v in s["p50_p95_p99_ms"]],
+                f"{s['found']}/{s['tags']}",
+                s["false_ids"],
+            ]
+            for b, s in summary.items()
+        ],
+    )
 
 
 def summary_table(summary):
@@ -328,47 +388,123 @@ def main():
         "",
     ]
     (R / "report.md").write_text("\n".join(report))
+    main = summaries["main"]
+    range_counts = {
+        b: {
+            size: sum(
+                int(r["true_positive"])
+                for r in scopes["range"]
+                if r["backend"] == b and float(r["detail_side_px"]) == size
+            )
+            for size in protocol["range"]["sizes_px"]
+        }
+        for b in LABELS
+    }
+
+    def smallest_always_found(b):
+        sizes = sorted(protocol["range"]["sizes_px"], reverse=True)
+        found = None
+        for size in sizes:
+            if range_counts[b][size] != 50:
+                break
+            found = size
+        return found
+
+    reach = {b: smallest_always_found(b) for b in ("napa", "napa-mtp16", "wpilib-d2", "apriltag3-d1")}
+    assert reach["napa-mtp16"] == min(protocol["range"]["sizes_px"])
+    speed_rows = []
+    for b in README_ROWS:
+        m, label = main[b], DOC_LABELS[b]
+        speed = st.median(per_frame(scopes["main"], "wpilib-d2", b).values())
+        cells = [
+            times(speed),
+            f"{100 * m['found'] / m['tags']:.1f}%",
+            f"{m['corner_median_p95_max_px'][0]:.3f} px",
+            m["false_ids"],
+        ]
+        if b == "napa":
+            label, cells = f"**{label}**", [f"**{c}**" if i < 3 else c for i, c in enumerate(cells)]
+        speed_rows.append([label, *cells])
+    speed_table = table(
+        [
+            "Detector",
+            "Speed vs. WPILib's defaults (median frame)",
+            "Tags found",
+            "Worst-corner error (median)",
+            "Wrong IDs",
+        ],
+        speed_rows,
+    )
+    assert default_losses == 0
+    closest = min((b for b in LABELS if b not in OWN), key=lambda b: ratios["main"]["napa"][b]["median"])
+    resolution_rows = []
+    for res in protocol["resolutions"]:
+        rs = [r for r in scopes["main"] if r["resolution"] == res]
+        cells = [res.replace("x", "×")]
+        for b in ("wpilib-d2", "apriltag3-d1"):
+            v = list(per_frame(rs, b, "napa").values())
+            cells.append(f"{times(st.median(v))} ({times(min(v))})")
+        resolution_rows.append(cells)
+    resolution_table = table(
+        ["Resolution", "vs. WPILib's defaults, median (slowest frame)", "vs. full resolution, median (slowest frame)"],
+        resolution_rows,
+    )
+    tuned = ratios["main"]["napa-mtp16"]
+    tuned_losers = [b for b in LABELS if b not in OWN and tuned[b]["slower_frames"]]
+    assert set(tuned_losers) == {"locus-d2", "opencv-aruco3-min32", "opencv-aruco3-half16", "aruco-nano"}
+    tuned_loss_frames = {
+        frame for b in tuned_losers for frame, ratio in per_frame(scopes["main"], b, "napa-mtp16").items() if ratio < 1
+    }
+    tuned_cost = st.median(per_frame(scopes["main"], "napa-mtp16", "napa").values())
+    corner = {b: main[b]["corner_median_p95_max_px"][0] for b in ("napa", "apriltag3-d1", "wpilib-d2")}
+    assert corner["napa"] < corner["apriltag3-d1"] / 2 and 4.5 < corner["wpilib-d2"] / corner["napa"] < 5.5
+    assert main["napa"]["false_ids"] == 1
+    d1_common = next(x for x in corners["napa"] if x["versus"] == "apriltag3-d1" and x["resolution"] == "all")
+    stress = summaries["stress"]
     root = f"""## Compared with other detectors
 
-These results use the **full fixed 3,000-frame corpus**, with 5,521 expected tags at 640×480, 1280×720 and
-1920×1080: all 20 scenarios, 50 independent renders per scenario/resolution, seed 2468. NAPA32 (the default,
-`min_tag_px=32`) and NAPA16 (`min_tag_px=16`) are normal backend options in the **same run on the same frames**
-as all 13 competitor configurations. No detector-dependent frame selection is used.
+The benchmark is 3,000 rendered frames holding 5,521 tags at 640×480, 1280×720, and 1920×1080, each with exact ground
+truth. Every detector ran single-threaded on the same CPU core, on the same frames.
 
-Every backend is configured for one worker on the same verified P-core of an i7-12700H. Detectors are constructed
-once, warmed per image and timed ten times in shuffled order. Percentiles pool all 30,000 timed calls per backend.
-Rendering, scoring and initialization are excluded; required internal work, input copies and result conversion
-remain timed. The current native source was frozen before the run. This does not describe a new PyPI release.
+{speed_table}
 
-{main_table}
+NAPA was faster than every other detector on every one of the 3,000 frames. The closest was
+{DOC_LABELS[closest]}, and NAPA's smallest lead over it on any frame was
+{times(ratios["main"]["napa"][closest]["minimum"])}.
+NAPA's one wrong ID was a tag-shaped decoy with a random pattern. OpenCV ArUco and RapidTag without subpixel
+refinement run at the same speed as above, with corners about a pixel off.
 
-{findings}
+NAPA's lead over AprilTag grows with resolution:
 
-Each speedup below is competitor time ÷ NAPA time, from the ten-sample median on each of the same 3,000 frames.
-Values below one are NAPA losses; the near-tie is retained without a statistical-significance claim.
+{resolution_table}
 
-{paired}
+**Range.** A tag looks smaller the farther away it is, so the smallest tag a detector finds sets how far it can see. In
+the [range sweep](benchmarks/README.md#range), NAPA found every tag from {reach["napa"]} px up, AprilTag at WPILib's
+defaults from {reach["wpilib-d2"]} px, and AprilTag at full resolution from {reach["apriltag3-d1"]} px. On the same
+camera, NAPA sees about {reach["wpilib-d2"] / reach["napa"]:.1f}× as far as WPILib's defaults.
 
-NAPA16 misses two low-contrast tags and reports one wrong ID. NAPA32 misses eight tags and reports one wrong ID;
-its latency advantage comes with lower recall. Nano misses four tags and reports no wrong IDs. On common tags,
-NAPA's median/p95 corner errors are lower than upstream AprilTag d1, but its maximum is worse: 3.57 versus 2.35 px
-for NAPA16, and 3.39 versus 2.16 px for NAPA32 on their respective common tags. Both NAPA settings retain
-full-resolution corner refinement.
+**Smaller tags.** `min_tag_px=16` found every tag in the range sweep, down to {reach["napa-mtp16"]} px, and
+{main["napa-mtp16"]["found"]:,} of the 5,521 tags above. It takes about {tuned_cost:.0f}× as long as the default, which
+still makes it {times(st.median(per_frame(scopes["main"], "wpilib-d2", "napa-mtp16").values()))} faster than WPILib's
+defaults. ArUco Nano, ArUco3, and Locus at decimate 2 were faster than it on {len(tuned_loss_frames)} of the 3,000
+frames.
 
-The same run also includes **600 stress frames** and **900 range frames**, reported separately rather than pooled
-into the headline: NAPA16 finds 4,577/4,577 stress tags and 900/900 range tags, with no wrong IDs in either group.
-NAPA32 finds 4,390/4,577 and 748/900 respectively. All peer results in these tables are newly measured on the same
-frames, not reused from an earlier run.
+**Corners.** NAPA's median worst-corner error is less than half of full-resolution AprilTag's and about a fifth of
+WPILib's defaults, and on 95% of tags it was within {main["napa"]["corner_median_p95_max_px"][1]:.2f} px. Heavy motion
+blur is the exception: NAPA's largest error was {d1_common["baseline"]["max_px"]:.1f} px, against
+{d1_common["other"]["max_px"]:.1f} px for full-resolution AprilTag on the same tags.
 
-AprilTag d1/d2 means decimation one/two; Locus d2 is its standard profile at decimation two. OpenCV and RapidTag
-defaults do not refine corners; SUBPIX variants are separate. ArUco3 minimum-size labels account for half-scale
-detection. The [full report]({LINK}/report.md) records exact settings, corner comparisons, stress/range results,
-CPU time, thermal/load variation, raw data and the protocol recorded before timing.
+**Stress.** A separate set of 600 harder frames has tags under 32 px, very heavy noise, and up to 80 tags per frame.
+NAPA found {100 * stress["napa"]["found"] / stress["napa"]["tags"]:.0f}% of those tags with its default settings, and
+all of them with `min_tag_px=16`.
 
-The [benchmark guide](benchmarks/README.md) has per-scene and range tables. Older
-[isolated resource measurements](benchmarks/results/2026-10-29_cpu_optimization/report.md#cpu-and-working-memory)
-use separate 96-frame sets; this new interleaved run does not measure isolated RSS. These are finite synthetic
-measurements on one host. [Score your own camera footage](docs/measuring.md) before relying on a specific result.
+On tag16h5, the 2023 FRC family, AprilTag at its default two-bit correction reported 581 wrong IDs in the
+[family benchmark](benchmarks/README.md#tag-families), and NAPA reported none.
+
+The frames are synthetic, and the timings come from one laptop CPU (Intel i7-12700H). To check NAPA on your own
+camera, [score it on your own footage](docs/measuring.md). The [full report]({LINK}/report.md) has every
+configuration's settings, latency percentiles, and raw data, and the [benchmark guide](benchmarks/README.md) has
+results for every scene.
 
 """
     per_scene = []
@@ -391,7 +527,7 @@ measurements on one host. [Score your own camera footage](docs/measuring.md) bef
                 output.append([scene, 50, tags, *cells] if mode == "time" else [scene, tags, *cells])
             title = "median detector call" if mode == "time" else "tags found (wrong IDs in brackets)"
             headers = ["Scene", "Frames", "Tags"] if mode == "time" else ["Scene", "Tags"]
-            per_scene += [f"### {res}: {title}", "", table([*headers, *LABELS.values()], output), ""]
+            per_scene += [f"### {res}: {title}", "", table([*headers, *DOC_LABELS.values()], output), ""]
     range_rows = []
     for b in LABELS:
         cells = []
@@ -399,33 +535,33 @@ measurements on one host. [Score your own camera footage](docs/measuring.md) bef
             rs = [r for r in scopes["range"] if r["backend"] == b and float(r["detail_side_px"]) == size]
             assert len(rs) == 50
             cells.append(sum(int(r["true_positive"]) for r in rs))
-        range_rows.append([LABELS[b], *cells])
+        range_rows.append([DOC_LABELS[b], *cells])
+    assert all(s["duplicates"] == 0 for s in summaries["main"].values())
     guide_latest = (
-        "## Latest results\n\nFull fixed 3,000-frame corpus from "
-        "[matrix.csv](results/2026-10-30_cpu_full_corpus/matrix.csv): "
-        "all 20 scenarios × 50 renders × three resolutions, "
-        "5,521 placed tags. Every backend, including normal NAPA32 and NAPA16 options, receives the same frames. "
-        "No prior-loss selection or frame filters. One warm-up plus ten shuffled timed calls per image on a "
-        "verified P-core of the i7-12700H; source/settings frozen before timing. Each timing cell is the median "
-        "of all timed calls pooled within that scene. Counts are per image, not multiplied by repetitions.\n\n"
-        "NAPA32 is the default; NAPA16 is tuned. Both retain refinement. AprilTag d1/d2 denotes decimation one/two; "
-        "Locus d2 is the standard profile at decimation two. OpenCV/RapidTag defaults do not refine corners; "
-        "SUBPIX variants are separate. ArUco3 minimum sizes account for half-scale detection. Exact builds, "
-        "effective settings and common-tag corner errors are in the "
-        "[new report](results/2026-10-30_cpu_full_corpus/report.md). The earlier 149-frame diagnostic set is "
-        "supplementary development evidence, not the source of these tables.\n\n"
+        "## Latest results\n\nThese tables come from the "
+        "[2026-10-30 run](results/2026-10-30_cpu_full_corpus/report.md), which gave every detector the same "
+        "3,000 frames: 50 per scene at each resolution. Each detector had one warm-up and ten timed calls per frame, "
+        "in shuffled order, on one performance core of an Intel i7-12700H. Each time is the median of a scene's "
+        "timed calls.\n\n"
+        "AprilTag at WPILib's defaults is `robotpy-apriltag` as WPILib configures it: decimate 2, a 300 px minimum "
+        "cluster, and a 45° critical angle. The other AprilTag rows use the upstream C library's defaults. OpenCV "
+        "ArUco and RapidTag refine corners only in their subpixel rows. The two limited ArUco3 rows detect at half "
+        "scale, which sets the smallest tag they can find. The [report](results/2026-10-30_cpu_full_corpus/report.md) "
+        "lists every configuration's exact settings, and compares NAPA's corners with each detector's on the tags both "
+        "found.\n\n"
         + "\n".join(per_scene)
-        + "\nNo duplicate detections occurred in the main corpus. The same run's 600 stress frames are separate:\n\n"
-        + summary_table(summaries["stress"])
+        + "\nNo detector reported the same tag twice. The same run's 600 stress frames (tags under 32 px, noise "
+        "σ 15–30, 30–80 tags per frame, and noisy clutter) are scored separately:\n\n"
+        + guide_summary_table(summaries["stress"])
         + "\n\n"
     )
     guide_range = (
-        "## Range\n\nFresh measurements from the same shared run: tags found out of **50** per black-square size, "
-        "900 frames total. Every backend receives all 18 sizes, including WPILib, NAPA32 and NAPA16. "
-        "No peer values are reused from prior range sweeps.\n\n"
+        "## Range\n\nTags found out of 50 at each black-square size, from the same run: 900 frames at 640×480, "
+        "with light noise and up to 15° of tilt.\n\n"
         + table(["Detector", *map(str, protocol["range"]["sizes_px"])], range_rows)
-        + "\n\nNAPA16 found every tag at all tested sizes from 12–96 px. NAPA32 trades small-tag recall for "
-        "latency. These images use light noise and at most 15° tilt; they do not establish real-camera range.\n\n"
+        + f"\n\nWith its default `min_tag_px=32`, NAPA found every tag from {reach['napa']} px up. "
+        "With `min_tag_px=16`, it found every tag at every size tested. Real cameras add blur, noise, and "
+        "steeper angles, so measure range on your own.\n\n"
     )
     if args.write_docs:
         for path in (ROOT / "README.md", ROOT / "docs/pypi.md"):
@@ -438,21 +574,18 @@ measurements on one host. [Score your own camera footage](docs/measuring.md) bef
                     lambda m: "](https://github.com/zwatx/NAPA/blob/master/" + m[1] + ")",
                     block,
                 )
-            path.write_text(s[:start] + block + s[end:])
+            path.write_text(s[:start] + reflow(block) + s[end:])
         path = ROOT / "benchmarks/README.md"
         s = path.read_text()
         start, end = s.index("## Latest results"), s.index("## Tag families")
-        s = s[:start] + guide_latest + guide_range + s[end:]
+        s = s[:start] + reflow(guide_latest) + reflow(guide_range) + s[end:]
         start = s.index("\n\n", s.index("and pose solving")) + 2
         end = s.index("## What's in the corpus")
         s = (
             s[:start]
             + (
-                "The latest tables use the full fixed corpus in the "
-                "[2026-10-30 comparison](results/2026-10-30_cpu_full_corpus/report.md). "
-                "NAPA32/default and NAPA16 are ordinary backends on the same frames as every peer. "
-                "Main-corpus, stress and range results have separate scopes. The previous 149-frame set is "
-                "a development diagnostic only and is superseded for headline measurements.\n\n"
+                "The latest results are from the [2026-10-30 run](results/2026-10-30_cpu_full_corpus/report.md), "
+                "which ran NAPA and 13 configurations of other detectors on the same frames.\n\n"
             )
             + s[end:]
         )
