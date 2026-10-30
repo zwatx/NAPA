@@ -1,0 +1,2816 @@
+{
+  "backends": {
+    "apriltag3-d1": {
+      "bits_corrected": 2,
+      "build": "CMake Release (-O3 -DNDEBUG -std=gnu99), shared",
+      "commit": "b7c0ebe9aa20f82ec7a828579004f9e706bfecd9",
+      "corner_refinement": "refine_edges (on)",
+      "effective_critical_rad": 0.0,
+      "effective_decode_sharpening": 0.25,
+      "effective_deglitch": 0.0,
+      "effective_max_line_fit_mse": 10.0,
+      "effective_min_cluster_pixels": 24.0,
+      "effective_min_white_black_diff": 5.0,
+      "effective_nthreads": 1.0,
+      "effective_quad_decimate": 1.0,
+      "effective_quad_sigma": 0.0,
+      "effective_refine_edges": 1.0,
+      "family": "tag36h11",
+      "library": "AprilTag 3 (AprilRobotics/apriltag, C library via a ctypes shim)",
+      "pixel_offset_applied": -0.5,
+      "threads": 1,
+      "tuning": "tuned: quad_decimate=1 (full resolution)"
+    },
+    "apriltag3-d2": {
+      "bits_corrected": 2,
+      "build": "CMake Release (-O3 -DNDEBUG -std=gnu99), shared",
+      "commit": "b7c0ebe9aa20f82ec7a828579004f9e706bfecd9",
+      "corner_refinement": "refine_edges (on)",
+      "effective_critical_rad": 0.0,
+      "effective_decode_sharpening": 0.25,
+      "effective_deglitch": 0.0,
+      "effective_max_line_fit_mse": 10.0,
+      "effective_min_cluster_pixels": 24.0,
+      "effective_min_white_black_diff": 5.0,
+      "effective_nthreads": 1.0,
+      "effective_quad_decimate": 2.0,
+      "effective_quad_sigma": 0.0,
+      "effective_refine_edges": 1.0,
+      "family": "tag36h11",
+      "library": "AprilTag 3 (AprilRobotics/apriltag, C library via a ctypes shim)",
+      "pixel_offset_applied": -0.5,
+      "threads": 1,
+      "tuning": "default (quad_decimate=2)"
+    },
+    "aruco-nano": {
+      "build": "g++ -O3 -std=c++17 against OpenCV 4.14.0 (Release, IPP-ICV, pthreads, baseline SSE3 + dispatch)",
+      "commit": "c99989bcab795ffa65d9e12df9de15f27677a835",
+      "corner_refinement": "always: line fit per side (refineCornersEdges)",
+      "dictionary": "DICT_APRILTAG_36h11 only",
+      "effective_ArucoNanoVersion": 10.0,
+      "effective_boxFilterSize": 15.0,
+      "effective_detectInvertedMarker": 0.0,
+      "effective_dictionaries": 1.0,
+      "effective_errorCorrectionRate": 0.0,
+      "effective_maxAttemptsPerCandidate": 5.0,
+      "effective_maxErroneousBitsInBorderRate": 0.0,
+      "effective_maxTimesRevisited": 0.05000000074505806,
+      "effective_minSize": 10.0,
+      "effective_opencv_threads": 1.0,
+      "effective_thres": 3.0,
+      "library": "ArUco Nano (rmsalinas/aruco_nano, header-only C++ via a ctypes shim)",
+      "opencv": "4.14.0",
+      "pixel_offset_applied": 0.0,
+      "threads": 1,
+      "tuning": "default (36h11 dictionary only)"
+    },
+    "locus": {
+      "build": "PyPI abi3 manylinux wheel (maturin --release, no target-cpu flags)",
+      "corner_refinement": "Erf + corner_subpix=True",
+      "decimation": 1,
+      "effective_config": {
+        "decoder": {
+          "corner_subpix": true,
+          "max_border_error_rate": null,
+          "max_hamming_error": null,
+          "min_contrast": 20.0,
+          "refinement_mode": "Erf"
+        },
+        "name": null,
+        "pose": {
+          "huber_delta_px": 1.5,
+          "outlier_drop_d2_threshold": 0.0,
+          "pose_consistency_fpr": 0.0,
+          "pose_consistency_gate_sigma_px": 1.0,
+          "pose_edge_refinement_enabled": false,
+          "sigma_n_sq": 4.0,
+          "structure_tensor_radius": 2,
+          "tikhonov_alpha_max": 0.25
+        },
+        "quad": {
+          "edlines_imbalance_gate": "Disabled",
+          "extraction_mode": "ContourRdp",
+          "extraction_policy": "Static",
+          "max_aspect_ratio": 10.0,
+          "max_elongation": 0.0,
+          "max_fill_ratio": 0.98,
+          "min_area": 36,
+          "min_density": 0.0,
+          "min_edge_length": 4.0,
+          "min_edge_score": 4.0,
+          "min_fill_ratio": 0.0,
+          "subpixel_refinement_sigma": 0.6,
+          "upscale_factor": 1
+        },
+        "segmentation": {
+          "connectivity": "Four"
+        },
+        "threshold": {
+          "enable_sharpening": true,
+          "local_mean_radius": 7,
+          "mode": "TileMidExtreme",
+          "noise_k": 4.0,
+          "tile_size": 8
+        }
+      },
+      "family": "tag36h11",
+      "library": "Locus (locus-tag, Rust via PyO3)",
+      "max_hamming": "family default (2 for tag36h11)",
+      "pixel_offset_applied": -0.5,
+      "profile": "standard",
+      "threading": "scoped Rayon pool of `threads` workers per detector",
+      "threads": 1,
+      "tuning": "default (standard profile)",
+      "version": "0.10.0"
+    },
+    "locus-d2": {
+      "build": "PyPI abi3 manylinux wheel (maturin --release, no target-cpu flags)",
+      "corner_refinement": "Erf + corner_subpix=True",
+      "decimation": 2,
+      "effective_config": {
+        "decoder": {
+          "corner_subpix": true,
+          "max_border_error_rate": null,
+          "max_hamming_error": null,
+          "min_contrast": 20.0,
+          "refinement_mode": "Erf"
+        },
+        "name": null,
+        "pose": {
+          "huber_delta_px": 1.5,
+          "outlier_drop_d2_threshold": 0.0,
+          "pose_consistency_fpr": 0.0,
+          "pose_consistency_gate_sigma_px": 1.0,
+          "pose_edge_refinement_enabled": false,
+          "sigma_n_sq": 4.0,
+          "structure_tensor_radius": 2,
+          "tikhonov_alpha_max": 0.25
+        },
+        "quad": {
+          "edlines_imbalance_gate": "Disabled",
+          "extraction_mode": "ContourRdp",
+          "extraction_policy": "Static",
+          "max_aspect_ratio": 10.0,
+          "max_elongation": 0.0,
+          "max_fill_ratio": 0.98,
+          "min_area": 36,
+          "min_density": 0.0,
+          "min_edge_length": 4.0,
+          "min_edge_score": 4.0,
+          "min_fill_ratio": 0.0,
+          "subpixel_refinement_sigma": 0.6,
+          "upscale_factor": 1
+        },
+        "segmentation": {
+          "connectivity": "Four"
+        },
+        "threshold": {
+          "enable_sharpening": true,
+          "local_mean_radius": 7,
+          "mode": "TileMidExtreme",
+          "noise_k": 4.0,
+          "tile_size": 8
+        }
+      },
+      "family": "tag36h11",
+      "library": "Locus (locus-tag, Rust via PyO3)",
+      "max_hamming": "family default (2 for tag36h11)",
+      "pixel_offset_applied": -0.5,
+      "profile": "standard",
+      "threading": "scoped Rayon pool of `threads` workers per detector",
+      "threads": 1,
+      "tuning": "tuned for speed: standard + decimation=2",
+      "version": "0.10.0"
+    },
+    "napa": {
+      "base_sampling_stride_px": 3,
+      "commit": "f7a7adfe27ca701aee75561be924f64b83bdf442",
+      "core_handle": "<CDLL 'work/full-corpus/libnapa_core.so', handle 4129f3d0 at 0x7b0eae175010>",
+      "core_library_env": "work/full-corpus/libnapa_core.so",
+      "core_library_loaded": [
+        "work/full-corpus/libnapa_core.so"
+      ],
+      "core_library_sha256": [
+        "270a246d250237f36313cf66a6fc94db7afbba19d3d7fc9612d0499adbfff1d7"
+      ],
+      "corner_refinement": "always: full-resolution edge fit",
+      "decimation": "none (sparse rake; every level fits corners at full resolution)",
+      "family": "tag36h11",
+      "library": "NAPA (napa_vision.NapaDetector, public Python API)",
+      "max_hamming": 3,
+      "min_border_cells": 22,
+      "min_contrast": 20,
+      "min_tag_px": 32,
+      "noisy_frame_box_averaging": "noisy frames: original stride 1; centred 3x3 at stride 2 following stride 1; stride-sized blocks otherwise",
+      "pixel_offset_applied": 0.0,
+      "sharpening": 0.25,
+      "threading": "none inside a frame; one instance per thread",
+      "threads": 1,
+      "tuning": "default",
+      "version": "0.4.3"
+    },
+    "napa-mtp16": {
+      "base_sampling_stride_px": 1,
+      "commit": "f7a7adfe27ca701aee75561be924f64b83bdf442",
+      "core_handle": "<CDLL 'work/full-corpus/libnapa_core.so', handle 4129f3d0 at 0x7b0eae175010>",
+      "core_library_env": "work/full-corpus/libnapa_core.so",
+      "core_library_loaded": [
+        "work/full-corpus/libnapa_core.so"
+      ],
+      "core_library_sha256": [
+        "270a246d250237f36313cf66a6fc94db7afbba19d3d7fc9612d0499adbfff1d7"
+      ],
+      "corner_refinement": "always: full-resolution edge fit",
+      "decimation": "none (sparse rake; every level fits corners at full resolution)",
+      "family": "tag36h11",
+      "library": "NAPA (napa_vision.NapaDetector, public Python API)",
+      "max_hamming": 3,
+      "min_border_cells": 22,
+      "min_contrast": 20,
+      "min_tag_px": 16,
+      "noisy_frame_box_averaging": "noisy frames: original stride 1; centred 3x3 at stride 2 following stride 1; stride-sized blocks otherwise",
+      "pixel_offset_applied": 0.0,
+      "sharpening": 0.25,
+      "threading": "none inside a frame; one instance per thread",
+      "threads": 1,
+      "tuning": "tuned: min_tag_px=16",
+      "version": "0.4.3"
+    },
+    "opencv": {
+      "aruco3_detection_scale": null,
+      "build": "opencv-python-headless wheel",
+      "dictionary": "DICT_APRILTAG_36h11",
+      "effective_corner_refinement": "none",
+      "effective_min_marker_side": "perimeter >= 0.03 * max(w, h): about 5 px at 640, 14 px at 1920",
+      "library": "OpenCV ArUco (cv2.aruco.ArucoDetector)",
+      "max_correctable_bits": "floor(0.6 * 5) = 3 for tag36h11 (errorCorrectionRate * (hamming distance - 1) / 2)",
+      "param_adaptiveThreshConstant": 7.0,
+      "param_adaptiveThreshWinSizeMax": 23,
+      "param_adaptiveThreshWinSizeMin": 3,
+      "param_adaptiveThreshWinSizeStep": 10,
+      "param_cornerRefinementMethod": 0,
+      "param_errorCorrectionRate": 0.6,
+      "param_maxErroneousBitsInBorderRate": 0.35,
+      "param_maxMarkerPerimeterRate": 4.0,
+      "param_minMarkerLengthRatioOriginalImg": 0.0,
+      "param_minMarkerPerimeterRate": 0.03,
+      "param_minOtsuStdDev": 5.0,
+      "param_minSideLengthCanonicalImg": 32,
+      "param_useAruco3Detection": false,
+      "pixel_offset_applied": 0.0,
+      "threads": 1,
+      "tuning": "default (no corner refinement)",
+      "version": "5.0.0"
+    },
+    "opencv-aruco3": {
+      "aruco3_detection_scale": null,
+      "build": "opencv-python-headless wheel",
+      "dictionary": "DICT_APRILTAG_36h11",
+      "effective_corner_refinement": "none (forced SUBPIX runs on zero pyramid levels at full-scale detection)",
+      "effective_min_marker_side": "32 px (minSideLengthCanonicalImg)",
+      "library": "OpenCV ArUco (cv2.aruco.ArucoDetector)",
+      "max_correctable_bits": "floor(0.6 * 5) = 3 for tag36h11 (errorCorrectionRate * (hamming distance - 1) / 2)",
+      "param_adaptiveThreshConstant": 7.0,
+      "param_adaptiveThreshWinSizeMax": 23,
+      "param_adaptiveThreshWinSizeMin": 3,
+      "param_adaptiveThreshWinSizeStep": 10,
+      "param_cornerRefinementMethod": 0,
+      "param_errorCorrectionRate": 0.6,
+      "param_maxErroneousBitsInBorderRate": 0.35,
+      "param_maxMarkerPerimeterRate": 4.0,
+      "param_minMarkerLengthRatioOriginalImg": 0.0,
+      "param_minMarkerPerimeterRate": 0.03,
+      "param_minOtsuStdDev": 5.0,
+      "param_minSideLengthCanonicalImg": 32,
+      "param_useAruco3Detection": true,
+      "pixel_offset_applied": 0.0,
+      "threads": 1,
+      "tuning": "tuned: useAruco3Detection (defaults; no refinement runs at full scale)",
+      "version": "5.0.0"
+    },
+    "opencv-aruco3-half16": {
+      "aruco3_detection_scale": 0.5,
+      "build": "opencv-python-headless wheel",
+      "dictionary": "DICT_APRILTAG_36h11",
+      "effective_corner_refinement": "subpix on the upsampling pyramid levels",
+      "effective_min_marker_side": "about 32 px (canonical side 16 px at scale 0.5; the contour gate is 4 x canonical side in the scaled image)",
+      "library": "OpenCV ArUco (cv2.aruco.ArucoDetector)",
+      "max_correctable_bits": "floor(0.6 * 5) = 3 for tag36h11 (errorCorrectionRate * (hamming distance - 1) / 2)",
+      "param_adaptiveThreshConstant": 7.0,
+      "param_adaptiveThreshWinSizeMax": 23,
+      "param_adaptiveThreshWinSizeMin": 3,
+      "param_adaptiveThreshWinSizeStep": 10,
+      "param_cornerRefinementMethod": 0,
+      "param_errorCorrectionRate": 0.6,
+      "param_maxErroneousBitsInBorderRate": 0.35,
+      "param_maxMarkerPerimeterRate": 4.0,
+      "param_minMarkerLengthRatioOriginalImg": 0.0,
+      "param_minMarkerPerimeterRate": 0.03,
+      "param_minOtsuStdDev": 5.0,
+      "param_minSideLengthCanonicalImg": 16,
+      "param_useAruco3Detection": true,
+      "pixel_offset_applied": 0.0,
+      "threads": 1,
+      "tuning": "tuned for speed: ArUco3 at half scale, canonical 16 px (effective min side ~32 px)",
+      "version": "5.0.0"
+    },
+    "opencv-aruco3-min32": {
+      "aruco3_detection_scale": 0.5,
+      "build": "opencv-python-headless wheel",
+      "dictionary": "DICT_APRILTAG_36h11",
+      "effective_corner_refinement": "subpix on the upsampling pyramid levels",
+      "effective_min_marker_side": "about 64 px (canonical side 32 px at scale 0.5; the contour gate is 4 x canonical side in the scaled image)",
+      "library": "OpenCV ArUco (cv2.aruco.ArucoDetector)",
+      "max_correctable_bits": "floor(0.6 * 5) = 3 for tag36h11 (errorCorrectionRate * (hamming distance - 1) / 2)",
+      "param_adaptiveThreshConstant": 7.0,
+      "param_adaptiveThreshWinSizeMax": 23,
+      "param_adaptiveThreshWinSizeMin": 3,
+      "param_adaptiveThreshWinSizeStep": 10,
+      "param_cornerRefinementMethod": 0,
+      "param_errorCorrectionRate": 0.6,
+      "param_maxErroneousBitsInBorderRate": 0.35,
+      "param_maxMarkerPerimeterRate": 4.0,
+      "param_minMarkerLengthRatioOriginalImg": 0.0,
+      "param_minMarkerPerimeterRate": 0.03,
+      "param_minOtsuStdDev": 5.0,
+      "param_minSideLengthCanonicalImg": 32,
+      "param_useAruco3Detection": true,
+      "pixel_offset_applied": 0.0,
+      "threads": 1,
+      "tuning": "tuned for speed: ArUco3 at half scale, canonical 32 px (effective min side ~64 px)",
+      "version": "5.0.0"
+    },
+    "opencv-subpix": {
+      "aruco3_detection_scale": null,
+      "build": "opencv-python-headless wheel",
+      "dictionary": "DICT_APRILTAG_36h11",
+      "effective_corner_refinement": "subpix",
+      "effective_min_marker_side": "perimeter >= 0.03 * max(w, h): about 5 px at 640, 14 px at 1920",
+      "library": "OpenCV ArUco (cv2.aruco.ArucoDetector)",
+      "max_correctable_bits": "floor(0.6 * 5) = 3 for tag36h11 (errorCorrectionRate * (hamming distance - 1) / 2)",
+      "param_adaptiveThreshConstant": 7.0,
+      "param_adaptiveThreshWinSizeMax": 23,
+      "param_adaptiveThreshWinSizeMin": 3,
+      "param_adaptiveThreshWinSizeStep": 10,
+      "param_cornerRefinementMethod": 1,
+      "param_errorCorrectionRate": 0.6,
+      "param_maxErroneousBitsInBorderRate": 0.35,
+      "param_maxMarkerPerimeterRate": 4.0,
+      "param_minMarkerLengthRatioOriginalImg": 0.0,
+      "param_minMarkerPerimeterRate": 0.03,
+      "param_minOtsuStdDev": 5.0,
+      "param_minSideLengthCanonicalImg": 32,
+      "param_useAruco3Detection": false,
+      "pixel_offset_applied": 0.0,
+      "threads": 1,
+      "tuning": "tuned: CORNER_REFINE_SUBPIX",
+      "version": "5.0.0"
+    },
+    "rapidtag": {
+      "build": "PyPI abi3 manylinux wheel (portable; no target-cpu=native)",
+      "dictionary": "DICT_APRILTAG_36h11",
+      "effective_min_marker_side": "32 px (4 * min_side_length_canonical_img perimeter)",
+      "input_copy": "copies the frame into a Vec on every call (lib.rs extract_frame)",
+      "library": "RapidTag (rapidtag, Rust via PyO3)",
+      "param_adaptive_thresh_constant": 7.0,
+      "param_adaptive_thresh_win_size_max": 23,
+      "param_adaptive_thresh_win_size_min": 3,
+      "param_adaptive_thresh_win_size_step": 10,
+      "param_corner_refinement_method": 0,
+      "param_detect_inverted_marker": false,
+      "param_error_correction_rate": 0.6,
+      "param_min_side_length_canonical_img": 32,
+      "pixel_offset_applied": 0.0,
+      "threading": "global Rayon pool over threshold scales; RAPIDTAG_CORES=2",
+      "threads": 1,
+      "tuning": "default (no corner refinement)",
+      "version": "0.1.12"
+    },
+    "rapidtag-subpix": {
+      "build": "PyPI abi3 manylinux wheel (portable; no target-cpu=native)",
+      "dictionary": "DICT_APRILTAG_36h11",
+      "effective_min_marker_side": "32 px (4 * min_side_length_canonical_img perimeter)",
+      "input_copy": "copies the frame into a Vec on every call (lib.rs extract_frame)",
+      "library": "RapidTag (rapidtag, Rust via PyO3)",
+      "param_adaptive_thresh_constant": 7.0,
+      "param_adaptive_thresh_win_size_max": 23,
+      "param_adaptive_thresh_win_size_min": 3,
+      "param_adaptive_thresh_win_size_step": 10,
+      "param_corner_refinement_method": 1,
+      "param_detect_inverted_marker": false,
+      "param_error_correction_rate": 0.6,
+      "param_min_side_length_canonical_img": 32,
+      "pixel_offset_applied": 0.0,
+      "threading": "global Rayon pool over threshold scales; RAPIDTAG_CORES=2",
+      "threads": 1,
+      "tuning": "tuned: CORNER_REFINE_SUBPIX",
+      "version": "0.1.12"
+    },
+    "wpilib-d2": {
+      "bits_corrected": 2,
+      "corner_refinement": "refineEdges (on)",
+      "effective_decodeSharpening": 0.25,
+      "effective_numThreads": 1,
+      "effective_quadDecimate": 2.0,
+      "effective_quadSigma": 0.0,
+      "effective_quad_criticalAngle": 0.7853981633974483,
+      "effective_quad_deglitch": false,
+      "effective_quad_maxLineFitMSE": 10.0,
+      "effective_quad_minClusterPixels": 300,
+      "effective_quad_minWhiteBlackDiff": 5,
+      "effective_refineEdges": true,
+      "family": "tag36h11",
+      "library": "AprilTag 3, WPILib build (robotpy-apriltag)",
+      "pixel_offset_applied": -0.5,
+      "threads": 1,
+      "tuning": "WPILib's defaults (quad_decimate=2, min cluster 300 px, critical angle 45 degrees)",
+      "version": "2026.2.2"
+    }
+  },
+  "command": [
+    "work/venv/bin/python",
+    "benchmarks/cpu_comparison.py",
+    "latency",
+    "--backends",
+    "napa,napa-mtp16,wpilib-d2,apriltag3-d2,apriltag3-d1,locus,locus-d2,opencv,opencv-subpix,opencv-aruco3,opencv-aruco3-min32,opencv-aruco3-half16,aruco-nano,rapidtag,rapidtag-subpix",
+    "--threads",
+    "1",
+    "--scenarios",
+    "one-tag",
+    "--resolutions",
+    "640x480",
+    "--frames",
+    "1",
+    "--stress",
+    "none",
+    "--stress-frames",
+    "0",
+    "--range-cases",
+    "0",
+    "--repetitions",
+    "2",
+    "--warmup",
+    "1",
+    "--output",
+    "benchmarks/results/2026-10-30_cpu_full_corpus/smoke.json"
+  ],
+  "common_corners": [
+    {
+      "baseline": {
+        "max_px": 0.0094,
+        "median_px": 0.0094,
+        "p95_px": 0.0094
+      },
+      "common_tags": 1,
+      "other": {
+        "max_px": 0.0268,
+        "median_px": 0.0268,
+        "p95_px": 0.0268
+      },
+      "resolution": "640x480",
+      "versus": "apriltag3-d1"
+    },
+    {
+      "baseline": {
+        "max_px": 0.0094,
+        "median_px": 0.0094,
+        "p95_px": 0.0094
+      },
+      "common_tags": 1,
+      "other": {
+        "max_px": 0.0246,
+        "median_px": 0.0246,
+        "p95_px": 0.0246
+      },
+      "resolution": "640x480",
+      "versus": "apriltag3-d2"
+    },
+    {
+      "baseline": {
+        "max_px": 0.0094,
+        "median_px": 0.0094,
+        "p95_px": 0.0094
+      },
+      "common_tags": 1,
+      "other": {
+        "max_px": 0.0284,
+        "median_px": 0.0284,
+        "p95_px": 0.0284
+      },
+      "resolution": "640x480",
+      "versus": "aruco-nano"
+    },
+    {
+      "baseline": {
+        "max_px": 0.0094,
+        "median_px": 0.0094,
+        "p95_px": 0.0094
+      },
+      "common_tags": 1,
+      "other": {
+        "max_px": 0.0336,
+        "median_px": 0.0336,
+        "p95_px": 0.0336
+      },
+      "resolution": "640x480",
+      "versus": "locus"
+    },
+    {
+      "baseline": {
+        "max_px": 0.0094,
+        "median_px": 0.0094,
+        "p95_px": 0.0094
+      },
+      "common_tags": 1,
+      "other": {
+        "max_px": 0.0336,
+        "median_px": 0.0336,
+        "p95_px": 0.0336
+      },
+      "resolution": "640x480",
+      "versus": "locus-d2"
+    },
+    {
+      "baseline": {
+        "max_px": 0.0094,
+        "median_px": 0.0094,
+        "p95_px": 0.0094
+      },
+      "common_tags": 1,
+      "other": {
+        "max_px": 0.0091,
+        "median_px": 0.0091,
+        "p95_px": 0.0091
+      },
+      "resolution": "640x480",
+      "versus": "napa-mtp16"
+    },
+    {
+      "baseline": {
+        "max_px": 0.0094,
+        "median_px": 0.0094,
+        "p95_px": 0.0094
+      },
+      "common_tags": 1,
+      "other": {
+        "max_px": 0.9575,
+        "median_px": 0.9575,
+        "p95_px": 0.9575
+      },
+      "resolution": "640x480",
+      "versus": "opencv"
+    },
+    {
+      "baseline": {
+        "max_px": 0.0094,
+        "median_px": 0.0094,
+        "p95_px": 0.0094
+      },
+      "common_tags": 1,
+      "other": {
+        "max_px": 0.9575,
+        "median_px": 0.9575,
+        "p95_px": 0.9575
+      },
+      "resolution": "640x480",
+      "versus": "opencv-aruco3"
+    },
+    {
+      "baseline": {
+        "max_px": 0.0094,
+        "median_px": 0.0094,
+        "p95_px": 0.0094
+      },
+      "common_tags": 1,
+      "other": {
+        "max_px": 0.3516,
+        "median_px": 0.3516,
+        "p95_px": 0.3516
+      },
+      "resolution": "640x480",
+      "versus": "opencv-aruco3-half16"
+    },
+    {
+      "baseline": {
+        "max_px": 0.0094,
+        "median_px": 0.0094,
+        "p95_px": 0.0094
+      },
+      "common_tags": 1,
+      "other": {
+        "max_px": 0.3516,
+        "median_px": 0.3516,
+        "p95_px": 0.3516
+      },
+      "resolution": "640x480",
+      "versus": "opencv-aruco3-min32"
+    },
+    {
+      "baseline": {
+        "max_px": 0.0094,
+        "median_px": 0.0094,
+        "p95_px": 0.0094
+      },
+      "common_tags": 1,
+      "other": {
+        "max_px": 0.3908,
+        "median_px": 0.3908,
+        "p95_px": 0.3908
+      },
+      "resolution": "640x480",
+      "versus": "opencv-subpix"
+    },
+    {
+      "baseline": {
+        "max_px": 0.0094,
+        "median_px": 0.0094,
+        "p95_px": 0.0094
+      },
+      "common_tags": 1,
+      "other": {
+        "max_px": 0.0911,
+        "median_px": 0.0911,
+        "p95_px": 0.0911
+      },
+      "resolution": "640x480",
+      "versus": "wpilib-d2"
+    },
+    {
+      "baseline": {
+        "max_px": 0.0094,
+        "median_px": 0.0094,
+        "p95_px": 0.0094
+      },
+      "common_tags": 1,
+      "other": {
+        "max_px": 0.0268,
+        "median_px": 0.0268,
+        "p95_px": 0.0268
+      },
+      "resolution": "all",
+      "versus": "apriltag3-d1"
+    },
+    {
+      "baseline": {
+        "max_px": 0.0094,
+        "median_px": 0.0094,
+        "p95_px": 0.0094
+      },
+      "common_tags": 1,
+      "other": {
+        "max_px": 0.0246,
+        "median_px": 0.0246,
+        "p95_px": 0.0246
+      },
+      "resolution": "all",
+      "versus": "apriltag3-d2"
+    },
+    {
+      "baseline": {
+        "max_px": 0.0094,
+        "median_px": 0.0094,
+        "p95_px": 0.0094
+      },
+      "common_tags": 1,
+      "other": {
+        "max_px": 0.0284,
+        "median_px": 0.0284,
+        "p95_px": 0.0284
+      },
+      "resolution": "all",
+      "versus": "aruco-nano"
+    },
+    {
+      "baseline": {
+        "max_px": 0.0094,
+        "median_px": 0.0094,
+        "p95_px": 0.0094
+      },
+      "common_tags": 1,
+      "other": {
+        "max_px": 0.0336,
+        "median_px": 0.0336,
+        "p95_px": 0.0336
+      },
+      "resolution": "all",
+      "versus": "locus"
+    },
+    {
+      "baseline": {
+        "max_px": 0.0094,
+        "median_px": 0.0094,
+        "p95_px": 0.0094
+      },
+      "common_tags": 1,
+      "other": {
+        "max_px": 0.0336,
+        "median_px": 0.0336,
+        "p95_px": 0.0336
+      },
+      "resolution": "all",
+      "versus": "locus-d2"
+    },
+    {
+      "baseline": {
+        "max_px": 0.0094,
+        "median_px": 0.0094,
+        "p95_px": 0.0094
+      },
+      "common_tags": 1,
+      "other": {
+        "max_px": 0.0091,
+        "median_px": 0.0091,
+        "p95_px": 0.0091
+      },
+      "resolution": "all",
+      "versus": "napa-mtp16"
+    },
+    {
+      "baseline": {
+        "max_px": 0.0094,
+        "median_px": 0.0094,
+        "p95_px": 0.0094
+      },
+      "common_tags": 1,
+      "other": {
+        "max_px": 0.9575,
+        "median_px": 0.9575,
+        "p95_px": 0.9575
+      },
+      "resolution": "all",
+      "versus": "opencv"
+    },
+    {
+      "baseline": {
+        "max_px": 0.0094,
+        "median_px": 0.0094,
+        "p95_px": 0.0094
+      },
+      "common_tags": 1,
+      "other": {
+        "max_px": 0.9575,
+        "median_px": 0.9575,
+        "p95_px": 0.9575
+      },
+      "resolution": "all",
+      "versus": "opencv-aruco3"
+    },
+    {
+      "baseline": {
+        "max_px": 0.0094,
+        "median_px": 0.0094,
+        "p95_px": 0.0094
+      },
+      "common_tags": 1,
+      "other": {
+        "max_px": 0.3516,
+        "median_px": 0.3516,
+        "p95_px": 0.3516
+      },
+      "resolution": "all",
+      "versus": "opencv-aruco3-half16"
+    },
+    {
+      "baseline": {
+        "max_px": 0.0094,
+        "median_px": 0.0094,
+        "p95_px": 0.0094
+      },
+      "common_tags": 1,
+      "other": {
+        "max_px": 0.3516,
+        "median_px": 0.3516,
+        "p95_px": 0.3516
+      },
+      "resolution": "all",
+      "versus": "opencv-aruco3-min32"
+    },
+    {
+      "baseline": {
+        "max_px": 0.0094,
+        "median_px": 0.0094,
+        "p95_px": 0.0094
+      },
+      "common_tags": 1,
+      "other": {
+        "max_px": 0.3908,
+        "median_px": 0.3908,
+        "p95_px": 0.3908
+      },
+      "resolution": "all",
+      "versus": "opencv-subpix"
+    },
+    {
+      "baseline": {
+        "max_px": 0.0094,
+        "median_px": 0.0094,
+        "p95_px": 0.0094
+      },
+      "common_tags": 1,
+      "other": {
+        "max_px": 0.0911,
+        "median_px": 0.0911,
+        "p95_px": 0.0911
+      },
+      "resolution": "all",
+      "versus": "wpilib-d2"
+    }
+  ],
+  "finished_at_utc": "2026-10-30T06:42:23.446332+00:00",
+  "generated_at_utc": "2026-10-30T06:42:23.199616+00:00",
+  "gross_corner_px": 2.0,
+  "lifecycle": {
+    "apriltag3-d1": {
+      "first_call_ms": 19.86774,
+      "init_ms": 0.017174
+    },
+    "apriltag3-d2": {
+      "first_call_ms": 4.990417,
+      "init_ms": 0.044371
+    },
+    "aruco-nano": {
+      "first_call_ms": 0.530145,
+      "init_ms": 0.021495
+    },
+    "locus": {
+      "first_call_ms": 3.792652,
+      "init_ms": 0.236974
+    },
+    "locus-d2": {
+      "first_call_ms": 1.567922,
+      "init_ms": 0.24967
+    },
+    "napa": {
+      "first_call_ms": 0.136991,
+      "init_ms": 0.877163
+    },
+    "napa-mtp16": {
+      "first_call_ms": 0.147053,
+      "init_ms": 0.736522
+    },
+    "opencv": {
+      "first_call_ms": 1.355243,
+      "init_ms": 0.001493
+    },
+    "opencv-aruco3": {
+      "first_call_ms": 1.063819,
+      "init_ms": 0.000788
+    },
+    "opencv-aruco3-half16": {
+      "first_call_ms": 0.421206,
+      "init_ms": 0.000706
+    },
+    "opencv-aruco3-min32": {
+      "first_call_ms": 0.410785,
+      "init_ms": 0.001002
+    },
+    "opencv-subpix": {
+      "first_call_ms": 1.077108,
+      "init_ms": 0.000854
+    },
+    "rapidtag": {
+      "first_call_ms": 1.494995,
+      "init_ms": 0.005724
+    },
+    "rapidtag-subpix": {
+      "first_call_ms": 0.933906,
+      "init_ms": 0.000928
+    },
+    "wpilib-d2": {
+      "first_call_ms": 4.674799,
+      "init_ms": 11.488855
+    }
+  },
+  "machine": {
+    "affinity": [
+      2
+    ],
+    "core_id": {
+      "2": "4"
+    },
+    "cpu_model": "12th Gen Intel(R) Core(TM) i7-12700H",
+    "e_cores": "12-19",
+    "env": {
+      "NAPA_CORE_LIBRARY": "work/full-corpus/libnapa_core.so",
+      "OMP_NUM_THREADS": "1",
+      "OPENBLAS_NUM_THREADS": "1",
+      "RAPIDTAG_CORES": "2",
+      "RAYON_NUM_THREADS": "1"
+    },
+    "epp": {
+      "2": "balance_performance"
+    },
+    "governor": {
+      "2": "powersave"
+    },
+    "loadavg": [
+      0.99267578125,
+      0.857421875,
+      0.76806640625
+    ],
+    "logical_cpus": 20,
+    "max_freq_khz": {
+      "2": "4600000"
+    },
+    "no_turbo": "0",
+    "numpy": "2.5.4",
+    "p_cores": "0-11",
+    "platform": "Linux-7.0.0-38-generic-x86_64-with-glibc2.43",
+    "python": "3.14.4 (main, Aug 20 2026, 10:41:58) [GCC 15.2.0]",
+    "smt_siblings": {
+      "2": "2-3"
+    },
+    "temperatures_c": {
+      "INT3400 Thermal": 20.0,
+      "NGFF": 52.05,
+      "TCPU": 58.05,
+      "TCPU_PCI": 75.0,
+      "TMEM": 44.05,
+      "TSKN": 55.05,
+      "iwlwifi_1": 48.0,
+      "x86_pkg_temp": 61.0
+    }
+  },
+  "machine_end": {
+    "affinity": [
+      2
+    ],
+    "core_id": {
+      "2": "4"
+    },
+    "cpu_model": "12th Gen Intel(R) Core(TM) i7-12700H",
+    "e_cores": "12-19",
+    "env": {
+      "NAPA_CORE_LIBRARY": "work/full-corpus/libnapa_core.so",
+      "OMP_NUM_THREADS": "1",
+      "OPENBLAS_NUM_THREADS": "1",
+      "RAPIDTAG_CORES": "2",
+      "RAYON_NUM_THREADS": "1"
+    },
+    "epp": {
+      "2": "balance_performance"
+    },
+    "governor": {
+      "2": "powersave"
+    },
+    "loadavg": [
+      0.99267578125,
+      0.857421875,
+      0.76806640625
+    ],
+    "logical_cpus": 20,
+    "max_freq_khz": {
+      "2": "4600000"
+    },
+    "no_turbo": "0",
+    "numpy": "2.5.4",
+    "p_cores": "0-11",
+    "platform": "Linux-7.0.0-38-generic-x86_64-with-glibc2.43",
+    "python": "3.14.4 (main, Aug 20 2026, 10:41:58) [GCC 15.2.0]",
+    "smt_siblings": {
+      "2": "2-3"
+    },
+    "temperatures_c": {
+      "INT3400 Thermal": 20.0,
+      "NGFF": 52.05,
+      "TCPU": 58.05,
+      "TCPU_PCI": 66.0,
+      "TMEM": 44.05,
+      "TSKN": 55.05,
+      "iwlwifi_1": 48.0,
+      "x86_pkg_temp": 71.0
+    }
+  },
+  "napa_core_loaded": [
+    "work/full-corpus/libnapa_core.so"
+  ],
+  "renderer_opencv": "5.0.0",
+  "results": [
+    {
+      "backend": "apriltag3-d1",
+      "corner_error": {
+        "max_px": 0.0268,
+        "median_px": 0.0268,
+        "p95_px": 0.0268
+      },
+      "corner_order": {
+        "alignments": {
+          "rs2": 1
+        },
+        "canonical_fraction": 0.0,
+        "modal": "rs2",
+        "modal_fraction": 1.0
+      },
+      "cpu_ms_mean": 18.462875,
+      "cpu_over_wall": 0.9986932732443674,
+      "duplicates": 0,
+      "false_ids": 0,
+      "found": 1,
+      "frame_median_ms": {
+        "max_ms": 18.48703,
+        "mean_ms": 18.48703,
+        "min_ms": 18.48703,
+        "p50_ms": 18.48703,
+        "p95_ms": 18.48703,
+        "p99_ms": 18.48703,
+        "samples": 1
+      },
+      "frames": 1,
+      "frames_with_false_id": 0,
+      "gross_corner_errors": 0,
+      "latency": {
+        "max_ms": 18.49957,
+        "mean_ms": 18.487032499999998,
+        "min_ms": 18.474495,
+        "p50_ms": 18.487032499999998,
+        "p95_ms": 18.49831625,
+        "p99_ms": 18.49931925,
+        "samples": 2
+      },
+      "recall": 1.0,
+      "resolution": "640x480",
+      "scenario": "all-corpus",
+      "tags": 1,
+      "unstable_frames": 0
+    },
+    {
+      "backend": "apriltag3-d2",
+      "corner_error": {
+        "max_px": 0.0246,
+        "median_px": 0.0246,
+        "p95_px": 0.0246
+      },
+      "corner_order": {
+        "alignments": {
+          "rs2": 1
+        },
+        "canonical_fraction": 0.0,
+        "modal": "rs2",
+        "modal_fraction": 1.0
+      },
+      "cpu_ms_mean": 4.993932,
+      "cpu_over_wall": 1.000109044210969,
+      "duplicates": 0,
+      "false_ids": 0,
+      "found": 1,
+      "frame_median_ms": {
+        "max_ms": 4.99339,
+        "mean_ms": 4.99339,
+        "min_ms": 4.99339,
+        "p50_ms": 4.99339,
+        "p95_ms": 4.99339,
+        "p99_ms": 4.99339,
+        "samples": 1
+      },
+      "frames": 1,
+      "frames_with_false_id": 0,
+      "gross_corner_errors": 0,
+      "latency": {
+        "max_ms": 5.043899,
+        "mean_ms": 4.9933875,
+        "min_ms": 4.942876,
+        "p50_ms": 4.9933875,
+        "p95_ms": 5.03884785,
+        "p99_ms": 5.042888769999999,
+        "samples": 2
+      },
+      "recall": 1.0,
+      "resolution": "640x480",
+      "scenario": "all-corpus",
+      "tags": 1,
+      "unstable_frames": 0
+    },
+    {
+      "backend": "aruco-nano",
+      "corner_error": {
+        "max_px": 0.0284,
+        "median_px": 0.0284,
+        "p95_px": 0.0284
+      },
+      "corner_order": {
+        "alignments": {
+          "s0": 1
+        },
+        "canonical_fraction": 1.0,
+        "modal": "s0",
+        "modal_fraction": 1.0
+      },
+      "cpu_ms_mean": 0.4276345,
+      "cpu_over_wall": 1.0014003486821383,
+      "duplicates": 0,
+      "false_ids": 0,
+      "found": 1,
+      "frame_median_ms": {
+        "max_ms": 0.42704,
+        "mean_ms": 0.42704,
+        "min_ms": 0.42704,
+        "p50_ms": 0.42704,
+        "p95_ms": 0.42704,
+        "p99_ms": 0.42704,
+        "samples": 1
+      },
+      "frames": 1,
+      "frames_with_false_id": 0,
+      "gross_corner_errors": 0,
+      "latency": {
+        "max_ms": 0.455542,
+        "mean_ms": 0.42703650000000004,
+        "min_ms": 0.398531,
+        "p50_ms": 0.42703650000000004,
+        "p95_ms": 0.45269145,
+        "p99_ms": 0.45497189,
+        "samples": 2
+      },
+      "recall": 1.0,
+      "resolution": "640x480",
+      "scenario": "all-corpus",
+      "tags": 1,
+      "unstable_frames": 0
+    },
+    {
+      "backend": "locus",
+      "corner_error": {
+        "max_px": 0.0336,
+        "median_px": 0.0336,
+        "p95_px": 0.0336
+      },
+      "corner_order": {
+        "alignments": {
+          "s0": 1
+        },
+        "canonical_fraction": 1.0,
+        "modal": "s0",
+        "modal_fraction": 1.0
+      },
+      "cpu_ms_mean": 3.241617,
+      "cpu_over_wall": 0.9937216775402943,
+      "duplicates": 0,
+      "false_ids": 0,
+      "found": 1,
+      "frame_median_ms": {
+        "max_ms": 3.2621,
+        "mean_ms": 3.2621,
+        "min_ms": 3.2621,
+        "p50_ms": 3.2621,
+        "p95_ms": 3.2621,
+        "p99_ms": 3.2621,
+        "samples": 1
+      },
+      "frames": 1,
+      "frames_with_false_id": 0,
+      "gross_corner_errors": 0,
+      "latency": {
+        "max_ms": 3.438596,
+        "mean_ms": 3.2620975000000003,
+        "min_ms": 3.085599,
+        "p50_ms": 3.2620975000000003,
+        "p95_ms": 3.42094615,
+        "p99_ms": 3.4350660299999998,
+        "samples": 2
+      },
+      "recall": 1.0,
+      "resolution": "640x480",
+      "scenario": "all-corpus",
+      "tags": 1,
+      "unstable_frames": 0
+    },
+    {
+      "backend": "locus-d2",
+      "corner_error": {
+        "max_px": 0.0336,
+        "median_px": 0.0336,
+        "p95_px": 0.0336
+      },
+      "corner_order": {
+        "alignments": {
+          "s0": 1
+        },
+        "canonical_fraction": 1.0,
+        "modal": "s0",
+        "modal_fraction": 1.0
+      },
+      "cpu_ms_mean": 1.4360885,
+      "cpu_over_wall": 0.9899201185073669,
+      "duplicates": 0,
+      "false_ids": 0,
+      "found": 1,
+      "frame_median_ms": {
+        "max_ms": 1.45071,
+        "mean_ms": 1.45071,
+        "min_ms": 1.45071,
+        "p50_ms": 1.45071,
+        "p95_ms": 1.45071,
+        "p99_ms": 1.45071,
+        "samples": 1
+      },
+      "frames": 1,
+      "frames_with_false_id": 0,
+      "gross_corner_errors": 0,
+      "latency": {
+        "max_ms": 1.464159,
+        "mean_ms": 1.4507115000000002,
+        "min_ms": 1.437264,
+        "p50_ms": 1.4507115000000002,
+        "p95_ms": 1.46281425,
+        "p99_ms": 1.46389005,
+        "samples": 2
+      },
+      "recall": 1.0,
+      "resolution": "640x480",
+      "scenario": "all-corpus",
+      "tags": 1,
+      "unstable_frames": 0
+    },
+    {
+      "backend": "napa",
+      "corner_error": {
+        "max_px": 0.0094,
+        "median_px": 0.0094,
+        "p95_px": 0.0094
+      },
+      "corner_order": {
+        "alignments": {
+          "s0": 1
+        },
+        "canonical_fraction": 1.0,
+        "modal": "s0",
+        "modal_fraction": 1.0
+      },
+      "cpu_ms_mean": 0.0798025,
+      "cpu_over_wall": 1.0056645621463587,
+      "duplicates": 0,
+      "false_ids": 0,
+      "found": 1,
+      "frame_median_ms": {
+        "max_ms": 0.07935,
+        "mean_ms": 0.07935,
+        "min_ms": 0.07935,
+        "p50_ms": 0.07935,
+        "p95_ms": 0.07935,
+        "p99_ms": 0.07935,
+        "samples": 1
+      },
+      "frames": 1,
+      "frames_with_false_id": 0,
+      "gross_corner_errors": 0,
+      "latency": {
+        "max_ms": 0.088417,
+        "mean_ms": 0.079353,
+        "min_ms": 0.070289,
+        "p50_ms": 0.079353,
+        "p95_ms": 0.0875106,
+        "p99_ms": 0.08823571999999999,
+        "samples": 2
+      },
+      "recall": 1.0,
+      "resolution": "640x480",
+      "scenario": "all-corpus",
+      "tags": 1,
+      "unstable_frames": 0
+    },
+    {
+      "backend": "napa-mtp16",
+      "corner_error": {
+        "max_px": 0.0091,
+        "median_px": 0.0091,
+        "p95_px": 0.0091
+      },
+      "corner_order": {
+        "alignments": {
+          "s0": 1
+        },
+        "canonical_fraction": 1.0,
+        "modal": "s0",
+        "modal_fraction": 1.0
+      },
+      "cpu_ms_mean": 0.166723,
+      "cpu_over_wall": 1.0031739728211655,
+      "duplicates": 0,
+      "false_ids": 0,
+      "found": 1,
+      "frame_median_ms": {
+        "max_ms": 0.1662,
+        "mean_ms": 0.1662,
+        "min_ms": 0.1662,
+        "p50_ms": 0.1662,
+        "p95_ms": 0.1662,
+        "p99_ms": 0.1662,
+        "samples": 1
+      },
+      "frames": 1,
+      "frames_with_false_id": 0,
+      "gross_corner_errors": 0,
+      "latency": {
+        "max_ms": 0.17273,
+        "mean_ms": 0.1661955,
+        "min_ms": 0.159661,
+        "p50_ms": 0.1661955,
+        "p95_ms": 0.17207655,
+        "p99_ms": 0.17259931,
+        "samples": 2
+      },
+      "recall": 1.0,
+      "resolution": "640x480",
+      "scenario": "all-corpus",
+      "tags": 1,
+      "unstable_frames": 0
+    },
+    {
+      "backend": "opencv",
+      "corner_error": {
+        "max_px": 0.9575,
+        "median_px": 0.9575,
+        "p95_px": 0.9575
+      },
+      "corner_order": {
+        "alignments": {
+          "s0": 1
+        },
+        "canonical_fraction": 1.0,
+        "modal": "s0",
+        "modal_fraction": 1.0
+      },
+      "cpu_ms_mean": 1.1212325,
+      "cpu_over_wall": 1.0005264836912753,
+      "duplicates": 0,
+      "false_ids": 0,
+      "found": 1,
+      "frame_median_ms": {
+        "max_ms": 1.12064,
+        "mean_ms": 1.12064,
+        "min_ms": 1.12064,
+        "p50_ms": 1.12064,
+        "p95_ms": 1.12064,
+        "p99_ms": 1.12064,
+        "samples": 1
+      },
+      "frames": 1,
+      "frames_with_false_id": 0,
+      "gross_corner_errors": 0,
+      "latency": {
+        "max_ms": 1.123462,
+        "mean_ms": 1.1206425,
+        "min_ms": 1.117823,
+        "p50_ms": 1.1206425,
+        "p95_ms": 1.12318005,
+        "p99_ms": 1.12340561,
+        "samples": 2
+      },
+      "recall": 1.0,
+      "resolution": "640x480",
+      "scenario": "all-corpus",
+      "tags": 1,
+      "unstable_frames": 0
+    },
+    {
+      "backend": "opencv-aruco3",
+      "corner_error": {
+        "max_px": 0.9575,
+        "median_px": 0.9575,
+        "p95_px": 0.9575
+      },
+      "corner_order": {
+        "alignments": {
+          "s0": 1
+        },
+        "canonical_fraction": 1.0,
+        "modal": "s0",
+        "modal_fraction": 1.0
+      },
+      "cpu_ms_mean": 1.137495,
+      "cpu_over_wall": 1.0005422743063572,
+      "duplicates": 0,
+      "false_ids": 0,
+      "found": 1,
+      "frame_median_ms": {
+        "max_ms": 1.13688,
+        "mean_ms": 1.13688,
+        "min_ms": 1.13688,
+        "p50_ms": 1.13688,
+        "p95_ms": 1.13688,
+        "p99_ms": 1.13688,
+        "samples": 1
+      },
+      "frames": 1,
+      "frames_with_false_id": 0,
+      "gross_corner_errors": 0,
+      "latency": {
+        "max_ms": 1.167908,
+        "mean_ms": 1.1368785,
+        "min_ms": 1.105849,
+        "p50_ms": 1.1368785,
+        "p95_ms": 1.16480505,
+        "p99_ms": 1.16728741,
+        "samples": 2
+      },
+      "recall": 1.0,
+      "resolution": "640x480",
+      "scenario": "all-corpus",
+      "tags": 1,
+      "unstable_frames": 0
+    },
+    {
+      "backend": "opencv-aruco3-half16",
+      "corner_error": {
+        "max_px": 0.3516,
+        "median_px": 0.3516,
+        "p95_px": 0.3516
+      },
+      "corner_order": {
+        "alignments": {
+          "s0": 1
+        },
+        "canonical_fraction": 1.0,
+        "modal": "s0",
+        "modal_fraction": 1.0
+      },
+      "cpu_ms_mean": 0.469675,
+      "cpu_over_wall": 1.0011937371433444,
+      "duplicates": 0,
+      "false_ids": 0,
+      "found": 1,
+      "frame_median_ms": {
+        "max_ms": 0.46912,
+        "mean_ms": 0.46912,
+        "min_ms": 0.46912,
+        "p50_ms": 0.46912,
+        "p95_ms": 0.46912,
+        "p99_ms": 0.46912,
+        "samples": 1
+      },
+      "frames": 1,
+      "frames_with_false_id": 0,
+      "gross_corner_errors": 0,
+      "latency": {
+        "max_ms": 0.497645,
+        "mean_ms": 0.469115,
+        "min_ms": 0.440585,
+        "p50_ms": 0.469115,
+        "p95_ms": 0.494792,
+        "p99_ms": 0.4970744,
+        "samples": 2
+      },
+      "recall": 1.0,
+      "resolution": "640x480",
+      "scenario": "all-corpus",
+      "tags": 1,
+      "unstable_frames": 0
+    },
+    {
+      "backend": "opencv-aruco3-min32",
+      "corner_error": {
+        "max_px": 0.3516,
+        "median_px": 0.3516,
+        "p95_px": 0.3516
+      },
+      "corner_order": {
+        "alignments": {
+          "s0": 1
+        },
+        "canonical_fraction": 1.0,
+        "modal": "s0",
+        "modal_fraction": 1.0
+      },
+      "cpu_ms_mean": 0.420293,
+      "cpu_over_wall": 1.001254268742265,
+      "duplicates": 0,
+      "false_ids": 0,
+      "found": 1,
+      "frame_median_ms": {
+        "max_ms": 0.41977,
+        "mean_ms": 0.41977,
+        "min_ms": 0.41977,
+        "p50_ms": 0.41977,
+        "p95_ms": 0.41977,
+        "p99_ms": 0.41977,
+        "samples": 1
+      },
+      "frames": 1,
+      "frames_with_false_id": 0,
+      "gross_corner_errors": 0,
+      "latency": {
+        "max_ms": 0.423916,
+        "mean_ms": 0.41976650000000004,
+        "min_ms": 0.415617,
+        "p50_ms": 0.41976650000000004,
+        "p95_ms": 0.42350105,
+        "p99_ms": 0.42383301,
+        "samples": 2
+      },
+      "recall": 1.0,
+      "resolution": "640x480",
+      "scenario": "all-corpus",
+      "tags": 1,
+      "unstable_frames": 0
+    },
+    {
+      "backend": "opencv-subpix",
+      "corner_error": {
+        "max_px": 0.3908,
+        "median_px": 0.3908,
+        "p95_px": 0.3908
+      },
+      "corner_order": {
+        "alignments": {
+          "s0": 1
+        },
+        "canonical_fraction": 1.0,
+        "modal": "s0",
+        "modal_fraction": 1.0
+      },
+      "cpu_ms_mean": 1.1649035,
+      "cpu_over_wall": 1.0006077155393078,
+      "duplicates": 0,
+      "false_ids": 0,
+      "found": 1,
+      "frame_median_ms": {
+        "max_ms": 1.1642,
+        "mean_ms": 1.1642,
+        "min_ms": 1.1642,
+        "p50_ms": 1.1642,
+        "p95_ms": 1.1642,
+        "p99_ms": 1.1642,
+        "samples": 1
+      },
+      "frames": 1,
+      "frames_with_false_id": 0,
+      "gross_corner_errors": 0,
+      "latency": {
+        "max_ms": 1.179118,
+        "mean_ms": 1.164196,
+        "min_ms": 1.149274,
+        "p50_ms": 1.164196,
+        "p95_ms": 1.1776258000000002,
+        "p99_ms": 1.1788195600000002,
+        "samples": 2
+      },
+      "recall": 1.0,
+      "resolution": "640x480",
+      "scenario": "all-corpus",
+      "tags": 1,
+      "unstable_frames": 0
+    },
+    {
+      "backend": "rapidtag",
+      "corner_error": {
+        "max_px": null,
+        "median_px": null,
+        "p95_px": null
+      },
+      "corner_order": {
+        "alignments": {},
+        "canonical_fraction": null,
+        "modal": null,
+        "modal_fraction": null
+      },
+      "cpu_ms_mean": 1.046718,
+      "cpu_over_wall": 1.0003952004411718,
+      "duplicates": 0,
+      "false_ids": 0,
+      "found": 0,
+      "frame_median_ms": {
+        "max_ms": 1.0463,
+        "mean_ms": 1.0463,
+        "min_ms": 1.0463,
+        "p50_ms": 1.0463,
+        "p95_ms": 1.0463,
+        "p99_ms": 1.0463,
+        "samples": 1
+      },
+      "frames": 1,
+      "frames_with_false_id": 0,
+      "gross_corner_errors": 0,
+      "latency": {
+        "max_ms": 1.047936,
+        "mean_ms": 1.0463045,
+        "min_ms": 1.044673,
+        "p50_ms": 1.0463045,
+        "p95_ms": 1.0477728499999999,
+        "p99_ms": 1.04790337,
+        "samples": 2
+      },
+      "recall": 0.0,
+      "resolution": "640x480",
+      "scenario": "all-corpus",
+      "tags": 1,
+      "unstable_frames": 0
+    },
+    {
+      "backend": "rapidtag-subpix",
+      "corner_error": {
+        "max_px": null,
+        "median_px": null,
+        "p95_px": null
+      },
+      "corner_order": {
+        "alignments": {},
+        "canonical_fraction": null,
+        "modal": null,
+        "modal_fraction": null
+      },
+      "cpu_ms_mean": 1.032122,
+      "cpu_over_wall": 1.0004075791302038,
+      "duplicates": 0,
+      "false_ids": 0,
+      "found": 0,
+      "frame_median_ms": {
+        "max_ms": 1.0317,
+        "mean_ms": 1.0317,
+        "min_ms": 1.0317,
+        "p50_ms": 1.0317,
+        "p95_ms": 1.0317,
+        "p99_ms": 1.0317,
+        "samples": 1
+      },
+      "frames": 1,
+      "frames_with_false_id": 0,
+      "gross_corner_errors": 0,
+      "latency": {
+        "max_ms": 1.080525,
+        "mean_ms": 1.0317015,
+        "min_ms": 0.982878,
+        "p50_ms": 1.0317015,
+        "p95_ms": 1.07564265,
+        "p99_ms": 1.07954853,
+        "samples": 2
+      },
+      "recall": 0.0,
+      "resolution": "640x480",
+      "scenario": "all-corpus",
+      "tags": 1,
+      "unstable_frames": 0
+    },
+    {
+      "backend": "wpilib-d2",
+      "corner_error": {
+        "max_px": 0.0911,
+        "median_px": 0.0911,
+        "p95_px": 0.0911
+      },
+      "corner_order": {
+        "alignments": {
+          "rs2": 1
+        },
+        "canonical_fraction": 0.0,
+        "modal": "rs2",
+        "modal_fraction": 1.0
+      },
+      "cpu_ms_mean": 4.337316,
+      "cpu_over_wall": 1.0002386837937856,
+      "duplicates": 0,
+      "false_ids": 0,
+      "found": 1,
+      "frame_median_ms": {
+        "max_ms": 4.33628,
+        "mean_ms": 4.33628,
+        "min_ms": 4.33628,
+        "p50_ms": 4.33628,
+        "p95_ms": 4.33628,
+        "p99_ms": 4.33628,
+        "samples": 1
+      },
+      "frames": 1,
+      "frames_with_false_id": 0,
+      "gross_corner_errors": 0,
+      "latency": {
+        "max_ms": 4.336587,
+        "mean_ms": 4.336281,
+        "min_ms": 4.335975,
+        "p50_ms": 4.336281,
+        "p95_ms": 4.3365564,
+        "p99_ms": 4.33658088,
+        "samples": 2
+      },
+      "recall": 1.0,
+      "resolution": "640x480",
+      "scenario": "all-corpus",
+      "tags": 1,
+      "unstable_frames": 0
+    },
+    {
+      "backend": "apriltag3-d1",
+      "corner_error": {
+        "max_px": 0.0268,
+        "median_px": 0.0268,
+        "p95_px": 0.0268
+      },
+      "corner_order": {
+        "alignments": {
+          "rs2": 1
+        },
+        "canonical_fraction": 0.0,
+        "modal": "rs2",
+        "modal_fraction": 1.0
+      },
+      "cpu_ms_mean": 18.462875,
+      "cpu_over_wall": 0.9986932732443674,
+      "duplicates": 0,
+      "false_ids": 0,
+      "found": 1,
+      "frame_median_ms": {
+        "max_ms": 18.48703,
+        "mean_ms": 18.48703,
+        "min_ms": 18.48703,
+        "p50_ms": 18.48703,
+        "p95_ms": 18.48703,
+        "p99_ms": 18.48703,
+        "samples": 1
+      },
+      "frames": 1,
+      "frames_with_false_id": 0,
+      "gross_corner_errors": 0,
+      "latency": {
+        "max_ms": 18.49957,
+        "mean_ms": 18.487032499999998,
+        "min_ms": 18.474495,
+        "p50_ms": 18.487032499999998,
+        "p95_ms": 18.49831625,
+        "p99_ms": 18.49931925,
+        "samples": 2
+      },
+      "recall": 1.0,
+      "resolution": "640x480",
+      "scenario": "one-tag",
+      "tags": 1,
+      "unstable_frames": 0
+    },
+    {
+      "backend": "apriltag3-d2",
+      "corner_error": {
+        "max_px": 0.0246,
+        "median_px": 0.0246,
+        "p95_px": 0.0246
+      },
+      "corner_order": {
+        "alignments": {
+          "rs2": 1
+        },
+        "canonical_fraction": 0.0,
+        "modal": "rs2",
+        "modal_fraction": 1.0
+      },
+      "cpu_ms_mean": 4.993932,
+      "cpu_over_wall": 1.000109044210969,
+      "duplicates": 0,
+      "false_ids": 0,
+      "found": 1,
+      "frame_median_ms": {
+        "max_ms": 4.99339,
+        "mean_ms": 4.99339,
+        "min_ms": 4.99339,
+        "p50_ms": 4.99339,
+        "p95_ms": 4.99339,
+        "p99_ms": 4.99339,
+        "samples": 1
+      },
+      "frames": 1,
+      "frames_with_false_id": 0,
+      "gross_corner_errors": 0,
+      "latency": {
+        "max_ms": 5.043899,
+        "mean_ms": 4.9933875,
+        "min_ms": 4.942876,
+        "p50_ms": 4.9933875,
+        "p95_ms": 5.03884785,
+        "p99_ms": 5.042888769999999,
+        "samples": 2
+      },
+      "recall": 1.0,
+      "resolution": "640x480",
+      "scenario": "one-tag",
+      "tags": 1,
+      "unstable_frames": 0
+    },
+    {
+      "backend": "aruco-nano",
+      "corner_error": {
+        "max_px": 0.0284,
+        "median_px": 0.0284,
+        "p95_px": 0.0284
+      },
+      "corner_order": {
+        "alignments": {
+          "s0": 1
+        },
+        "canonical_fraction": 1.0,
+        "modal": "s0",
+        "modal_fraction": 1.0
+      },
+      "cpu_ms_mean": 0.4276345,
+      "cpu_over_wall": 1.0014003486821383,
+      "duplicates": 0,
+      "false_ids": 0,
+      "found": 1,
+      "frame_median_ms": {
+        "max_ms": 0.42704,
+        "mean_ms": 0.42704,
+        "min_ms": 0.42704,
+        "p50_ms": 0.42704,
+        "p95_ms": 0.42704,
+        "p99_ms": 0.42704,
+        "samples": 1
+      },
+      "frames": 1,
+      "frames_with_false_id": 0,
+      "gross_corner_errors": 0,
+      "latency": {
+        "max_ms": 0.455542,
+        "mean_ms": 0.42703650000000004,
+        "min_ms": 0.398531,
+        "p50_ms": 0.42703650000000004,
+        "p95_ms": 0.45269145,
+        "p99_ms": 0.45497189,
+        "samples": 2
+      },
+      "recall": 1.0,
+      "resolution": "640x480",
+      "scenario": "one-tag",
+      "tags": 1,
+      "unstable_frames": 0
+    },
+    {
+      "backend": "locus",
+      "corner_error": {
+        "max_px": 0.0336,
+        "median_px": 0.0336,
+        "p95_px": 0.0336
+      },
+      "corner_order": {
+        "alignments": {
+          "s0": 1
+        },
+        "canonical_fraction": 1.0,
+        "modal": "s0",
+        "modal_fraction": 1.0
+      },
+      "cpu_ms_mean": 3.241617,
+      "cpu_over_wall": 0.9937216775402943,
+      "duplicates": 0,
+      "false_ids": 0,
+      "found": 1,
+      "frame_median_ms": {
+        "max_ms": 3.2621,
+        "mean_ms": 3.2621,
+        "min_ms": 3.2621,
+        "p50_ms": 3.2621,
+        "p95_ms": 3.2621,
+        "p99_ms": 3.2621,
+        "samples": 1
+      },
+      "frames": 1,
+      "frames_with_false_id": 0,
+      "gross_corner_errors": 0,
+      "latency": {
+        "max_ms": 3.438596,
+        "mean_ms": 3.2620975000000003,
+        "min_ms": 3.085599,
+        "p50_ms": 3.2620975000000003,
+        "p95_ms": 3.42094615,
+        "p99_ms": 3.4350660299999998,
+        "samples": 2
+      },
+      "recall": 1.0,
+      "resolution": "640x480",
+      "scenario": "one-tag",
+      "tags": 1,
+      "unstable_frames": 0
+    },
+    {
+      "backend": "locus-d2",
+      "corner_error": {
+        "max_px": 0.0336,
+        "median_px": 0.0336,
+        "p95_px": 0.0336
+      },
+      "corner_order": {
+        "alignments": {
+          "s0": 1
+        },
+        "canonical_fraction": 1.0,
+        "modal": "s0",
+        "modal_fraction": 1.0
+      },
+      "cpu_ms_mean": 1.4360885,
+      "cpu_over_wall": 0.9899201185073669,
+      "duplicates": 0,
+      "false_ids": 0,
+      "found": 1,
+      "frame_median_ms": {
+        "max_ms": 1.45071,
+        "mean_ms": 1.45071,
+        "min_ms": 1.45071,
+        "p50_ms": 1.45071,
+        "p95_ms": 1.45071,
+        "p99_ms": 1.45071,
+        "samples": 1
+      },
+      "frames": 1,
+      "frames_with_false_id": 0,
+      "gross_corner_errors": 0,
+      "latency": {
+        "max_ms": 1.464159,
+        "mean_ms": 1.4507115000000002,
+        "min_ms": 1.437264,
+        "p50_ms": 1.4507115000000002,
+        "p95_ms": 1.46281425,
+        "p99_ms": 1.46389005,
+        "samples": 2
+      },
+      "recall": 1.0,
+      "resolution": "640x480",
+      "scenario": "one-tag",
+      "tags": 1,
+      "unstable_frames": 0
+    },
+    {
+      "backend": "napa",
+      "corner_error": {
+        "max_px": 0.0094,
+        "median_px": 0.0094,
+        "p95_px": 0.0094
+      },
+      "corner_order": {
+        "alignments": {
+          "s0": 1
+        },
+        "canonical_fraction": 1.0,
+        "modal": "s0",
+        "modal_fraction": 1.0
+      },
+      "cpu_ms_mean": 0.0798025,
+      "cpu_over_wall": 1.0056645621463587,
+      "duplicates": 0,
+      "false_ids": 0,
+      "found": 1,
+      "frame_median_ms": {
+        "max_ms": 0.07935,
+        "mean_ms": 0.07935,
+        "min_ms": 0.07935,
+        "p50_ms": 0.07935,
+        "p95_ms": 0.07935,
+        "p99_ms": 0.07935,
+        "samples": 1
+      },
+      "frames": 1,
+      "frames_with_false_id": 0,
+      "gross_corner_errors": 0,
+      "latency": {
+        "max_ms": 0.088417,
+        "mean_ms": 0.079353,
+        "min_ms": 0.070289,
+        "p50_ms": 0.079353,
+        "p95_ms": 0.0875106,
+        "p99_ms": 0.08823571999999999,
+        "samples": 2
+      },
+      "recall": 1.0,
+      "resolution": "640x480",
+      "scenario": "one-tag",
+      "tags": 1,
+      "unstable_frames": 0
+    },
+    {
+      "backend": "napa-mtp16",
+      "corner_error": {
+        "max_px": 0.0091,
+        "median_px": 0.0091,
+        "p95_px": 0.0091
+      },
+      "corner_order": {
+        "alignments": {
+          "s0": 1
+        },
+        "canonical_fraction": 1.0,
+        "modal": "s0",
+        "modal_fraction": 1.0
+      },
+      "cpu_ms_mean": 0.166723,
+      "cpu_over_wall": 1.0031739728211655,
+      "duplicates": 0,
+      "false_ids": 0,
+      "found": 1,
+      "frame_median_ms": {
+        "max_ms": 0.1662,
+        "mean_ms": 0.1662,
+        "min_ms": 0.1662,
+        "p50_ms": 0.1662,
+        "p95_ms": 0.1662,
+        "p99_ms": 0.1662,
+        "samples": 1
+      },
+      "frames": 1,
+      "frames_with_false_id": 0,
+      "gross_corner_errors": 0,
+      "latency": {
+        "max_ms": 0.17273,
+        "mean_ms": 0.1661955,
+        "min_ms": 0.159661,
+        "p50_ms": 0.1661955,
+        "p95_ms": 0.17207655,
+        "p99_ms": 0.17259931,
+        "samples": 2
+      },
+      "recall": 1.0,
+      "resolution": "640x480",
+      "scenario": "one-tag",
+      "tags": 1,
+      "unstable_frames": 0
+    },
+    {
+      "backend": "opencv",
+      "corner_error": {
+        "max_px": 0.9575,
+        "median_px": 0.9575,
+        "p95_px": 0.9575
+      },
+      "corner_order": {
+        "alignments": {
+          "s0": 1
+        },
+        "canonical_fraction": 1.0,
+        "modal": "s0",
+        "modal_fraction": 1.0
+      },
+      "cpu_ms_mean": 1.1212325,
+      "cpu_over_wall": 1.0005264836912753,
+      "duplicates": 0,
+      "false_ids": 0,
+      "found": 1,
+      "frame_median_ms": {
+        "max_ms": 1.12064,
+        "mean_ms": 1.12064,
+        "min_ms": 1.12064,
+        "p50_ms": 1.12064,
+        "p95_ms": 1.12064,
+        "p99_ms": 1.12064,
+        "samples": 1
+      },
+      "frames": 1,
+      "frames_with_false_id": 0,
+      "gross_corner_errors": 0,
+      "latency": {
+        "max_ms": 1.123462,
+        "mean_ms": 1.1206425,
+        "min_ms": 1.117823,
+        "p50_ms": 1.1206425,
+        "p95_ms": 1.12318005,
+        "p99_ms": 1.12340561,
+        "samples": 2
+      },
+      "recall": 1.0,
+      "resolution": "640x480",
+      "scenario": "one-tag",
+      "tags": 1,
+      "unstable_frames": 0
+    },
+    {
+      "backend": "opencv-aruco3",
+      "corner_error": {
+        "max_px": 0.9575,
+        "median_px": 0.9575,
+        "p95_px": 0.9575
+      },
+      "corner_order": {
+        "alignments": {
+          "s0": 1
+        },
+        "canonical_fraction": 1.0,
+        "modal": "s0",
+        "modal_fraction": 1.0
+      },
+      "cpu_ms_mean": 1.137495,
+      "cpu_over_wall": 1.0005422743063572,
+      "duplicates": 0,
+      "false_ids": 0,
+      "found": 1,
+      "frame_median_ms": {
+        "max_ms": 1.13688,
+        "mean_ms": 1.13688,
+        "min_ms": 1.13688,
+        "p50_ms": 1.13688,
+        "p95_ms": 1.13688,
+        "p99_ms": 1.13688,
+        "samples": 1
+      },
+      "frames": 1,
+      "frames_with_false_id": 0,
+      "gross_corner_errors": 0,
+      "latency": {
+        "max_ms": 1.167908,
+        "mean_ms": 1.1368785,
+        "min_ms": 1.105849,
+        "p50_ms": 1.1368785,
+        "p95_ms": 1.16480505,
+        "p99_ms": 1.16728741,
+        "samples": 2
+      },
+      "recall": 1.0,
+      "resolution": "640x480",
+      "scenario": "one-tag",
+      "tags": 1,
+      "unstable_frames": 0
+    },
+    {
+      "backend": "opencv-aruco3-half16",
+      "corner_error": {
+        "max_px": 0.3516,
+        "median_px": 0.3516,
+        "p95_px": 0.3516
+      },
+      "corner_order": {
+        "alignments": {
+          "s0": 1
+        },
+        "canonical_fraction": 1.0,
+        "modal": "s0",
+        "modal_fraction": 1.0
+      },
+      "cpu_ms_mean": 0.469675,
+      "cpu_over_wall": 1.0011937371433444,
+      "duplicates": 0,
+      "false_ids": 0,
+      "found": 1,
+      "frame_median_ms": {
+        "max_ms": 0.46912,
+        "mean_ms": 0.46912,
+        "min_ms": 0.46912,
+        "p50_ms": 0.46912,
+        "p95_ms": 0.46912,
+        "p99_ms": 0.46912,
+        "samples": 1
+      },
+      "frames": 1,
+      "frames_with_false_id": 0,
+      "gross_corner_errors": 0,
+      "latency": {
+        "max_ms": 0.497645,
+        "mean_ms": 0.469115,
+        "min_ms": 0.440585,
+        "p50_ms": 0.469115,
+        "p95_ms": 0.494792,
+        "p99_ms": 0.4970744,
+        "samples": 2
+      },
+      "recall": 1.0,
+      "resolution": "640x480",
+      "scenario": "one-tag",
+      "tags": 1,
+      "unstable_frames": 0
+    },
+    {
+      "backend": "opencv-aruco3-min32",
+      "corner_error": {
+        "max_px": 0.3516,
+        "median_px": 0.3516,
+        "p95_px": 0.3516
+      },
+      "corner_order": {
+        "alignments": {
+          "s0": 1
+        },
+        "canonical_fraction": 1.0,
+        "modal": "s0",
+        "modal_fraction": 1.0
+      },
+      "cpu_ms_mean": 0.420293,
+      "cpu_over_wall": 1.001254268742265,
+      "duplicates": 0,
+      "false_ids": 0,
+      "found": 1,
+      "frame_median_ms": {
+        "max_ms": 0.41977,
+        "mean_ms": 0.41977,
+        "min_ms": 0.41977,
+        "p50_ms": 0.41977,
+        "p95_ms": 0.41977,
+        "p99_ms": 0.41977,
+        "samples": 1
+      },
+      "frames": 1,
+      "frames_with_false_id": 0,
+      "gross_corner_errors": 0,
+      "latency": {
+        "max_ms": 0.423916,
+        "mean_ms": 0.41976650000000004,
+        "min_ms": 0.415617,
+        "p50_ms": 0.41976650000000004,
+        "p95_ms": 0.42350105,
+        "p99_ms": 0.42383301,
+        "samples": 2
+      },
+      "recall": 1.0,
+      "resolution": "640x480",
+      "scenario": "one-tag",
+      "tags": 1,
+      "unstable_frames": 0
+    },
+    {
+      "backend": "opencv-subpix",
+      "corner_error": {
+        "max_px": 0.3908,
+        "median_px": 0.3908,
+        "p95_px": 0.3908
+      },
+      "corner_order": {
+        "alignments": {
+          "s0": 1
+        },
+        "canonical_fraction": 1.0,
+        "modal": "s0",
+        "modal_fraction": 1.0
+      },
+      "cpu_ms_mean": 1.1649035,
+      "cpu_over_wall": 1.0006077155393078,
+      "duplicates": 0,
+      "false_ids": 0,
+      "found": 1,
+      "frame_median_ms": {
+        "max_ms": 1.1642,
+        "mean_ms": 1.1642,
+        "min_ms": 1.1642,
+        "p50_ms": 1.1642,
+        "p95_ms": 1.1642,
+        "p99_ms": 1.1642,
+        "samples": 1
+      },
+      "frames": 1,
+      "frames_with_false_id": 0,
+      "gross_corner_errors": 0,
+      "latency": {
+        "max_ms": 1.179118,
+        "mean_ms": 1.164196,
+        "min_ms": 1.149274,
+        "p50_ms": 1.164196,
+        "p95_ms": 1.1776258000000002,
+        "p99_ms": 1.1788195600000002,
+        "samples": 2
+      },
+      "recall": 1.0,
+      "resolution": "640x480",
+      "scenario": "one-tag",
+      "tags": 1,
+      "unstable_frames": 0
+    },
+    {
+      "backend": "rapidtag",
+      "corner_error": {
+        "max_px": null,
+        "median_px": null,
+        "p95_px": null
+      },
+      "corner_order": {
+        "alignments": {},
+        "canonical_fraction": null,
+        "modal": null,
+        "modal_fraction": null
+      },
+      "cpu_ms_mean": 1.046718,
+      "cpu_over_wall": 1.0003952004411718,
+      "duplicates": 0,
+      "false_ids": 0,
+      "found": 0,
+      "frame_median_ms": {
+        "max_ms": 1.0463,
+        "mean_ms": 1.0463,
+        "min_ms": 1.0463,
+        "p50_ms": 1.0463,
+        "p95_ms": 1.0463,
+        "p99_ms": 1.0463,
+        "samples": 1
+      },
+      "frames": 1,
+      "frames_with_false_id": 0,
+      "gross_corner_errors": 0,
+      "latency": {
+        "max_ms": 1.047936,
+        "mean_ms": 1.0463045,
+        "min_ms": 1.044673,
+        "p50_ms": 1.0463045,
+        "p95_ms": 1.0477728499999999,
+        "p99_ms": 1.04790337,
+        "samples": 2
+      },
+      "recall": 0.0,
+      "resolution": "640x480",
+      "scenario": "one-tag",
+      "tags": 1,
+      "unstable_frames": 0
+    },
+    {
+      "backend": "rapidtag-subpix",
+      "corner_error": {
+        "max_px": null,
+        "median_px": null,
+        "p95_px": null
+      },
+      "corner_order": {
+        "alignments": {},
+        "canonical_fraction": null,
+        "modal": null,
+        "modal_fraction": null
+      },
+      "cpu_ms_mean": 1.032122,
+      "cpu_over_wall": 1.0004075791302038,
+      "duplicates": 0,
+      "false_ids": 0,
+      "found": 0,
+      "frame_median_ms": {
+        "max_ms": 1.0317,
+        "mean_ms": 1.0317,
+        "min_ms": 1.0317,
+        "p50_ms": 1.0317,
+        "p95_ms": 1.0317,
+        "p99_ms": 1.0317,
+        "samples": 1
+      },
+      "frames": 1,
+      "frames_with_false_id": 0,
+      "gross_corner_errors": 0,
+      "latency": {
+        "max_ms": 1.080525,
+        "mean_ms": 1.0317015,
+        "min_ms": 0.982878,
+        "p50_ms": 1.0317015,
+        "p95_ms": 1.07564265,
+        "p99_ms": 1.07954853,
+        "samples": 2
+      },
+      "recall": 0.0,
+      "resolution": "640x480",
+      "scenario": "one-tag",
+      "tags": 1,
+      "unstable_frames": 0
+    },
+    {
+      "backend": "wpilib-d2",
+      "corner_error": {
+        "max_px": 0.0911,
+        "median_px": 0.0911,
+        "p95_px": 0.0911
+      },
+      "corner_order": {
+        "alignments": {
+          "rs2": 1
+        },
+        "canonical_fraction": 0.0,
+        "modal": "rs2",
+        "modal_fraction": 1.0
+      },
+      "cpu_ms_mean": 4.337316,
+      "cpu_over_wall": 1.0002386837937856,
+      "duplicates": 0,
+      "false_ids": 0,
+      "found": 1,
+      "frame_median_ms": {
+        "max_ms": 4.33628,
+        "mean_ms": 4.33628,
+        "min_ms": 4.33628,
+        "p50_ms": 4.33628,
+        "p95_ms": 4.33628,
+        "p99_ms": 4.33628,
+        "samples": 1
+      },
+      "frames": 1,
+      "frames_with_false_id": 0,
+      "gross_corner_errors": 0,
+      "latency": {
+        "max_ms": 4.336587,
+        "mean_ms": 4.336281,
+        "min_ms": 4.335975,
+        "p50_ms": 4.336281,
+        "p95_ms": 4.3365564,
+        "p99_ms": 4.33658088,
+        "samples": 2
+      },
+      "recall": 1.0,
+      "resolution": "640x480",
+      "scenario": "one-tag",
+      "tags": 1,
+      "unstable_frames": 0
+    }
+  ],
+  "run_config": {
+    "backends": [
+      "napa",
+      "napa-mtp16",
+      "wpilib-d2",
+      "apriltag3-d2",
+      "apriltag3-d1",
+      "locus",
+      "locus-d2",
+      "opencv",
+      "opencv-subpix",
+      "opencv-aruco3",
+      "opencv-aruco3-min32",
+      "opencv-aruco3-half16",
+      "aruco-nano",
+      "rapidtag",
+      "rapidtag-subpix"
+    ],
+    "command": "latency",
+    "frames": 1,
+    "only_frames": null,
+    "order_seed": null,
+    "range_cases": 0,
+    "real_images": [],
+    "repetitions": 2,
+    "resolutions": [
+      "(640, 480)"
+    ],
+    "scenarios": [
+      "one-tag"
+    ],
+    "seed": 2468,
+    "stress": [],
+    "stress_frames": 0,
+    "threads": 1,
+    "warmup": 1
+  },
+  "scenario_descriptions": {
+    "blur": "Gaussian defocus, sigma 0.8-2.0 px",
+    "busy-background": "1-3 tags on text, shapes, or checkerboards",
+    "clutter-only": "Shapes, text, checkerboards, or natural texture with no tag",
+    "dark-background": "1-3 tags on a dark or mid-grey background, 36-140 px",
+    "decoys": "Black-bordered squares with random payloads; none is a valid code",
+    "empty": "Uniform frame at a random brightness, light noise",
+    "frame-edge": "1-3 tags whose quiet zone touches the frame edge",
+    "jpeg": "JPEG compression at quality 25-70",
+    "large-tags": "One tag filling 45-80% of the frame height",
+    "low-contrast": "Black and white only 40-90 grey levels apart",
+    "many-tags": "2-12 tags of mixed sizes on mixed backgrounds",
+    "motion-blur": "Linear motion blur, 3-11 px (odd lengths) in any direction",
+    "noise": "Gaussian sensor noise, sigma 4-14 grey levels",
+    "noise-free": "1-3 tags on a plain background with no sensor noise at all",
+    "one-tag": "One tag, any angle, mild tilt, uniform background",
+    "overexposed": "Bright frame: gain 1.3-1.8 with clipping",
+    "small-tags": "1-4 tags with a 32-53 px black square",
+    "steep-angle": "1-3 tags tilted 40-65 degrees away from the camera",
+    "stress-clutter-noisy": "No tags: shapes, text, checkerboards, or texture with sigma 6-12 noise.",
+    "stress-dense": "Up to 30-80 non-overlapping tags of 36-80 px (scaled), on mixed backgrounds.",
+    "stress-heavy-noise": "Sensor noise sigma 15-30 grey levels, beyond the corpus's 4-14.",
+    "stress-tiny": "1-4 tags with a 12-31 px black square: below NAPA's default min_tag_px of 32.",
+    "underexposed": "Dark frame: everything scaled to 15-35% brightness, then noise",
+    "uneven-light": "Lighting gradient (30-60% at the dark end) plus vignetting"
+  },
+  "schema_version": 1,
+  "skipped_backends": {},
+  "speedups": [
+    {
+      "frames": 1,
+      "frames_baseline_slower": 0,
+      "median_speedup": 232.98084436042848,
+      "min_speedup": 232.98084436042848,
+      "p5_speedup": 232.98084436042848,
+      "resolution": "all",
+      "scenario": "all",
+      "versus": "apriltag3-d1"
+    },
+    {
+      "frames": 1,
+      "frames_baseline_slower": 0,
+      "median_speedup": 62.928670447384995,
+      "min_speedup": 62.928670447384995,
+      "p5_speedup": 62.928670447384995,
+      "resolution": "all",
+      "scenario": "all",
+      "versus": "apriltag3-d2"
+    },
+    {
+      "frames": 1,
+      "frames_baseline_slower": 0,
+      "median_speedup": 5.3817265280403275,
+      "min_speedup": 5.3817265280403275,
+      "p5_speedup": 5.3817265280403275,
+      "resolution": "all",
+      "scenario": "all",
+      "versus": "aruco-nano"
+    },
+    {
+      "frames": 1,
+      "frames_baseline_slower": 0,
+      "median_speedup": 41.110270951480786,
+      "min_speedup": 41.110270951480786,
+      "p5_speedup": 41.110270951480786,
+      "resolution": "all",
+      "scenario": "all",
+      "versus": "locus"
+    },
+    {
+      "frames": 1,
+      "frames_baseline_slower": 0,
+      "median_speedup": 18.28241965973535,
+      "min_speedup": 18.28241965973535,
+      "p5_speedup": 18.28241965973535,
+      "resolution": "all",
+      "scenario": "all",
+      "versus": "locus-d2"
+    },
+    {
+      "frames": 1,
+      "frames_baseline_slower": 0,
+      "median_speedup": 2.094517958412098,
+      "min_speedup": 2.094517958412098,
+      "p5_speedup": 2.094517958412098,
+      "resolution": "all",
+      "scenario": "all",
+      "versus": "napa-mtp16"
+    },
+    {
+      "frames": 1,
+      "frames_baseline_slower": 0,
+      "median_speedup": 14.122747321991179,
+      "min_speedup": 14.122747321991179,
+      "p5_speedup": 14.122747321991179,
+      "resolution": "all",
+      "scenario": "all",
+      "versus": "opencv"
+    },
+    {
+      "frames": 1,
+      "frames_baseline_slower": 0,
+      "median_speedup": 14.327410207939506,
+      "min_speedup": 14.327410207939506,
+      "p5_speedup": 14.327410207939506,
+      "resolution": "all",
+      "scenario": "all",
+      "versus": "opencv-aruco3"
+    },
+    {
+      "frames": 1,
+      "frames_baseline_slower": 0,
+      "median_speedup": 5.912035286704473,
+      "min_speedup": 5.912035286704473,
+      "p5_speedup": 5.912035286704473,
+      "resolution": "all",
+      "scenario": "all",
+      "versus": "opencv-aruco3-half16"
+    },
+    {
+      "frames": 1,
+      "frames_baseline_slower": 0,
+      "median_speedup": 5.290107120352866,
+      "min_speedup": 5.290107120352866,
+      "p5_speedup": 5.290107120352866,
+      "resolution": "all",
+      "scenario": "all",
+      "versus": "opencv-aruco3-min32"
+    },
+    {
+      "frames": 1,
+      "frames_baseline_slower": 0,
+      "median_speedup": 14.671707624448644,
+      "min_speedup": 14.671707624448644,
+      "p5_speedup": 14.671707624448644,
+      "resolution": "all",
+      "scenario": "all",
+      "versus": "opencv-subpix"
+    },
+    {
+      "frames": 1,
+      "frames_baseline_slower": 0,
+      "median_speedup": 13.18588531821046,
+      "min_speedup": 13.18588531821046,
+      "p5_speedup": 13.18588531821046,
+      "resolution": "all",
+      "scenario": "all",
+      "versus": "rapidtag"
+    },
+    {
+      "frames": 1,
+      "frames_baseline_slower": 0,
+      "median_speedup": 13.001890359168241,
+      "min_speedup": 13.001890359168241,
+      "p5_speedup": 13.001890359168241,
+      "resolution": "all",
+      "scenario": "all",
+      "versus": "rapidtag-subpix"
+    },
+    {
+      "frames": 1,
+      "frames_baseline_slower": 0,
+      "median_speedup": 54.64751102709515,
+      "min_speedup": 54.64751102709515,
+      "p5_speedup": 54.64751102709515,
+      "resolution": "all",
+      "scenario": "all",
+      "versus": "wpilib-d2"
+    },
+    {
+      "frames": 1,
+      "frames_baseline_slower": 0,
+      "median_speedup": 232.98084436042848,
+      "min_speedup": 232.98084436042848,
+      "p5_speedup": 232.98084436042848,
+      "resolution": "640x480",
+      "scenario": "one-tag",
+      "versus": "apriltag3-d1"
+    },
+    {
+      "frames": 1,
+      "frames_baseline_slower": 0,
+      "median_speedup": 62.928670447384995,
+      "min_speedup": 62.928670447384995,
+      "p5_speedup": 62.928670447384995,
+      "resolution": "640x480",
+      "scenario": "one-tag",
+      "versus": "apriltag3-d2"
+    },
+    {
+      "frames": 1,
+      "frames_baseline_slower": 0,
+      "median_speedup": 5.3817265280403275,
+      "min_speedup": 5.3817265280403275,
+      "p5_speedup": 5.3817265280403275,
+      "resolution": "640x480",
+      "scenario": "one-tag",
+      "versus": "aruco-nano"
+    },
+    {
+      "frames": 1,
+      "frames_baseline_slower": 0,
+      "median_speedup": 41.110270951480786,
+      "min_speedup": 41.110270951480786,
+      "p5_speedup": 41.110270951480786,
+      "resolution": "640x480",
+      "scenario": "one-tag",
+      "versus": "locus"
+    },
+    {
+      "frames": 1,
+      "frames_baseline_slower": 0,
+      "median_speedup": 18.28241965973535,
+      "min_speedup": 18.28241965973535,
+      "p5_speedup": 18.28241965973535,
+      "resolution": "640x480",
+      "scenario": "one-tag",
+      "versus": "locus-d2"
+    },
+    {
+      "frames": 1,
+      "frames_baseline_slower": 0,
+      "median_speedup": 2.094517958412098,
+      "min_speedup": 2.094517958412098,
+      "p5_speedup": 2.094517958412098,
+      "resolution": "640x480",
+      "scenario": "one-tag",
+      "versus": "napa-mtp16"
+    },
+    {
+      "frames": 1,
+      "frames_baseline_slower": 0,
+      "median_speedup": 14.122747321991179,
+      "min_speedup": 14.122747321991179,
+      "p5_speedup": 14.122747321991179,
+      "resolution": "640x480",
+      "scenario": "one-tag",
+      "versus": "opencv"
+    },
+    {
+      "frames": 1,
+      "frames_baseline_slower": 0,
+      "median_speedup": 14.327410207939506,
+      "min_speedup": 14.327410207939506,
+      "p5_speedup": 14.327410207939506,
+      "resolution": "640x480",
+      "scenario": "one-tag",
+      "versus": "opencv-aruco3"
+    },
+    {
+      "frames": 1,
+      "frames_baseline_slower": 0,
+      "median_speedup": 5.912035286704473,
+      "min_speedup": 5.912035286704473,
+      "p5_speedup": 5.912035286704473,
+      "resolution": "640x480",
+      "scenario": "one-tag",
+      "versus": "opencv-aruco3-half16"
+    },
+    {
+      "frames": 1,
+      "frames_baseline_slower": 0,
+      "median_speedup": 5.290107120352866,
+      "min_speedup": 5.290107120352866,
+      "p5_speedup": 5.290107120352866,
+      "resolution": "640x480",
+      "scenario": "one-tag",
+      "versus": "opencv-aruco3-min32"
+    },
+    {
+      "frames": 1,
+      "frames_baseline_slower": 0,
+      "median_speedup": 14.671707624448644,
+      "min_speedup": 14.671707624448644,
+      "p5_speedup": 14.671707624448644,
+      "resolution": "640x480",
+      "scenario": "one-tag",
+      "versus": "opencv-subpix"
+    },
+    {
+      "frames": 1,
+      "frames_baseline_slower": 0,
+      "median_speedup": 13.18588531821046,
+      "min_speedup": 13.18588531821046,
+      "p5_speedup": 13.18588531821046,
+      "resolution": "640x480",
+      "scenario": "one-tag",
+      "versus": "rapidtag"
+    },
+    {
+      "frames": 1,
+      "frames_baseline_slower": 0,
+      "median_speedup": 13.001890359168241,
+      "min_speedup": 13.001890359168241,
+      "p5_speedup": 13.001890359168241,
+      "resolution": "640x480",
+      "scenario": "one-tag",
+      "versus": "rapidtag-subpix"
+    },
+    {
+      "frames": 1,
+      "frames_baseline_slower": 0,
+      "median_speedup": 54.64751102709515,
+      "min_speedup": 54.64751102709515,
+      "p5_speedup": 54.64751102709515,
+      "resolution": "640x480",
+      "scenario": "one-tag",
+      "versus": "wpilib-d2"
+    }
+  ],
+  "started_at_utc": "2026-10-30T06:42:23.214226+00:00",
+  "thread_env": {
+    "OMP_NUM_THREADS": "1",
+    "OPENBLAS_NUM_THREADS": "1",
+    "RAPIDTAG_CORES": "2",
+    "RAYON_NUM_THREADS": "1"
+  },
+  "threads_observed": {
+    "threads_after_first_frame": [
+      {
+        "cpu_s": 0.24,
+        "cpus": [
+          2
+        ],
+        "name": "python",
+        "tid": 2746843
+      },
+      {
+        "cpu_s": 0.0,
+        "cpus": [
+          2
+        ],
+        "name": "python",
+        "tid": 2746851
+      },
+      {
+        "cpu_s": 0.0,
+        "cpus": [
+          2
+        ],
+        "name": "locus-detect-0",
+        "tid": 2746853
+      },
+      {
+        "cpu_s": 0.0,
+        "cpus": [
+          2
+        ],
+        "name": "locus-detect-0",
+        "tid": 2746854
+      }
+    ],
+    "threads_end": [
+      {
+        "cpu_s": 0.35,
+        "cpus": [
+          2
+        ],
+        "name": "python",
+        "tid": 2746843
+      },
+      {
+        "cpu_s": 0.0,
+        "cpus": [
+          2
+        ],
+        "name": "python",
+        "tid": 2746851
+      },
+      {
+        "cpu_s": 0.01,
+        "cpus": [
+          2
+        ],
+        "name": "locus-detect-0",
+        "tid": 2746853
+      },
+      {
+        "cpu_s": 0.0,
+        "cpus": [
+          2
+        ],
+        "name": "locus-detect-0",
+        "tid": 2746854
+      }
+    ]
+  }
+}

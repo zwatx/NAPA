@@ -1,0 +1,107 @@
+{
+  "recorded_before_measurement_utc": "2026-10-30T06:41:58.521108+00:00",
+  "source_commit": "f7a7adfe27ca701aee75561be924f64b83bdf442",
+  "source_sha256": {
+    "src/napa_vision/_native/napa_core.c": "4e43b0bd74bfd85fa1faae51455150ff0d282af7e483e40bdc3d54a4e1cd0e96",
+    "src/napa_vision/_native/napa_core.h": "6f3d04dd1ac7efbf5ba94ca4590f830c103efed078071a724bd5b7548a70e986",
+    "benchmarks/cpu_backends.py": "b59c1167a6c314cea7c68b51e80161f276cad02da3c51ac4a728d6daff978d0e",
+    "benchmarks/cpu_comparison.py": "6b19401332c9b5693f0ec403ee8efa585c1492953034ba456ce4e8330d1f0769",
+    "benchmarks/performance_matrix.py": "be6d6e0e223a8c08cba3f424c995f03c7be5d7a78e0156f55b81e14bd45e8102"
+  },
+  "napa_binary_path": "work/full-corpus/libnapa_core.so",
+  "napa_binary_sha256": "270a246d250237f36313cf66a6fc94db7afbba19d3d7fc9612d0499adbfff1d7",
+  "compiler": "cc (Ubuntu 15.2.0-16ubuntu1) 15.2.0",
+  "compiler_flags": [
+    "-fno-strict-overflow",
+    "-DNDEBUG",
+    "-g",
+    "-O2",
+    "-Wall",
+    "-Wextra",
+    "-fPIC",
+    "-O3",
+    "-std=c99",
+    "-fvisibility=hidden",
+    "-fno-wrapv",
+    "-shared",
+    "-Isrc/napa_vision/_native",
+    "-lm"
+  ],
+  "selection": "Every frame from the fixed existing corpus; no output-dependent selection or exclusions.",
+  "main": {
+    "scenarios": 20,
+    "frames_per_scenario_per_resolution": 50,
+    "frames": 3000
+  },
+  "stress": {
+    "scenarios": 4,
+    "frames_per_scenario_per_resolution": 50,
+    "frames": 600
+  },
+  "range": {
+    "sizes_px": [
+      12,
+      14,
+      16,
+      18,
+      20,
+      22,
+      24,
+      28,
+      32,
+      36,
+      40,
+      48,
+      56,
+      64,
+      72,
+      80,
+      88,
+      96
+    ],
+    "frames_per_size": 50,
+    "frames": 900
+  },
+  "total_frames": 4500,
+  "seed": 2468,
+  "order_seed": 2468,
+  "resolutions": [
+    "640x480",
+    "1280x720",
+    "1920x1080"
+  ],
+  "warmup_per_frame": 1,
+  "timed_repetitions": 10,
+  "threads": 1,
+  "cpus": [
+    2
+  ],
+  "backends": [
+    "napa",
+    "napa-mtp16",
+    "wpilib-d2",
+    "apriltag3-d2",
+    "apriltag3-d1",
+    "locus",
+    "locus-d2",
+    "opencv",
+    "opencv-subpix",
+    "opencv-aruco3",
+    "opencv-aruco3-min32",
+    "opencv-aruco3-half16",
+    "aruco-nano",
+    "rapidtag",
+    "rapidtag-subpix"
+  ],
+  "standing_constraints": [
+    "CPU only",
+    "Frozen algorithm and preselected settings",
+    "NAPA16 and NAPA32 are ordinary backends sharing all 4500 frames with every peer",
+    "Main corpus, stress and range reported separately",
+    "No full benchmark rerun after small documentation changes",
+    "Detector initialization/rendering/scoring/startup excluded from detection-call timing",
+    "Raw previous results preserved",
+    "External background activity retained and monitored"
+  ],
+  "resources": "Earlier isolated resource measurements can be cited only with explicit date, source and scope; this new run measures detector-call wall and process CPU times, not backend-isolated RSS."
+}

@@ -10,86 +10,75 @@ python -m pip install napa-vision
 
 ## Compared with other detectors
 
-The current native source was compared with 13 CPU detector configurations on one performance core of an Intel
-Core i7-12700H. These are **149 deliberately selected diagnostic frames**, including earlier losses to Nano and
-Locus, at 640×480, 1280×720 and 1920×1080. They are not a random camera sample or the earlier 3,000-frame run.
-Each detector is constructed once, warmed once per frame, then timed three times in shuffled order on identical
-grayscale tag36h11 images. The table pools all detector calls; rendering, scoring and initialization are excluded.
+These results use the **full fixed 3,000-frame corpus**, with 5,521 expected tags at 640×480, 1280×720 and
+1920×1080: all 20 scenarios, 50 independent renders per scenario/resolution, seed 2468. NAPA32 (the default,
+`min_tag_px=32`) and NAPA16 (`min_tag_px=16`) are normal backend options in the **same run on the same frames**
+as all 13 competitor configurations. No detector-dependent frame selection is used.
 
-**NAPA32 is the unchanged default (`min_tag_px=32`); NAPA16 is tuned (`min_tag_px=16`).** Both retain full-resolution
-corner refinement. AprilTag d1/d2 denote decimation one/two; Locus d2 is its standard profile at decimation two.
-OpenCV and RapidTag defaults do not refine corners; SUBPIX variants are separate. ArUco3 minimum sizes below are
-effective image sizes, accounting for half-scale detection. See the [configuration details and pinned versions](benchmarks/results/2026-10-29_cpu_optimization/report.md#scope-and-timing).
+Every backend is configured for one worker on the same verified P-core of an i7-12700H. Detectors are constructed
+once, warmed per image and timed ten times in shuffled order. Percentiles pool all 30,000 timed calls per backend.
+Rendering, scoring and initialization are excluded; required internal work, input copies and result conversion
+remain timed. The current native source was frozen before the run. This does not describe a new PyPI release.
 
-| Detector / configuration | p50 ms | p95 ms | p99 ms | Tags found | Wrong IDs | Duplicates |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| NAPA32 (default) | 0.419 | 1.938 | 2.577 | 310/319 | 0 | 0 |
-| NAPA16 (tuned) | 1.115 | 6.442 | 10.545 | 319/319 | 0 | 0 |
-| WPILib AprilTag d2 | 14.201 | 42.795 | 51.072 | 259/319 | 0 | 0 |
-| AprilTag d2 | 19.505 | 57.670 | 68.842 | 311/319 | 0 | 0 |
-| AprilTag d1 | 72.189 | 219.958 | 258.445 | 319/319 | 0 | 0 |
-| Locus standard | 12.701 | 32.652 | 36.665 | 307/319 | 0 | 0 |
-| Locus d2 | 5.849 | 12.740 | 14.821 | 305/319 | 0 | 0 |
-| OpenCV ArUco | 26.821 | 118.516 | 150.296 | 311/319 | 0 | 0 |
-| OpenCV SUBPIX | 26.578 | 117.878 | 142.303 | 311/319 | 0 | 0 |
-| ArUco3 full | 14.964 | 93.649 | 109.496 | 296/319 | 0 | 0 |
-| ArUco3 min≈64 px | 4.765 | 17.983 | 21.857 | 244/319 | 0 | 0 |
-| ArUco3 min≈32 px | 6.668 | 20.635 | 25.568 | 291/319 | 0 | 0 |
-| ArUco Nano | 3.144 | 19.145 | 22.132 | 318/319 | 0 | 0 |
-| RapidTag | 9.462 | 84.623 | 92.825 | 230/319 | 8 | 0 |
-| RapidTag SUBPIX | 9.547 | 86.672 | 92.618 | 230/319 | 8 | 0 |
+| Detector / configuration | p50 ms | p95 ms | p99 ms | CPU mean ms | Found / tags | Wrong IDs | Dup |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| NAPA32 (default) | 0.255 | 1.479 | 2.081 | 0.405 | 5513/5521 | 1 | 0 |
+| NAPA16 (tuned) | 0.741 | 5.204 | 6.518 | 1.297 | 5519/5521 | 1 | 0 |
+| WPILib AprilTag d2 | 11.306 | 41.374 | 48.317 | 14.816 | 4759/5521 | 0 | 0 |
+| AprilTag d2 | 14.990 | 51.563 | 59.852 | 19.010 | 5503/5521 | 3 | 0 |
+| AprilTag d1 | 57.010 | 204.199 | 233.535 | 72.147 | 5517/5521 | 3 | 0 |
+| Locus standard | 8.695 | 26.021 | 34.121 | 10.857 | 5393/5521 | 1 | 0 |
+| Locus d2 | 4.287 | 11.562 | 14.093 | 5.148 | 5419/5521 | 1 | 0 |
+| OpenCV ArUco | 14.745 | 90.758 | 152.710 | 26.333 | 5486/5521 | 1 | 0 |
+| OpenCV SUBPIX | 14.773 | 90.632 | 153.459 | 26.364 | 5486/5521 | 1 | 0 |
+| ArUco3 full | 7.960 | 30.161 | 67.950 | 11.333 | 5402/5521 | 1 | 0 |
+| ArUco3 min≈64 px | 2.787 | 10.137 | 15.263 | 3.811 | 4415/5521 | 0 | 0 |
+| ArUco3 min≈32 px | 3.715 | 14.699 | 21.352 | 5.360 | 5308/5521 | 1 | 0 |
+| ArUco Nano | 1.925 | 8.574 | 13.881 | 2.757 | 5517/5521 | 0 | 0 |
+| RapidTag | 4.682 | 20.446 | 39.907 | 6.801 | 4167/5521 | 19 | 0 |
+| RapidTag SUBPIX | 4.698 | 20.462 | 40.067 | 6.806 | 4167/5521 | 19 | 0 |
 
-NAPA16 has lower pooled p50/p95/p99 than every competitor configuration. It does not win every image. Each speedup below
-is computed from paired per-frame median times (competitor ÷ NAPA16); values below one are NAPA losses.
+Both NAPA options have lower pooled main-corpus p50/p95/p99 than every competitor configuration. NAPA32 has lower per-frame medians on every main-corpus image versus every competitor. NAPA16 slower-frame counts are Locus d2: 1; ArUco3 min≈64 px: 18; ArUco3 min≈32 px: 3; ArUco Nano: 24. These are observed comparisons, not significance tests; near-ties remain included.
 
-| Competitor | Median speedup of NAPA16 | Smallest speedup | NAPA16 slower frames / 149 |
-| --- | ---: | ---: | ---: |
-| WPILib AprilTag d2 | 10.52× | 1.713× | 0 |
-| AprilTag d2 | 16.10× | 3.157× | 0 |
-| AprilTag d1 | 58.94× | 7.004× | 0 |
-| Locus standard | 7.10× | 2.190× | 0 |
-| Locus d2 | 3.45× | 0.992× | 1 |
-| OpenCV ArUco | 19.78× | 3.048× | 0 |
-| OpenCV SUBPIX | 19.98× | 3.053× | 0 |
-| ArUco3 full | 12.47× | 2.669× | 0 |
-| ArUco3 min≈64 px | 3.56× | 1.066× | 0 |
-| ArUco3 min≈32 px | 4.36× | 1.203× | 0 |
-| ArUco Nano | 2.71× | 0.741× | 5 |
-| RapidTag | 7.63× | 1.583× | 0 |
-| RapidTag SUBPIX | 7.56× | 1.925× | 0 |
+Each speedup below is competitor time ÷ NAPA time, from the ten-sample median on each of the same 3,000 frames.
+Values below one are NAPA losses; the near-tie is retained without a statistical-significance claim.
 
-A separate 20-repeat check of 28 selected outlier frames confirmed five losses to Nano and one to Locus d2.
+| Competitor | Vs NAPA32: median (minimum) | NAPA32 slower / 3000 | Vs NAPA16: median (minimum) | NAPA16 slower / 3000 |
+| --- | ---: | ---: | ---: | ---: |
+| WPILib AprilTag d2 | 24.98× (3.27607×) | 0 | 12.09× (1.54548×) | 0 |
+| AprilTag d2 | 33.59× (3.75824×) | 0 | 16.37× (2.90373×) | 0 |
+| AprilTag d1 | 127.56× (9.65688×) | 0 | 63.61× (6.58941×) | 0 |
+| Locus standard | 27.07× (7.04917×) | 0 | 10.36× (1.99490×) | 0 |
+| Locus d2 | 13.79× (3.26014×) | 0 | 6.12× (0.99987×) | 1 |
+| OpenCV ArUco | 45.86× (6.62928×) | 0 | 16.54× (2.27181×) | 0 |
+| OpenCV SUBPIX | 45.67× (6.65748×) | 0 | 16.60× (2.23070×) | 0 |
+| ArUco3 full | 26.13× (6.12180×) | 0 | 10.32× (2.09818×) | 0 |
+| ArUco3 min≈64 px | 9.61× (1.96210×) | 0 | 3.55× (0.70896×) | 18 |
+| ArUco3 min≈32 px | 12.30× (2.78592×) | 0 | 4.53× (0.74182×) | 3 |
+| ArUco Nano | 7.06× (1.83068×) | 0 | 2.52× (0.83909×) | 24 |
+| RapidTag | 16.61× (4.59048×) | 0 | 6.36× (1.50660×) | 0 |
+| RapidTag SUBPIX | 16.51× (4.61710×) | 0 | 6.36× (1.50410×) | 0 |
 
-The full **1,620-frame synthetic quality replay** found **3,486/3,486 tags** with NAPA16 and **3,334/3,486** with
-NAPA32, with zero wrong IDs or duplicates for both. This is a different scope from the 149-frame table above.
-In the 30-tags-per-size range sweep, NAPA16 found every tag at all tested sizes from 12–96 px. Full-quality results
-for unchanged competitors are reused from the verified earlier corpus, as documented in the report.
+NAPA16 misses two low-contrast tags and reports one wrong ID. NAPA32 misses eight tags and reports one wrong ID;
+its latency advantage comes with lower recall. Nano misses four tags and reports no wrong IDs. On common tags,
+NAPA's median/p95 corner errors are lower than upstream AprilTag d1, but its maximum is worse: 3.57 versus 2.35 px
+for NAPA16, and 3.39 versus 2.16 px for NAPA32 on their respective common tags. Both NAPA settings retain
+full-resolution corner refinement.
 
-With one or six physical P-cores available to each backend, NAPA16 also had lower mean wall time, CPU time and
-working memory than every tested competitor. NAPA itself still uses one execution thread per frame. Values below
-average two isolated process rounds on identical 96-frame mixed sets at each resolution. Working memory is peak
-RSS above the constructed detector, including warm-up and detection; it is not total process RSS.
+The same run also includes **600 stress frames** and **900 range frames**, reported separately rather than pooled
+into the headline: NAPA16 finds 4,577/4,577 stress tags and 900/900 range tags, with no wrong IDs in either group.
+NAPA32 finds 4,390/4,577 and 748/900 respectively. All peer results in these tables are newly measured on the same
+frames, not reused from an earlier run.
 
-| P-cores allowed | Resolution | NAPA16 mean ms | Fastest peer mean ms | NAPA16 working MiB | Smallest peer working MiB |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| 1 | 640×480 | 0.479 | ArUco Nano: 1.075 | 0.84 | Locus d2: 2.38 |
-| 1 | 1280×720 | 1.214 | ArUco Nano: 2.661 | 2.71 | ArUco Nano: 4.80 |
-| 1 | 1920×1080 | 2.732 | ArUco Nano: 6.922 | 6.45 | ArUco Nano: 7.63 |
-| 6 | 640×480 | 0.487 | ArUco3 min≈64 px: 1.054 | 0.83 | ArUco Nano: 3.18 |
-| 6 | 1280×720 | 1.166 | ArUco3 min≈64 px: 2.054 | 2.71 | ArUco Nano: 4.95 |
-| 6 | 1920×1080 | 2.950 | ArUco3 min≈64 px: 3.775 | 6.45 | ArUco Nano: 7.72 |
+AprilTag d1/d2 means decimation one/two; Locus d2 is its standard profile at decimation two. OpenCV and RapidTag
+defaults do not refine corners; SUBPIX variants are separate. ArUco3 minimum-size labels account for half-scale
+detection. The [full report](benchmarks/results/2026-10-30_cpu_full_corpus/report.md) records exact settings, corner comparisons, stress/range results,
+CPU time, thermal/load variation, raw data and the protocol recorded before timing.
 
-At 1080p with six cores available, NAPA16's mean-of-round p99 was 10.755 ms, behind ArUco3 min≈32 px at 10.031 ms,
-ArUco3 min≈64 px at 10.072 ms and Locus d2 at 10.377 ms; those peers found fewer tags. On common synthetic tags,
-NAPA16 had lower median/p95 corner
-error than upstream AprilTag d1, but a worse maximum: 3.57 versus 2.35 px. Three unannotated real JPEGs provide
-only timing and detector agreement, not an accuracy result.
-
-These are finite synthetic measurements on one machine. [Score your own camera footage](docs/measuring.md).
-The [benchmark guide](benchmarks/README.md) has per-scene and range tables; the
-[full report](benchmarks/results/2026-10-29_cpu_optimization/report.md) links the raw data, provenance and
-reproduction commands. [Earlier measurements](benchmarks/results/2026-10-29_cpu_detector_matrix/matrix.json)
-remain available unchanged.
+The [benchmark guide](benchmarks/README.md) has per-scene and range tables. Older
+[isolated resource measurements](benchmarks/results/2026-10-29_cpu_optimization/report.md#cpu-and-working-memory)
+use separate 96-frame sets; this new interleaved run does not measure isolated RSS. These are finite synthetic
+measurements on one host. [Score your own camera footage](docs/measuring.md) before relying on a specific result.
 
 ## How it works
 
