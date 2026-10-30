@@ -135,3 +135,27 @@ def test_published_tables_report_recall_wrong_ids_speedups_and_range() -> None:
     assert "| Wrong IDs in 2 frames | 1 | 0 |" in text
     assert "| All frames | 2.8× (1.5×) |" in text  # per-frame ratios 4.0 and 1.5: median 2.75, slowest 1.5
     assert "| one-tag | 2 | 1 (1) | 2 |" in text
+
+
+@pytest.mark.parametrize("sigma", [8, 15, 25])
+def test_dense_noise_floor_preserves_twelve_pixel_tags(sigma: int) -> None:
+    from napa_vision import NapaDetector
+
+    detector = NapaDetector(min_tag_px=16)
+    for index in range(12):
+        rng = np.random.default_rng((12, sigma, index, 7319))
+        image = matrix._uniform(rng, 640, 480)
+        tags = matrix.place_tags(rng, 640, 480, 1, (12, 12), max_tilt_deg=10)
+        for tag in tags:
+            matrix.render_tag(image, tag.tag_id, tag.corners, black=30, white=220)
+        noisy = matrix._to_uint8(matrix.add_noise(rng, image, sigma))
+        observations = detector.detect(noisy)
+        assert [o.tag_id for o in observations] == [t.tag_id for t in tags]
+
+
+def test_dense_band_keeps_small_motion_blurred_tag() -> None:
+    from napa_vision import NapaDetector
+
+    frame = matrix.render_frame("motion-blur", 11, (640, 480), 2468)
+    found = NapaDetector(min_tag_px=16).detect(frame.image)
+    assert {o.tag_id for o in found} == {t.tag_id for t in frame.tags}

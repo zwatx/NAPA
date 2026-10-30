@@ -243,11 +243,12 @@ def test_finds_steeply_tilted_tags_at_any_rotation() -> None:
     assert misses == []
 
 
-def test_finds_low_contrast_tags_in_heavy_sensor_noise() -> None:
+@pytest.mark.parametrize("min_tag_px", [16, 32])
+def test_finds_low_contrast_tags_in_heavy_sensor_noise(min_tag_px: int) -> None:
     """Tag black and white 40 grey levels apart under noise of sigma 12: the averaging rake's case."""
 
     rng = np.random.default_rng(12)
-    detector = NapaDetector()
+    detector = NapaDetector(min_tag_px=min_tag_px)
     found = 0
     for k in range(12):
         image, _corners = _scene(50 + k, 90, angle_deg=13.0 * k)
@@ -287,3 +288,48 @@ def test_a_textured_patch_does_not_hide_a_clean_tag_beside_it() -> None:
         frame[0:192, 0:112] = rng.uniform(0, 255, (192, 112))  # texture about 10 px from its quiet zone
         frame = np.clip(np.rint(frame + rng.normal(0.0, 1.5, frame.shape)), 0, 255).astype(np.uint8)
         assert [o.tag_id for o in detector.detect(frame)] == [300 + k], side
+
+
+@pytest.mark.parametrize(
+    "side,tilt,spin",
+    [
+        (48, 74, 45),
+        (72, 65, 30),
+        (88, 65, 30),
+        (88, 70, 30),
+        (112, 70, 30),
+        (112, 74, 15),
+        (112, 74, 30),
+        (112, 74, 45),
+    ],
+)
+def test_dense_proposals_preserve_narrow_tilted_tags(side, tilt, spin) -> None:
+    image, corners = _tilted_scene(42, side, tilt, spin, size=(320, 320))
+    observations = NapaDetector(min_tag_px=16).detect(image)
+    assert [o.tag_id for o in observations] == [42]
+    assert np.abs(observations[0].corners - corners).max() < 0.5
+
+
+@pytest.mark.parametrize("side,size,contrast", [(32, (256, 128), 30), (48, (128, 128), 40)])
+def test_terminal_dense_level_preserves_noisy_low_contrast_crops(side, size, contrast) -> None:
+    image, _ = _scene(42, side, size=size)
+    rng = np.random.default_rng((side, 12, contrast, *size))
+    noisy = np.clip(np.rint(100 + image.astype(float) * contrast / 255 + rng.normal(0, 12, image.shape)), 0, 255)
+    assert [o.tag_id for o in NapaDetector(min_tag_px=16).detect(noisy.astype(np.uint8))] == [42]
+
+
+@pytest.mark.parametrize("size", [(128, 128), (256, 128), (640, 480)])
+@pytest.mark.parametrize("side", [32, 48, 64, 80])
+def test_local_quiet_zone_damage_does_not_reject_intact_border(side, size) -> None:
+    image, corners = _scene(42, side, size=size)
+    left, top = size[0] / 2 - side / 2, size[1] / 2 - side / 2
+    cell = side / 8
+    # Damage the two sparse probe sites on two sides; all black border cells remain intact.
+    for along in (0.25, 0.75):
+        for x, y in ((left + side * along, top - cell / 2), (left - cell / 2, top + side * along)):
+            radius = max(1, int(cell / 4))
+            x, y = round(x), round(y)
+            image[y - radius : y + radius + 1, x - radius : x + radius + 1] = 0
+    [observation] = NapaDetector(min_tag_px=16).detect(image)
+    assert observation.tag_id == 42
+    assert np.abs(observation.corners - corners).max() < 0.5

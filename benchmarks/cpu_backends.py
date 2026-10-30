@@ -199,7 +199,9 @@ def napa_backend(name: str, min_tag_px: int = 32) -> Backend:
         "min_tag_px": params.min_tag_px,
         # napa_core.c: base = min_tag_px * 3 / (4 * W), W = 8 for tag36h11; at least 1.
         "base_sampling_stride_px": max(1, params.min_tag_px * 3 // 32),
-        "noisy_frame_box_averaging": "only when the base stride is 2-16 px",
+        "noisy_frame_box_averaging": (
+            "noisy frames: original stride 1; centred 3x3 at stride 2 following stride 1; stride-sized blocks otherwise"
+        ),
         "max_hamming": params.max_hamming,
         "min_contrast": params.min_contrast,
         "min_border_cells": params.min_border_cells,

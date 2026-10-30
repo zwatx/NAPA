@@ -130,10 +130,9 @@ struct napa_detector {
     uint8_t *nb_t;
     uint8_t *nb_f;
     napa_run *runs;
-    int32_t *parent; /* union-find over runs; a blob's root is its first run in raster order */
-    blob_box *boxes;
-    int32_t *slot;   /* root run -> candidate index, or -1 */
-    int32_t *roots;  /* the root runs, in raster order */
+    int32_t *parent; /* backward union links, then -dense component index - 1 after aggregation */
+    blob_box *boxes; /* packed components, in first-run raster order */
+    int32_t *slot;   /* dense component -> candidate index, or -1 */
     component *cands;
     size_t cand_capacity;
     uint64_t *row_bits;
@@ -420,7 +419,6 @@ void napa_destroy(napa_detector *det) {
     free(det->parent);
     free(det->boxes);
     free(det->slot);
-    free(det->roots);
     free(det->cands);
     free(det->row_bits);
     free(det->floors);
@@ -442,8 +440,6 @@ static int ensure_buffers(napa_detector *det, size_t pixels, size_t tiles, size_
         det->boxes = (blob_box *)p;
         if ((p = realloc(det->slot, max_runs * sizeof(int32_t))) == NULL) return -1;
         det->slot = (int32_t *)p;
-        if ((p = realloc(det->roots, max_runs * sizeof(int32_t))) == NULL) return -1;
-        det->roots = (int32_t *)p;
         det->run_capacity = max_runs;
     }
     if (row > det->row_capacity) {
@@ -521,9 +517,10 @@ static inline double sample_bilinear(const image_view *im, double x, double y) {
 /* Tuning. A level keeps blobs whose bounding box spans up to NAPA_HI samples: a tag stays isolated
  * from its background only where its one-cell white margin spans about two samples (a side of 16+
  * samples), and its border stays solid under the tile threshold up to a side of about 64 samples,
- * which a rotated or tilted tag stretches to a box of about 96. Levels continue until the frame is
- * under NAPA_LAST samples across, so a frame-filling tag is under 64 samples at the last level. */
-#define NAPA_HI 96
+ * which a rotated or tilted tag stretches to a box of about 96. Keep an overlapping band up to 192
+ * so large low-contrast tags can be proposed before their thin quiet zone merges into the background.
+ * Levels continue until the frame is under NAPA_LAST samples across. */
+#define NAPA_HI 192
 #define NAPA_LAST 144
 /* Edges whose ramp is wider than this many cells overlap the next edge's ramp (motion or defocus
  * blur): locate them by midpoint crossing instead of the gradient's centre of mass. */
@@ -532,13 +529,10 @@ static inline double sample_bilinear(const image_view *im, double x, double y) {
 #define NAPA_FINAL_POINTS 96
 /* Midpoint-crossing passes: the plateau levels are re-read around each new estimate. */
 #define NAPA_CROSS_ITERS 3
-/* Noise: the tile contrast floor is NAPA_FLOOR_SIGMAS times the noise measured in the tile's region
- * (NAPA_REGION samples square at the base level), at most NAPA_FLOOR_CAP (a cap, because texture
- * inflates the noise estimate). Regions keep a clean part of the frame sensitive when another part is
- * noisy or textured. A frame-wide floor above NAPA_NOISY_FLOOR (noise sigma of about 7) re-rakes the
- * frame with each sample averaging its block, which divides the noise by the stride; that level's
- * floors can then be NAPA_BOX_SIGMAS, still far below the point rake's in grey levels, which keeps
- * noise blobs out. */
+/* Noise floors are measured per region on the current grid. Sparse grids cap the floor at
+ * NAPA_FLOOR_CAP because texture can inflate the estimate. A noisy sparse grid re-rakes with
+ * block averages, then re-measures. The dense grid keeps original pixels for tiny borders and
+ * permits a higher floor; stride two supplies an averaged recovery pass for low-contrast tags. */
 #define NAPA_REGION 64
 #define NAPA_FLOOR_SIGMAS 6.0
 #define NAPA_FLOOR_CAP 64
@@ -668,13 +662,15 @@ static void gather_row(uint8_t *dst, const uint8_t *src, int n, int s, int ssse3
 /* The averaging rake: level[y][x] = mean of the s x s image block centred on (x * s, y * s), clipped
  * to the image. Each sample stands for its whole block, so sensor noise drops by a factor of s, and a
  * border cell's core still leaves every sample at least two thirds dark. Needs s <= 16 (16-bit sums)
- * and two scratch rows of w samples: acc (column sums) and hs (horizontal box sums). */
-static void box_rake(uint8_t *level, int lw, int lh, const uint8_t *img, int w, int h, int stride, int s,
+ * and two scratch rows of w samples: acc (column sums) and hs (horizontal box sums).
+ * The dense detector keeps stride-one proposals unfiltered for tiny tags, then uses a 3x3 kernel
+ * at stride two to recover low-contrast tags. Edge fitting and decoding always read the original. */
+static void box_rake(uint8_t *level, int lw, int lh, const uint8_t *img, int w, int h, int stride, int s, int kernel,
                      uint16_t *acc, uint16_t *hs) {
-    int half = (s - 1) / 2;
-    uint32_t m = (65536u + (uint32_t)(s * s) / 2) / (uint32_t)(s * s); /* 1 / (s * s) in 0.16 fixed point */
+    int half = (kernel - 1) / 2;
+    uint32_t m = (65536u + (uint32_t)(kernel * kernel) / 2) / (uint32_t)(kernel * kernel); /* 1 / kernel^2 in 0.16 fixed point */
     for (int y = 0; y < lh; y++) {
-        int r0 = y * s - half, r1 = r0 + s;
+        int r0 = y * s - half, r1 = r0 + kernel;
         if (r0 < 0) r0 = 0;
         if (r1 > h) r1 = h;
         const uint8_t *row = img + (size_t)r0 * stride;
@@ -683,20 +679,20 @@ static void box_rake(uint8_t *level, int lw, int lh, const uint8_t *img, int w, 
             row = img + (size_t)r * stride;
             for (int x = 0; x < w; x++) acc[x] = (uint16_t)(acc[x] + row[x]);
         }
-        /* hs[c] = acc[c] + ... + acc[c + s - 1], for every block start c that fits in the row. */
-        for (int c = 0; c + s <= w; c++) hs[c] = acc[c];
-        for (int k = 1; k < s; k++)
-            for (int c = 0; c + s <= w; c++) hs[c] = (uint16_t)(hs[c] + acc[c + k]);
+        /* hs[c] = acc[c] + ... + acc[c + kernel - 1], for every block start c that fits in the row. */
+        for (int c = 0; c + kernel <= w; c++) hs[c] = acc[c];
+        for (int k = 1; k < kernel; k++)
+            for (int c = 0; c + kernel <= w; c++) hs[c] = (uint16_t)(hs[c] + acc[c + k]);
         uint8_t *dst = level + (size_t)y * lw;
         /* Whole blocks are x_lo <= x < x_hi; the rest are clipped by the image edge. */
-        int x_lo = (half + s - 1) / s, x_hi = (w - s + half) / s + 1;
+        int x_lo = (half + s - 1) / s, x_hi = (w - kernel + half) / s + 1;
         if (x_hi > lw) x_hi = lw;
-        if (r1 - r0 < s) x_lo = x_hi = 0; /* a clipped row band: every block is partial */
+        if (r1 - r0 < kernel) x_lo = x_hi = 0; /* a clipped row band: every block is partial */
         for (int x = x_lo; x < x_hi; x++) dst[x] = (uint8_t)((hs[x * s - half] * m + 32768u) >> 16);
         for (int x = 0; x < lw; x++) {
             if (x == x_lo && x_lo < x_hi) x = x_hi;
             if (x >= lw) break;
-            int c0 = x * s - half, c1 = c0 + s, sum = 0;
+            int c0 = x * s - half, c1 = c0 + kernel, sum = 0;
             if (c0 < 0) c0 = 0;
             if (c1 > w) c1 = w;
             for (int c = c0; c < c1; c++) sum += acc[c];
@@ -838,7 +834,7 @@ static int threshold_level(napa_detector *det, int lw, int lh, int factor) {
     /* 3x3 tile neighbourhood, separably and without branches so the loops vectorise: vertically
      * into a row padded by one tile at each end (repeating the edge tile), then horizontally. */
     uint8_t *nlo = det->nb_lo, *nhi = det->nb_hi, *tt = det->nb_t, *fl = det->nb_f;
-    /* A tile here spans 4 * factor base-level samples; look up the floor of the region it lies in. */
+    /* A tile spans 4 * factor samples of the grid where the floors were measured. */
     int rows = det->floor_rows, cols = det->floor_cols;
     if (det->floor_uniform) memset(fl, det->floors[0], (size_t)tw);
     for (int ty = 0; ty < th; ty++) {
@@ -1574,13 +1570,13 @@ static int already_found(const napa_detection *out, int n, const napa_detection 
 /* Tile contrast floor from a histogram of neighbouring-sample differences (clamped to 63): `sigmas`
  * times the noise. The median absolute difference of neighbouring samples is about 0.95 sigma for
  * Gaussian noise, and a flat noisy tile neighbourhood spans about 5.5 sigma, so a floor of 6 sigma
- * keeps noise from forming dark networks. Capped well below real tag contrast. */
-static int floor_from(const uint32_t hist[64], uint32_t n, int min_contrast, double sigmas) {
+ * keeps noise from forming dark networks. The caller supplies the cap for this grid. */
+static int floor_from(const uint32_t hist[64], uint32_t n, int min_contrast, double sigmas, int cap) {
     uint32_t seen = 0;
     int median = 0;
     while (median < 63 && (seen += hist[median]) < (n + 1) / 2) median++;
     int floor = (int)(sigmas * median / 0.954 + 0.5);
-    if (floor > NAPA_FLOOR_CAP) floor = NAPA_FLOOR_CAP;
+    if (floor > cap) floor = cap;
     return floor > min_contrast ? floor : min_contrast;
 }
 
@@ -1613,7 +1609,7 @@ static void pair_diffs(const uint8_t *row, int n, uint8_t *out) {
 
 /* Each region's floor into det->floors (from pairs of samples on every 8th row), at most the frame's,
  * which is returned; a region too small to measure takes the frame's. Returns -1 if out of memory. */
-static int contrast_floors(napa_detector *det, const uint8_t *L, int lw, int lh, int min_contrast, double sigmas) {
+static int contrast_floors(napa_detector *det, const uint8_t *L, int lw, int lh, int min_contrast, double sigmas, int cap) {
     int cols = (lw + NAPA_REGION - 1) / NAPA_REGION, rows = (lh + NAPA_REGION - 1) / NAPA_REGION;
     if ((size_t)cols * rows > det->floor_alloc) {
         uint8_t *p = (uint8_t *)realloc(det->floors, (size_t)cols * rows);
@@ -1642,10 +1638,10 @@ static int contrast_floors(napa_detector *det, const uint8_t *L, int lw, int lh,
                 n += hist[k], all[k] += hist[k];
             }
             n_all += n;
-            det->floors[ry * cols + rx] = (uint8_t)(n >= 16 ? floor_from(hist, n, min_contrast, sigmas) : 0);
+            det->floors[ry * cols + rx] = (uint8_t)(n >= 16 ? floor_from(hist, n, min_contrast, sigmas, cap) : 0);
         }
     }
-    int frame = n_all ? floor_from(all, n_all, min_contrast, sigmas) : min_contrast;
+    int frame = n_all ? floor_from(all, n_all, min_contrast, sigmas, cap) : min_contrast;
     det->floor_uniform = 1;
     for (int i = 0; i < cols * rows; i++) {
         /* Never above the frame's: a region only lowers its floor, where it is cleaner than the frame
@@ -1718,7 +1714,7 @@ int napa_detect(napa_detector *det, const uint8_t *img, int width, int height, i
      * because a blob's measured extent varies by a sample or two with phase, blur and rotation. */
     const int lo = (7 * W + 4) / 8, hi = NAPA_HI * W / 8;
 
-    int prev_lw = 0;
+    int prev_lw = 0, floor_stride = base;
     for (int s = base;; s *= 2) {
         int lw = (width + s - 1) / s;
         int lh = (height + s - 1) / s;
@@ -1740,8 +1736,14 @@ int napa_detect(napa_detector *det, const uint8_t *img, int width, int height, i
         }
         prev_lw = lw;
         PROF_MARK(PROF_RAKE);
-        if (s == base) {
-            contrast = contrast_floors(det, det->level, lw, lh, params->min_contrast, NAPA_FLOOR_SIGMAS);
+        if (s == base || (base == 1 && s == 2 && contrast > NAPA_NOISY_FLOOR)) {
+            /* Do not blur stride-one proposals: a tiny border can be just one pixel wide. Its
+             * higher floor suppresses raw noise; the next averaged level restores low contrast.
+             * A terminal level has no recovery pass, so keep its original contrast floor. */
+            floor_stride = s;
+            double sigmas = s == 1 && !last ? 7.0 : NAPA_FLOOR_SIGMAS;
+            int cap = s == 1 && !last ? 255 : NAPA_FLOOR_CAP;
+            contrast = contrast_floors(det, det->level, lw, lh, params->min_contrast, sigmas, cap);
             /* A noisy frame: rake again, averaging each sample's block, and re-measure the noise. */
             if (contrast > NAPA_NOISY_FLOOR && s > 1 && s <= 16) {
                 if ((size_t)width > det->box_capacity) {
@@ -1750,47 +1752,55 @@ int napa_detect(napa_detector *det, const uint8_t *img, int width, int height, i
                     det->box_rows = p;
                     det->box_capacity = (size_t)width;
                 }
-                box_rake(det->level, lw, lh, img, width, height, stride, s, det->box_rows, det->box_rows + width);
+                box_rake(det->level, lw, lh, img, width, height, stride, s, base == 1 && s == 2 ? 3 : s, det->box_rows, det->box_rows + width);
                 if (view.invert) invert_bytes(det->level, pixels);
-                contrast = contrast_floors(det, det->level, lw, lh, params->min_contrast, NAPA_BOX_SIGMAS);
+                /* Stride-two 3x3 means share one column: their difference measures sqrt(2/3)
+                 * times their noise sigma. Disjoint averaging blocks need no correction. */
+                double sigmas = base == 1 && s == 2 ? NAPA_BOX_SIGMAS * sqrt(1.5) : NAPA_BOX_SIGMAS;
+                contrast = contrast_floors(det, det->level, lw, lh, params->min_contrast, sigmas, NAPA_FLOOR_CAP);
             }
             if (contrast < 0) return -2;
         }
-        int nruns = threshold_level(det, lw, lh, s / base);
+        int nruns = threshold_level(det, lw, lh, s / floor_stride);
         PROF_MARK(PROF_THRESHOLD);
 
-        /* Blobs: each run's root, then every blob's count and bounding box. */
+        /* Resolve runs into packed components, preserving root raster order. */
         napa_run *R = det->runs;
         int32_t *P = det->parent;
         blob_box *B = det->boxes;
-        int32_t *roots = det->roots, nroots = 0;
+        int32_t nroots = 0;
         for (int i = 0; i < nruns; i++) {
-            /* A parent precedes its child and was resolved first, so P[P[i]] is already the root. */
-            int32_t r = P[P[i]];
-            P[i] = r;
-            if (r == i) {
-                det->slot[i] = -1;
-                roots[nroots++] = i;
-                B[i].count = R[i].x1 - R[i].x0 + 1;
-                B[i].minx = R[i].x0, B[i].maxx = R[i].x1, B[i].miny = B[i].maxy = R[i].y;
+            int32_t r;
+            if (P[i] == i) {
+                r = nroots++;
+                B[r].count = R[i].x1 - R[i].x0 + 1;
+                B[r].minx = R[i].x0, B[r].maxx = R[i].x1;
+                B[r].miny = B[r].maxy = R[i].y;
             } else {
+                /* Union always points to an earlier run. That run already carries its dense
+                 * component index, encoded negatively to distinguish it from a run index. */
+                r = -P[P[i]] - 1;
                 B[r].count += R[i].x1 - R[i].x0 + 1;
                 B[r].minx = R[i].x0 < B[r].minx ? R[i].x0 : B[r].minx;
                 B[r].maxx = R[i].x1 > B[r].maxx ? R[i].x1 : B[r].maxx;
-                B[r].maxy = R[i].y; /* runs arrive row by row */
+                B[r].maxy = R[i].y;
             }
+            P[i] = -r - 1;
         }
         /* Keep tag-sized, tag-shaped blobs as candidates, in raster order of their first sample. A tag
          * tilted by t looks about 1 / cos(t) times longer than it is wide, more with perspective: a 4:1
          * box admits tilts to about 70-75 degrees, beyond which the cells are too thin to read anyway. */
         int min_size = lo;
+        /* Dense levels propose small tags only. Larger tags have wider cells and are cheaper to
+         * propose on the next level; the overlapping bands retain steeply tilted small tags. */
         int max_size = last ? 1 << 30 : hi;
         int ncand = 0;
-        for (int ri = 0; ri < nroots; ri++) {
-            int i = roots[ri];
+        for (int i = 0; i < nroots; i++) {
+            det->slot[i] = -1;
             int t_minx = B[i].minx, t_maxx = B[i].maxx, t_miny = B[i].miny, t_maxy = B[i].maxy;
             int bw = t_maxx - t_minx + 1, bh = t_maxy - t_miny + 1;
             int big = bw > bh ? bw : bh, small = bw < bh ? bw : bh;
+            if (!last && base == 1 && s <= 2 && small > 72) continue;
             if (small < min_size || big > max_size || big > 4 * small) {
                 if (big >= 4) TRACE(small < min_size ? 1 : big > max_size ? 2 : 3);
                 continue;
@@ -1815,7 +1825,7 @@ int napa_detect(napa_detector *det, const uint8_t *img, int width, int height, i
         }
         /* Extreme points only for the candidates: one more pass over the runs. */
         for (int i = 0; i < nruns; i++) {
-            int32_t c = det->slot[P[i]];
+            int32_t c = det->slot[-P[i] - 1];
             if (c >= 0) comp_add_run(&det->cands[c], &R[i]);
         }
         for (int ci = 0; ci < ncand; ci++) comp_flush_row(&det->cands[ci]);
@@ -1894,6 +1904,35 @@ int napa_detect(napa_detector *det, const uint8_t *img, int width, int height, i
             }
             /* Rough corners are dark samples, so the true border lies outward of them by at most
              * one stride: search mostly outward, which keeps payload edges out of the window. */
+            /* Sparse paired border samples reject noise before the expensive edge profiles.
+             * Permit one weak side and leave terminal proposals unscreened: their ring can have
+             * local clutter that a later level would normally resolve. Final decode is unchanged. */
+            if (s <= 2 && !last && params->min_border_cells >= 22) {
+                vec2 q[4];
+                double H[9];
+                grow_quad(rough, 0.5 * s, q);
+                square_to_quad(q, H);
+                int good_sides = 0;
+                double half_cell = 0.5 / cells;
+                for (int side = 0; side < 4; side++) {
+                    double contrast_sum = 0;
+                    for (int j = 0; j < 2; j++) {
+                        double along = 0.25 + 0.5 * j;
+                        double u = side == 1 ? 1.0 : side == 3 ? 0.0 : along;
+                        double v = side == 0 ? 0.0 : side == 2 ? 1.0 : along;
+                        double du = side == 1 ? half_cell : side == 3 ? -half_cell : 0;
+                        double dv = side == 2 ? half_cell : side == 0 ? -half_cell : 0;
+                        vec2 white = project(H, u + du, v + dv), black = project(H, u - du, v - dv);
+                        contrast_sum += sample_bilinear(&view, white.x, white.y) - sample_bilinear(&view, black.x, black.y);
+                    }
+                    good_sides += contrast_sum >= params->min_contrast * 0.25;
+                }
+                if (good_sides < 3) {
+                    PROF_MARK(PROF_FIT1);
+                    TRACE(7);
+                    continue;
+                }
+            }
             double reach = 0.5 * ((1.5 * s + 1.0) + (0.5 * s + 1.0));
             double edge_w = 0;
             if (!fit_sides(&view, rough, fine, 1.5 * s + 1.0, 0.5 * s + 1.0, params->min_contrast, 1, 6, &edge_w, NULL, cells)) {

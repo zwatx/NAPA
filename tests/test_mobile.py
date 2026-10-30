@@ -82,3 +82,33 @@ def test_color_fallback_detects_tags_and_preserves_results_after_empty_frame(mon
     assert actual.tag_id == expected.tag_id == 7
     assert detector.detect(np.full_like(image, 255)) == []
     np.testing.assert_array_equal(actual.corners, expected.corners)
+
+
+@pytest.mark.parametrize("family", ["tag36h11", "tagStandard41h12"])
+def test_dense_noisy_native_frames_preserve_odd_sizes_and_padded_stride(family: str) -> None:
+    """Exercise the stride-two averaging path through the C ABI, including reversed artwork."""
+    import ctypes
+
+    rng = np.random.default_rng(193)
+    image = np.full((481, 641), 170.0)
+    art = tag_image(7, family=family, cell_px=7, quiet_zone_cells=2)
+    image[190 : 190 + art.shape[0], 270 : 270 + art.shape[1]] = 30 + art * (190.0 / 255)
+    noisy = np.clip(np.rint(image + rng.normal(0, 18, image.shape)), 0, 255).astype(np.uint8)
+    padded = np.full((481, 658), 93, np.uint8)
+    padded[:, :641] = noisy
+    original = padded.copy()
+    detector = NapaDetector(family=family, min_tag_px=8)
+    [expected] = detector.detect(noisy)
+    count = detector._library.napa_detect(
+        detector._handle,
+        padded.ctypes.data,
+        641,
+        481,
+        padded.strides[0],
+        ctypes.byref(detector._params),
+        detector._results,
+        len(detector._results),
+    )
+    assert count == 1 and detector._results[0].id == expected.tag_id == 7
+    np.testing.assert_array_equal(np.array(detector._results[0].corners).reshape(4, 2), expected.corners)
+    np.testing.assert_array_equal(padded, original)

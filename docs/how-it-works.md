@@ -15,24 +15,28 @@ of the smallest cell apart, which always puts a sample in the dark core of the b
 edges. With the default 32 px minimum tag size, that's every third pixel in each direction, or one pixel in nine.
 
 Larger tags are found on coarser grids (2×, 4×, 8×, and up). Each is built from the one before rather than from the
-image, and together they add about a third to the cost. Each tag is handled on the grid where it's between about 16
-and 64 samples across. On a finer grid, the middle of its border is too far from any white to stand out. On a coarser
-one, its one-cell white margin can fall between samples, and the tag merges with a dark background.
+image, and together they add about a third to the sampling cost. The size bands overlap so that a blurred or tilted
+tag can be proposed at more than one level. Large, low-contrast tags need a fine enough grid to keep their white
+margin separate from a dark background.
 
 ## 2. Skip regions without contrast
 
 The grid is divided into small tiles, and NAPA records each tile's darkest and brightest sample. A tile without
 contrast can't contain a tag's edge, so NAPA skips it without thresholding or segmenting it. The contrast required
 rises with sensor noise, which NAPA measures from the frame itself, region by region, so a noisy or textured patch
-doesn't hide tags elsewhere in the frame. On a very noisy frame, each grid sample averages the block of pixels it
-stands for, which reduces the noise by the grid spacing.
+doesn't hide tags elsewhere in the frame. On a very noisy frame, sparse samples average nearby pixels to reduce
+noise. At one-pixel spacing, NAPA keeps the original pixels so it doesn't blur away tiny borders, raises the noise
+floor, and uses an averaged pass at the next level to recover low-contrast tags. Small crops without a later pass
+keep the original contrast floor.
 
 ## 3. Group dark samples into blobs
 
 Every pass over the grid works on whole rows with vector instructions. One SSE2 or NEON instruction compares 16
 samples with their thresholds and packs the results into a bitmask. Runs of dark samples come out of the masks with
 one count-trailing-zeros instruction per run, and union-find joins runs that touch into blobs. The cost follows the
-number of runs, not the number of dark pixels. Gathering every third pixel uses a byte shuffle (SSSE3, chosen at run
+number of runs, not the number of dark pixels. Component metadata is packed in raster order rather than spread
+across run-indexed arrays, reducing its memory footprint without changing which runs form each blob. Gathering
+every third pixel uses a byte shuffle (SSSE3, chosen at run
 time) or NEON's de-interleaving load.
 
 ## 4. Reject non-tags before measuring them

@@ -1,0 +1,237 @@
+{
+  "differences": [],
+  "pairs": 1490,
+  "seeds": [
+    2468,
+    7319
+  ],
+  "minimums": [
+    16,
+    22,
+    32,
+    43,
+    64
+  ],
+  "cores": [
+    {
+      "path": "/home/zwatx/code/mac-projects/apriltag-detector/work/optimization/libnapa_core_candidate.so",
+      "sha256": "4494cb46ea029c9c99a0670f50839faf5990bace3efa4e5f996ff1c0ece8eb92",
+      "min_tag_px": 16,
+      "max_detections": 1024,
+      "threads": 1,
+      "max_hamming": 3,
+      "min_contrast": 20,
+      "min_border_cells": 22,
+      "sharpening": 0.25
+    },
+    {
+      "path": "/home/zwatx/code/mac-projects/apriltag-detector/work/optimization/packed.so",
+      "sha256": "d182fed1644abc694ebe9a4260cbb5a5e8075b47191d6b20a4eb636bd0f7fb8c",
+      "min_tag_px": 16,
+      "max_detections": 1024,
+      "threads": 1,
+      "max_hamming": 3,
+      "min_contrast": 20,
+      "min_border_cells": 22,
+      "sharpening": 0.25
+    },
+    {
+      "path": "/home/zwatx/code/mac-projects/apriltag-detector/work/optimization/libnapa_core_candidate.so",
+      "sha256": "4494cb46ea029c9c99a0670f50839faf5990bace3efa4e5f996ff1c0ece8eb92",
+      "min_tag_px": 22,
+      "max_detections": 1024,
+      "threads": 1,
+      "max_hamming": 3,
+      "min_contrast": 20,
+      "min_border_cells": 22,
+      "sharpening": 0.25
+    },
+    {
+      "path": "/home/zwatx/code/mac-projects/apriltag-detector/work/optimization/packed.so",
+      "sha256": "d182fed1644abc694ebe9a4260cbb5a5e8075b47191d6b20a4eb636bd0f7fb8c",
+      "min_tag_px": 22,
+      "max_detections": 1024,
+      "threads": 1,
+      "max_hamming": 3,
+      "min_contrast": 20,
+      "min_border_cells": 22,
+      "sharpening": 0.25
+    },
+    {
+      "path": "/home/zwatx/code/mac-projects/apriltag-detector/work/optimization/libnapa_core_candidate.so",
+      "sha256": "4494cb46ea029c9c99a0670f50839faf5990bace3efa4e5f996ff1c0ece8eb92",
+      "min_tag_px": 32,
+      "max_detections": 1024,
+      "threads": 1,
+      "max_hamming": 3,
+      "min_contrast": 20,
+      "min_border_cells": 22,
+      "sharpening": 0.25
+    },
+    {
+      "path": "/home/zwatx/code/mac-projects/apriltag-detector/work/optimization/packed.so",
+      "sha256": "d182fed1644abc694ebe9a4260cbb5a5e8075b47191d6b20a4eb636bd0f7fb8c",
+      "min_tag_px": 32,
+      "max_detections": 1024,
+      "threads": 1,
+      "max_hamming": 3,
+      "min_contrast": 20,
+      "min_border_cells": 22,
+      "sharpening": 0.25
+    },
+    {
+      "path": "/home/zwatx/code/mac-projects/apriltag-detector/work/optimization/libnapa_core_candidate.so",
+      "sha256": "4494cb46ea029c9c99a0670f50839faf5990bace3efa4e5f996ff1c0ece8eb92",
+      "min_tag_px": 43,
+      "max_detections": 1024,
+      "threads": 1,
+      "max_hamming": 3,
+      "min_contrast": 20,
+      "min_border_cells": 22,
+      "sharpening": 0.25
+    },
+    {
+      "path": "/home/zwatx/code/mac-projects/apriltag-detector/work/optimization/packed.so",
+      "sha256": "d182fed1644abc694ebe9a4260cbb5a5e8075b47191d6b20a4eb636bd0f7fb8c",
+      "min_tag_px": 43,
+      "max_detections": 1024,
+      "threads": 1,
+      "max_hamming": 3,
+      "min_contrast": 20,
+      "min_border_cells": 22,
+      "sharpening": 0.25
+    },
+    {
+      "path": "/home/zwatx/code/mac-projects/apriltag-detector/work/optimization/libnapa_core_candidate.so",
+      "sha256": "4494cb46ea029c9c99a0670f50839faf5990bace3efa4e5f996ff1c0ece8eb92",
+      "min_tag_px": 64,
+      "max_detections": 1024,
+      "threads": 1,
+      "max_hamming": 3,
+      "min_contrast": 20,
+      "min_border_cells": 22,
+      "sharpening": 0.25
+    },
+    {
+      "path": "/home/zwatx/code/mac-projects/apriltag-detector/work/optimization/packed.so",
+      "sha256": "d182fed1644abc694ebe9a4260cbb5a5e8075b47191d6b20a4eb636bd0f7fb8c",
+      "min_tag_px": 64,
+      "max_detections": 1024,
+      "threads": 1,
+      "max_hamming": 3,
+      "min_contrast": 20,
+      "min_border_cells": 22,
+      "sharpening": 0.25
+    },
+    {
+      "path": "/home/zwatx/code/mac-projects/apriltag-detector/work/optimization/libnapa_core_candidate.so",
+      "sha256": "4494cb46ea029c9c99a0670f50839faf5990bace3efa4e5f996ff1c0ece8eb92",
+      "min_tag_px": 16,
+      "max_detections": 1024,
+      "threads": 1,
+      "max_hamming": 3,
+      "min_contrast": 20,
+      "min_border_cells": 22,
+      "sharpening": 0.25
+    },
+    {
+      "path": "/home/zwatx/code/mac-projects/apriltag-detector/work/optimization/packed.so",
+      "sha256": "d182fed1644abc694ebe9a4260cbb5a5e8075b47191d6b20a4eb636bd0f7fb8c",
+      "min_tag_px": 16,
+      "max_detections": 1024,
+      "threads": 1,
+      "max_hamming": 3,
+      "min_contrast": 20,
+      "min_border_cells": 22,
+      "sharpening": 0.25
+    },
+    {
+      "path": "/home/zwatx/code/mac-projects/apriltag-detector/work/optimization/libnapa_core_candidate.so",
+      "sha256": "4494cb46ea029c9c99a0670f50839faf5990bace3efa4e5f996ff1c0ece8eb92",
+      "min_tag_px": 22,
+      "max_detections": 1024,
+      "threads": 1,
+      "max_hamming": 3,
+      "min_contrast": 20,
+      "min_border_cells": 22,
+      "sharpening": 0.25
+    },
+    {
+      "path": "/home/zwatx/code/mac-projects/apriltag-detector/work/optimization/packed.so",
+      "sha256": "d182fed1644abc694ebe9a4260cbb5a5e8075b47191d6b20a4eb636bd0f7fb8c",
+      "min_tag_px": 22,
+      "max_detections": 1024,
+      "threads": 1,
+      "max_hamming": 3,
+      "min_contrast": 20,
+      "min_border_cells": 22,
+      "sharpening": 0.25
+    },
+    {
+      "path": "/home/zwatx/code/mac-projects/apriltag-detector/work/optimization/libnapa_core_candidate.so",
+      "sha256": "4494cb46ea029c9c99a0670f50839faf5990bace3efa4e5f996ff1c0ece8eb92",
+      "min_tag_px": 32,
+      "max_detections": 1024,
+      "threads": 1,
+      "max_hamming": 3,
+      "min_contrast": 20,
+      "min_border_cells": 22,
+      "sharpening": 0.25
+    },
+    {
+      "path": "/home/zwatx/code/mac-projects/apriltag-detector/work/optimization/packed.so",
+      "sha256": "d182fed1644abc694ebe9a4260cbb5a5e8075b47191d6b20a4eb636bd0f7fb8c",
+      "min_tag_px": 32,
+      "max_detections": 1024,
+      "threads": 1,
+      "max_hamming": 3,
+      "min_contrast": 20,
+      "min_border_cells": 22,
+      "sharpening": 0.25
+    },
+    {
+      "path": "/home/zwatx/code/mac-projects/apriltag-detector/work/optimization/libnapa_core_candidate.so",
+      "sha256": "4494cb46ea029c9c99a0670f50839faf5990bace3efa4e5f996ff1c0ece8eb92",
+      "min_tag_px": 43,
+      "max_detections": 1024,
+      "threads": 1,
+      "max_hamming": 3,
+      "min_contrast": 20,
+      "min_border_cells": 22,
+      "sharpening": 0.25
+    },
+    {
+      "path": "/home/zwatx/code/mac-projects/apriltag-detector/work/optimization/packed.so",
+      "sha256": "d182fed1644abc694ebe9a4260cbb5a5e8075b47191d6b20a4eb636bd0f7fb8c",
+      "min_tag_px": 43,
+      "max_detections": 1024,
+      "threads": 1,
+      "max_hamming": 3,
+      "min_contrast": 20,
+      "min_border_cells": 22,
+      "sharpening": 0.25
+    },
+    {
+      "path": "/home/zwatx/code/mac-projects/apriltag-detector/work/optimization/libnapa_core_candidate.so",
+      "sha256": "4494cb46ea029c9c99a0670f50839faf5990bace3efa4e5f996ff1c0ece8eb92",
+      "min_tag_px": 64,
+      "max_detections": 1024,
+      "threads": 1,
+      "max_hamming": 3,
+      "min_contrast": 20,
+      "min_border_cells": 22,
+      "sharpening": 0.25
+    },
+    {
+      "path": "/home/zwatx/code/mac-projects/apriltag-detector/work/optimization/packed.so",
+      "sha256": "d182fed1644abc694ebe9a4260cbb5a5e8075b47191d6b20a4eb636bd0f7fb8c",
+      "min_tag_px": 64,
+      "max_detections": 1024,
+      "threads": 1,
+      "max_hamming": 3,
+      "min_contrast": 20,
+      "min_border_cells": 22,
+      "sharpening": 0.25
+    }
+  ]
+}
