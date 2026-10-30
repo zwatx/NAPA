@@ -73,7 +73,7 @@ NAPA corrects up to 3 wrong payload bits, where upstream AprilTag defaults to 2,
 part of a tag often still decodes. It accepts a third corrected bit only when the three wrong cells touch, as they do
 under a real obstruction. A random pattern that happens to fall within three bits of a code has its errors scattered,
 so this keeps chance matches out. In the benchmark's obstruction sweep, 864 tags with 0–40% of the black square
-covered by a white or grey patch, NAPA found 357 and AprilTag at decimate 2 found 330.
+covered by a white or grey patch, NAPA found 357 and WPILib's AprilTag at decimate 2 found 330.
 
 Every AprilTag detector finds the black border before it reads any bits, so none can find a tag whose border is hidden
 across a whole side or around a corner.

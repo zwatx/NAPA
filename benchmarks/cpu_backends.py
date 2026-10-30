@@ -314,6 +314,55 @@ def apriltag_backend(name: str, decimate: float, threads: int) -> Backend:
     return Backend(name, factory, config)
 
 
+# ----------------------------------------------------------------------------------- WPILib AprilTag
+
+
+def wpilib_backend(name: str, decimate: float, threads: int) -> Backend:
+    """WPILib's build of AprilTag 3 (robotpy-apriltag) with WPILib's own defaults, as FRC robot code runs it."""
+
+    from robotpy_apriltag import AprilTagDetector
+
+    def create():
+        detector = AprilTagDetector()
+        if not detector.addFamily("tag36h11", 2):
+            raise RuntimeError("robotpy-apriltag could not load tag36h11")
+        config = detector.getConfig()
+        config.numThreads, config.quadDecimate = threads, decimate
+        detector.setConfig(config)
+        return detector
+
+    def factory() -> DetectFn:
+        detector = create()
+
+        def detect(image: np.ndarray) -> list[Detection]:
+            # AprilTag puts pixel centres at +0.5, as upstream does.
+            return [
+                (int(d.getId()), np.array([[d.getCorner(i).x, d.getCorner(i).y] for i in range(4)]) - 0.5)
+                for d in detector.detect(image)
+            ]
+
+        return detect
+
+    probe = create()
+    config, quad = probe.getConfig(), probe.getQuadThresholdParameters()
+    settings = {
+        "library": "AprilTag 3, WPILib build (robotpy-apriltag)",
+        "version": _package_version("robotpy-apriltag"),
+        "family": "tag36h11",
+        "bits_corrected": 2,
+        **{f"effective_{k}": getattr(config, k) for k in ("numThreads", "quadDecimate", "quadSigma", "refineEdges")},
+        **{f"effective_{k}": getattr(config, k) for k in ("decodeSharpening",)},
+        # WPILib's defaults differ from upstream's: clusters of 300 px (upstream 24) and a 45 degree critical angle
+        # (upstream 10), so small and steep tags are dropped before decoding.
+        **{f"effective_quad_{k}": getattr(quad, k) for k in ("minClusterPixels", "criticalAngle", "maxLineFitMSE")},
+        **{f"effective_quad_{k}": getattr(quad, k) for k in ("minWhiteBlackDiff", "deglitch")},
+        "corner_refinement": "refineEdges (on)",
+        "threads": threads,
+        "pixel_offset_applied": -0.5,
+    }
+    return Backend(name, factory, settings)
+
+
 # --------------------------------------------------------------------------------------------- Locus
 
 
@@ -597,6 +646,7 @@ def registry(threads: int) -> dict[str, Callable[[], Backend]]:
         **{f"napa-mtp{m}": (lambda m=m: napa_backend(f"napa-mtp{m}", m)) for m in NAPA_SWEEP if m != 32},
         "apriltag3-d2": lambda: apriltag_backend("apriltag3-d2", 2.0, threads),
         "apriltag3-d1": lambda: apriltag_backend("apriltag3-d1", 1.0, threads),
+        "wpilib-d2": lambda: wpilib_backend("wpilib-d2", 2.0, threads),
         "locus": lambda: locus_backend("locus", threads),
         "locus-d2": lambda: locus_backend("locus-d2", threads, decimation=2),
         "opencv": lambda: opencv_backend("opencv", threads),
@@ -620,6 +670,7 @@ TUNING = {
     **{f"napa-mtp{m}": f"tuned: min_tag_px={m}" for m in NAPA_SWEEP if m != 32},
     "apriltag3-d2": "default (quad_decimate=2)",
     "apriltag3-d1": "tuned: quad_decimate=1 (full resolution)",
+    "wpilib-d2": "WPILib's defaults (quad_decimate=2, min cluster 300 px, critical angle 45 degrees)",
     "locus": "default (standard profile)",
     "locus-d2": "tuned for speed: standard + decimation=2",
     "opencv": "default (no corner refinement)",

@@ -1,8 +1,10 @@
 # NAPA benchmarks
 
-`performance_matrix.py` compares NAPA with upstream AprilTag (AprilTag 3 through `robotpy-apriltag`, at its default
-`quad_decimate=2` and at full resolution) on a large set of generated grayscale frames. It measures detector calls
-only. Camera delivery, colour conversion, and pose solving are outside the timed region.
+`performance_matrix.py` compares NAPA with AprilTag 3 as WPILib builds and configures it (`robotpy-apriltag`, at its
+default `quad_decimate=2` and at full resolution) on a large set of generated grayscale frames, and
+`cpu_comparison.py` runs the same frames through upstream AprilTag and other CPU detectors (see
+[Other CPU detectors](#other-cpu-detectors)). Both measure detector calls only. Camera delivery, colour conversion,
+and pose solving are outside the timed region.
 
 ## What's in the corpus
 
@@ -87,108 +89,199 @@ The script prints the per-scene tables below and writes two files:
 
 ## Latest results
 
-AprilTag at decimate 2 against NAPA, from the checked-in run (`results/2026-10-19_detector_matrix.json`, which records
-napa-vision 0.3.0) on one pinned core of an Intel Core Ultra 7 256V laptop: Windows 11 with the best-performance power
-mode, the benchmark running under WSL2 (Ubuntu-like Linux, Python 3.13, gcc 15). Earlier checked-in results came from
-a desktop Intel i7-12700H (Ubuntu), so their absolute times differ. p50 is the median detector call across all frames
-and repetitions in a row.
+From `results/2026-10-29_cpu_detector_matrix/matrix.json`: the default corpus (seed 2468) and the range sweep, run
+with `cpu_comparison.py latency` on one pinned performance core of an Intel Core i7-12700H laptop (Ubuntu 26.04,
+Python 3.14, gcc 15). Every detector ran at its own defaults, single-threaded, in a shuffled order on each frame with
+one warm-up and ten timed calls: napa-vision 0.4.3; WPILib's AprilTag through robotpy-apriltag 2026.2.2 (decimate 2);
+upstream AprilTag 3.4.5 at commit b7c0ebe (decimate 2 and 1); Locus 0.10.0 (`standard` profile); OpenCV 5.0.0's ArUco
+module (`DICT_APRILTAG_36h11`, no corner refinement, as it defaults); ArUco Nano v10 at c99989b; RapidTag 0.1.12. p50
+is the median detector call across all frames and repetitions in a row. Earlier checked-in results came from other
+machines, so their absolute times differ.
 
-#### 640x480
+WPILib's AprilTag keeps only candidate regions of at least 300 pixels, and rejects quads with a corner sharper than
+45° or wider than 135° (upstream: 24 pixels, and 10° or 170°). That is why it finds fewer small and steeply tilted
+tags than upstream at the same decimation.
 
-| Scene | Frames | Tags | AprilTag p50 | NAPA p50 | Speedup (median / worst frame) | Found (AprilTag → NAPA) | False IDs (AprilTag → NAPA) |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| empty | 50 | 0 | 4.66 ms | 0.07 ms | 53.9× / 12.1× | — | 0 → 0 |
-| clutter-only | 50 | 0 | 3.08 ms | 0.16 ms | 14.7× / 7.0× | — | 0 → 0 |
-| decoys | 50 | 0 | 3.20 ms | 0.15 ms | 19.7× / 7.4× | — | 0 → 1 |
-| one-tag | 50 | 50 | 3.86 ms | 0.13 ms | 27.5× / 20.9× | 46/50 → 50/50 | 0 → 0 |
-| many-tags | 50 | 249 | 2.96 ms | 0.26 ms | 10.7× / 6.0× | 178/249 → 249/249 | 0 → 0 |
-| small-tags | 50 | 131 | 3.32 ms | 0.22 ms | 12.8× / 7.8× | 0/131 → 131/131 | 0 → 0 |
-| large-tags | 50 | 50 | 3.00 ms | 0.18 ms | 15.0× / 7.0× | 50/50 → 50/50 | 0 → 0 |
-| steep-angle | 50 | 109 | 3.40 ms | 0.21 ms | 15.5× / 6.7× | 71/109 → 105/109 | 0 → 0 |
-| blur | 50 | 96 | 3.01 ms | 0.22 ms | 13.0× / 5.9× | 82/96 → 96/96 | 0 → 0 |
-| motion-blur | 50 | 110 | 3.19 ms | 0.23 ms | 12.2× / 6.0× | 86/110 → 109/110 | 0 → 0 |
-| noise | 50 | 110 | 3.35 ms | 0.29 ms | 11.4× / 3.8× | 94/110 → 110/110 | 0 → 0 |
-| uneven-light | 50 | 98 | 3.17 ms | 0.23 ms | 12.9× / 6.9× | 82/98 → 98/98 | 0 → 0 |
-| low-contrast | 50 | 96 | 4.14 ms | 0.16 ms | 25.2× / 16.1× | 70/96 → 95/96 | 0 → 0 |
-| underexposed | 50 | 110 | 3.32 ms | 0.23 ms | 13.7× / 7.9× | 96/110 → 110/110 | 0 → 0 |
-| overexposed | 50 | 100 | 1.09 ms | 0.18 ms | 5.3× / 3.9× | 82/100 → 100/100 | 0 → 0 |
-| jpeg | 50 | 104 | 1.10 ms | 0.18 ms | 6.6× / 3.6× | 92/104 → 104/104 | 0 → 0 |
-| busy-background | 50 | 102 | 3.15 ms | 0.22 ms | 13.3× / 7.3× | 89/102 → 102/102 | 0 → 0 |
-| frame-edge | 50 | 102 | 3.05 ms | 0.21 ms | 13.7× / 7.8× | 74/102 → 102/102 | 0 → 0 |
-| noise-free | 50 | 98 | 0.50 ms | 0.09 ms | 5.7× / 4.8× | 83/98 → 98/98 | 0 → 0 |
-| dark-background | 50 | 96 | 2.71 ms | 0.19 ms | 15.5× / 6.6× | 71/96 → 96/96 | 0 → 0 |
+#### 640x480: median call, and NAPA's median per-frame speedup in brackets
 
-#### 1280x720
+| Scene | Frames | Tags | WPILib AprilTag, decimate 2 | AprilTag, decimate 2 | AprilTag, decimate 1 | Locus | OpenCV ArUco | ArUco Nano | RapidTag | NAPA |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| empty | 50 | 0 | 5.47 ms (128×) | 7.00 ms (164×) | 28.01 ms (644×) | 2.66 ms (71×) | 0.91 ms (27×) | 0.46 ms (11×) | 0.80 ms (21×) | 0.04 ms |
+| clutter-only | 50 | 0 | 3.76 ms (20×) | 5.53 ms (31×) | 19.76 ms (106×) | 3.05 ms (25×) | 14.02 ms (87×) | 0.88 ms (6.7×) | 2.32 ms (16×) | 0.15 ms |
+| decoys | 50 | 0 | 3.83 ms (28×) | 4.87 ms (36×) | 19.13 ms (149×) | 2.55 ms (19×) | 13.53 ms (105×) | 1.84 ms (14×) | 1.95 ms (14×) | 0.14 ms |
+| one-tag | 50 | 50 | 4.72 ms (45×) | 5.80 ms (55×) | 22.81 ms (223×) | 3.05 ms (30×) | 2.56 ms (25×) | 0.49 ms (4.7×) | 1.05 ms (10×) | 0.10 ms |
+| many-tags | 50 | 249 | 3.58 ms (13×) | 5.13 ms (18×) | 18.22 ms (61×) | 4.32 ms (16×) | 17.97 ms (57×) | 1.03 ms (3.9×) | 2.27 ms (7.7×) | 0.28 ms |
+| small-tags | 50 | 131 | 4.05 ms (17×) | 6.08 ms (25×) | 19.39 ms (100×) | 3.54 ms (19×) | 15.41 ms (55×) | 0.88 ms (4.2×) | 2.33 ms (9.0×) | 0.22 ms |
+| large-tags | 50 | 50 | 3.66 ms (22×) | 5.12 ms (32×) | 19.16 ms (123×) | 3.35 ms (21×) | 12.37 ms (60×) | 0.90 ms (5.3×) | 2.08 ms (12×) | 0.17 ms |
+| steep-angle | 50 | 109 | 4.02 ms (19×) | 5.79 ms (27×) | 19.26 ms (103×) | 3.62 ms (21×) | 14.45 ms (62×) | 0.89 ms (4.4×) | 2.31 ms (10×) | 0.20 ms |
+| blur | 50 | 96 | 3.68 ms (14×) | 4.97 ms (21×) | 17.49 ms (75×) | 3.91 ms (19×) | 6.56 ms (27×) | 1.01 ms (5.0×) | 2.15 ms (8.5×) | 0.22 ms |
+| motion-blur | 50 | 110 | 3.76 ms (14×) | 5.11 ms (20×) | 17.59 ms (68×) | 3.93 ms (19×) | 9.05 ms (39×) | 0.96 ms (4.3×) | 2.23 ms (8.9×) | 0.22 ms |
+| noise | 50 | 110 | 4.08 ms (14×) | 6.41 ms (22×) | 22.84 ms (82×) | 3.31 ms (12×) | 16.94 ms (54×) | 2.26 ms (8.2×) | 7.10 ms (23×) | 0.28 ms |
+| uneven-light | 50 | 98 | 3.92 ms (16×) | 5.58 ms (23×) | 21.02 ms (89×) | 3.82 ms (17×) | 11.78 ms (57×) | 0.87 ms (3.6×) | 2.08 ms (9.1×) | 0.23 ms |
+| low-contrast | 50 | 96 | 4.92 ms (39×) | 6.25 ms (49×) | 23.80 ms (184×) | 3.28 ms (24×) | 3.76 ms (29×) | 0.59 ms (4.5×) | 1.17 ms (8.8×) | 0.13 ms |
+| underexposed | 50 | 110 | 4.00 ms (18×) | 5.67 ms (24×) | 21.56 ms (93×) | 4.24 ms (19×) | 9.76 ms (37×) | 0.96 ms (4.4×) | 1.77 ms (8.1×) | 0.23 ms |
+| overexposed | 50 | 100 | 1.34 ms (5.6×) | 2.33 ms (9.9×) | 5.28 ms (22×) | 2.22 ms (11×) | 11.30 ms (51×) | 0.74 ms (3.4×) | 2.07 ms (8.7×) | 0.21 ms |
+| jpeg | 50 | 104 | 1.41 ms (6.8×) | 2.47 ms (11×) | 5.55 ms (24×) | 2.64 ms (13×) | 9.14 ms (46×) | 0.93 ms (4.6×) | 2.69 ms (12×) | 0.22 ms |
+| busy-background | 50 | 102 | 3.96 ms (17×) | 5.75 ms (24×) | 20.14 ms (83×) | 3.65 ms (16×) | 23.81 ms (89×) | 0.88 ms (3.9×) | 2.27 ms (9.2×) | 0.23 ms |
+| frame-edge | 50 | 102 | 3.80 ms (18×) | 5.43 ms (25×) | 18.51 ms (100×) | 3.52 ms (21×) | 10.41 ms (45×) | 0.82 ms (4.6×) | 2.23 ms (11×) | 0.19 ms |
+| noise-free | 50 | 98 | 0.66 ms (6.1×) | 0.70 ms (6.5×) | 1.82 ms (17×) | 1.41 ms (13×) | 4.43 ms (39×) | 0.48 ms (4.4×) | 1.09 ms (10×) | 0.11 ms |
+| dark-background | 50 | 96 | 3.53 ms (19×) | 4.56 ms (25×) | 18.12 ms (110×) | 3.74 ms (22×) | 8.03 ms (43×) | 0.92 ms (5.5×) | 1.83 ms (10×) | 0.19 ms |
 
-| Scene | Frames | Tags | AprilTag p50 | NAPA p50 | Speedup (median / worst frame) | Found (AprilTag → NAPA) | False IDs (AprilTag → NAPA) |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| empty | 50 | 0 | 14.89 ms | 0.12 ms | 100.6× / 12.1× | — | 0 → 0 |
-| clutter-only | 50 | 0 | 9.16 ms | 0.31 ms | 18.8× / 5.1× | — | 0 → 0 |
-| decoys | 50 | 0 | 12.74 ms | 0.23 ms | 52.1× / 8.5× | — | 0 → 0 |
-| one-tag | 50 | 50 | 13.07 ms | 0.20 ms | 65.4× / 46.0× | 50/50 → 50/50 | 0 → 0 |
-| many-tags | 50 | 354 | 9.64 ms | 0.49 ms | 19.7× / 8.0× | 354/354 → 354/354 | 0 → 0 |
-| small-tags | 50 | 120 | 11.59 ms | 0.29 ms | 40.5× / 11.6× | 0/120 → 120/120 | 0 → 0 |
-| large-tags | 50 | 50 | 10.56 ms | 0.29 ms | 37.2× / 13.4× | 50/50 → 50/50 | 0 → 0 |
-| steep-angle | 50 | 112 | 10.59 ms | 0.35 ms | 30.6× / 11.6× | 109/112 → 111/112 | 0 → 0 |
-| blur | 50 | 89 | 10.19 ms | 0.32 ms | 31.5× / 9.2× | 89/89 → 89/89 | 0 → 0 |
-| motion-blur | 50 | 94 | 10.20 ms | 0.38 ms | 17.0× / 9.1× | 94/94 → 94/94 | 0 → 0 |
-| noise | 50 | 104 | 9.66 ms | 0.52 ms | 18.7× / 6.0× | 104/104 → 104/104 | 0 → 0 |
-| uneven-light | 50 | 103 | 10.95 ms | 0.37 ms | 29.2× / 12.0× | 103/103 → 103/103 | 0 → 0 |
-| low-contrast | 50 | 100 | 13.88 ms | 0.23 ms | 66.0× / 38.9× | 95/100 → 99/100 | 0 → 0 |
-| underexposed | 50 | 99 | 11.27 ms | 0.33 ms | 35.4× / 13.6× | 99/99 → 99/99 | 0 → 0 |
-| overexposed | 50 | 112 | 2.04 ms | 0.26 ms | 7.2× / 5.4× | 112/112 → 112/112 | 0 → 0 |
-| jpeg | 50 | 100 | 2.58 ms | 0.25 ms | 8.0× / 4.2× | 100/100 → 100/100 | 0 → 0 |
-| busy-background | 50 | 87 | 10.87 ms | 0.30 ms | 37.7× / 11.3× | 87/87 → 87/87 | 0 → 0 |
-| frame-edge | 50 | 105 | 10.85 ms | 0.32 ms | 35.0× / 12.2× | 103/105 → 105/105 | 0 → 0 |
-| noise-free | 50 | 104 | 1.35 ms | 0.16 ms | 8.1× / 6.9× | 104/104 → 104/104 | 0 → 0 |
-| dark-background | 50 | 105 | 10.35 ms | 0.29 ms | 38.1× / 12.0× | 91/105 → 105/105 | 0 → 0 |
+#### 640x480: tags found, and wrong IDs in brackets
 
-#### 1920x1080
+| Scene | Tags | WPILib AprilTag, decimate 2 | AprilTag, decimate 2 | AprilTag, decimate 1 | Locus | OpenCV ArUco | ArUco Nano | RapidTag | NAPA |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| empty | 0 | — | — | — | — | — | — | — | — |
+| clutter-only | 0 | — | — | — | — | — | — | — | — |
+| decoys | 0 | — | — (1) | — (1) | — (1) | — (1) | — | — (1) | — (1) |
+| one-tag | 50 | 46 | 50 | 50 | 50 | 50 | 50 | 27 | 50 |
+| many-tags | 249 | 178 | 249 | 249 | 249 | 248 | 249 | 200 | 249 |
+| small-tags | 131 | 0 | 131 | 131 | 131 | 131 | 131 | 84 | 131 |
+| large-tags | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 43 | 50 |
+| steep-angle | 109 | 71 | 109 | 109 | 109 | 109 | 109 | 97 | 105 |
+| blur | 96 | 82 | 96 | 96 | 96 | 96 | 96 | 84 | 96 |
+| motion-blur | 110 | 86 | 110 | 110 | 107 | 101 | 108 | 95 | 109 |
+| noise | 110 | 94 | 110 | 110 | 110 | 109 | 110 | 87 (1) | 110 |
+| uneven-light | 98 | 82 | 98 | 98 | 96 | 98 | 98 | 94 | 98 |
+| low-contrast | 96 | 70 | 88 | 92 | 91 | 96 | 94 | 47 | 95 |
+| underexposed | 110 | 96 | 110 | 110 | 79 | 110 | 110 | 110 | 110 |
+| overexposed | 100 | 82 | 100 | 100 | 92 | 100 | 100 | 100 | 100 |
+| jpeg | 104 | 92 | 104 | 104 | 104 | 104 | 104 | 91 | 104 |
+| busy-background | 102 | 89 | 102 | 102 | 102 | 102 | 102 | 96 (1) | 102 |
+| frame-edge | 102 | 74 | 102 | 102 | 102 | 97 | 102 | 89 | 102 |
+| noise-free | 98 | 83 | 98 | 98 | 98 | 97 | 98 | 41 | 98 |
+| dark-background | 96 | 71 | 96 | 96 | 96 | 96 | 96 | 13 | 96 |
 
-| Scene | Frames | Tags | AprilTag p50 | NAPA p50 | Speedup (median / worst frame) | Found (AprilTag → NAPA) | False IDs (AprilTag → NAPA) |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| empty | 50 | 0 | 38.10 ms | 0.16 ms | 162.0× / 18.0× | — | 0 → 0 |
-| clutter-only | 50 | 0 | 25.54 ms | 0.42 ms | 50.3× / 6.1× | — | 0 → 0 |
-| decoys | 50 | 0 | 34.13 ms | 0.34 ms | 88.8× / 12.1× | — | 0 → 0 |
-| one-tag | 50 | 50 | 33.29 ms | 0.25 ms | 131.2× / 85.2× | 50/50 → 50/50 | 0 → 0 |
-| many-tags | 50 | 303 | 23.72 ms | 0.74 ms | 37.0× / 12.7× | 303/303 → 303/303 | 0 → 0 |
-| small-tags | 50 | 122 | 26.47 ms | 0.46 ms | 65.8× / 13.3× | 0/122 → 121/122 | 0 → 0 |
-| large-tags | 50 | 50 | 26.91 ms | 0.41 ms | 73.7× / 16.3× | 50/50 → 50/50 | 0 → 0 |
-| steep-angle | 50 | 96 | 26.62 ms | 0.47 ms | 63.2× / 13.9× | 88/96 → 96/96 | 0 → 0 |
-| blur | 50 | 97 | 25.24 ms | 0.53 ms | 57.3× / 10.2× | 97/97 → 97/97 | 0 → 0 |
-| motion-blur | 50 | 95 | 27.15 ms | 0.48 ms | 67.7× / 12.0× | 95/95 → 95/95 | 0 → 0 |
-| noise | 50 | 100 | 27.00 ms | 0.97 ms | 29.8× / 6.0× | 100/100 → 100/100 | 0 → 0 |
-| uneven-light | 50 | 101 | 27.59 ms | 0.60 ms | 54.4× / 16.1× | 101/101 → 101/101 | 0 → 0 |
-| low-contrast | 50 | 113 | 32.71 ms | 0.33 ms | 100.7× / 60.7× | 108/113 → 111/113 | 0 → 0 |
-| underexposed | 50 | 95 | 31.68 ms | 0.42 ms | 85.7× / 15.2× | 95/95 → 95/95 | 0 → 0 |
-| overexposed | 50 | 100 | 8.24 ms | 0.44 ms | 9.9× / 5.7× | 100/100 → 100/100 | 0 → 0 |
-| jpeg | 50 | 100 | 7.06 ms | 0.52 ms | 11.8× / 4.5× | 100/100 → 100/100 | 0 → 0 |
-| busy-background | 50 | 97 | 26.80 ms | 0.45 ms | 69.0× / 14.1× | 97/97 → 97/97 | 0 → 0 |
-| frame-edge | 50 | 88 | 27.27 ms | 0.42 ms | 70.5× / 14.0× | 88/88 → 88/88 | 0 → 0 |
-| noise-free | 50 | 108 | 2.96 ms | 0.24 ms | 12.6× / 10.3× | 108/108 → 108/108 | 0 → 0 |
-| dark-background | 50 | 107 | 27.57 ms | 0.40 ms | 77.2× / 16.7× | 89/107 → 107/107 | 0 → 0 |
+#### 1280x720: median call, and NAPA's median per-frame speedup in brackets
 
-The JSON report also holds full-resolution AprilTag (`quad_decimate=1`), the 95th/99th percentiles, corner error by
-scene, and the obstruction sweep.
+| Scene | Frames | Tags | WPILib AprilTag, decimate 2 | AprilTag, decimate 2 | AprilTag, decimate 1 | Locus | OpenCV ArUco | ArUco Nano | RapidTag | NAPA |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| empty | 50 | 0 | 17.48 ms (242×) | 21.47 ms (282×) | 87.85 ms (1169×) | 8.13 ms (118×) | 2.70 ms (42×) | 0.90 ms (13×) | 2.36 ms (36×) | 0.07 ms |
+| clutter-only | 50 | 0 | 11.04 ms (23×) | 15.26 ms (34×) | 64.46 ms (113×) | 9.01 ms (34×) | 23.08 ms (67×) | 2.49 ms (9.0×) | 6.99 ms (22×) | 0.30 ms |
+| decoys | 50 | 0 | 15.28 ms (72×) | 19.48 ms (90×) | 77.65 ms (353×) | 7.77 ms (36×) | 18.81 ms (90×) | 3.57 ms (17×) | 3.87 ms (19×) | 0.21 ms |
+| one-tag | 50 | 50 | 15.42 ms (103×) | 18.74 ms (122×) | 75.23 ms (505×) | 8.51 ms (57×) | 4.52 ms (31×) | 1.08 ms (7.3×) | 2.71 ms (18×) | 0.15 ms |
+| many-tags | 50 | 354 | 11.16 ms (23×) | 14.90 ms (28×) | 56.16 ms (118×) | 10.30 ms (21×) | 24.44 ms (51×) | 2.65 ms (5.3×) | 5.87 ms (11×) | 0.48 ms |
+| small-tags | 50 | 120 | 13.81 ms (57×) | 18.30 ms (73×) | 66.50 ms (278×) | 9.11 ms (36×) | 12.68 ms (38×) | 1.60 ms (6.9×) | 4.73 ms (19×) | 0.24 ms |
+| large-tags | 50 | 50 | 12.13 ms (52×) | 16.85 ms (67×) | 61.78 ms (278×) | 9.16 ms (36×) | 17.18 ms (57×) | 2.05 ms (7.7×) | 5.23 ms (18×) | 0.26 ms |
+| steep-angle | 50 | 112 | 12.55 ms (38×) | 17.26 ms (49×) | 62.75 ms (207×) | 9.30 ms (30×) | 23.97 ms (53×) | 2.01 ms (5.7×) | 5.50 ms (16×) | 0.33 ms |
+| blur | 50 | 89 | 11.82 ms (38×) | 15.96 ms (49×) | 60.61 ms (199×) | 9.89 ms (32×) | 12.36 ms (33×) | 2.33 ms (7.7×) | 5.27 ms (16×) | 0.31 ms |
+| motion-blur | 50 | 94 | 12.39 ms (20×) | 16.78 ms (24×) | 60.14 ms (83×) | 9.78 ms (31×) | 18.16 ms (34×) | 2.55 ms (5.9×) | 6.53 ms (14×) | 0.38 ms |
+| noise | 50 | 104 | 11.23 ms (22×) | 17.70 ms (34×) | 71.05 ms (140×) | 8.62 ms (16×) | 39.34 ms (68×) | 6.18 ms (12×) | 20.12 ms (32×) | 0.51 ms |
+| uneven-light | 50 | 103 | 12.87 ms (37×) | 17.59 ms (47×) | 67.83 ms (202×) | 9.79 ms (29×) | 17.54 ms (38×) | 2.19 ms (5.6×) | 5.66 ms (13×) | 0.37 ms |
+| low-contrast | 50 | 100 | 15.90 ms (81×) | 19.31 ms (95×) | 78.62 ms (390×) | 8.81 ms (44×) | 5.91 ms (31×) | 1.26 ms (6.5×) | 3.04 ms (15×) | 0.20 ms |
+| underexposed | 50 | 99 | 14.00 ms (44×) | 19.10 ms (59×) | 78.22 ms (242×) | 11.10 ms (36×) | 15.18 ms (41×) | 2.24 ms (6.9×) | 4.52 ms (13×) | 0.31 ms |
+| overexposed | 50 | 112 | 2.60 ms (8.2×) | 4.46 ms (12×) | 10.48 ms (33×) | 4.62 ms (16×) | 17.54 ms (49×) | 1.45 ms (4.8×) | 3.88 ms (13×) | 0.26 ms |
+| jpeg | 50 | 100 | 3.07 ms (11×) | 4.14 ms (14×) | 10.46 ms (34×) | 5.10 ms (19×) | 18.05 ms (55×) | 1.64 ms (6.4×) | 5.26 ms (18×) | 0.26 ms |
+| busy-background | 50 | 87 | 12.75 ms (47×) | 18.00 ms (59×) | 66.07 ms (243×) | 9.25 ms (30×) | 37.77 ms (78×) | 1.95 ms (6.2×) | 5.39 ms (16×) | 0.29 ms |
+| frame-edge | 50 | 105 | 12.97 ms (43×) | 16.75 ms (55×) | 62.37 ms (224×) | 9.09 ms (32×) | 16.18 ms (39×) | 2.02 ms (6.3×) | 5.28 ms (16×) | 0.30 ms |
+| noise-free | 50 | 104 | 1.73 ms (9.9×) | 1.71 ms (9.8×) | 4.94 ms (28×) | 3.02 ms (17×) | 6.84 ms (41×) | 1.10 ms (6.4×) | 2.97 ms (17×) | 0.18 ms |
+| dark-background | 50 | 105 | 12.15 ms (52×) | 15.09 ms (62×) | 62.79 ms (266×) | 10.16 ms (39×) | 8.21 ms (31×) | 1.73 ms (6.8×) | 3.62 ms (16×) | 0.25 ms |
+
+#### 1280x720: tags found, and wrong IDs in brackets
+
+| Scene | Tags | WPILib AprilTag, decimate 2 | AprilTag, decimate 2 | AprilTag, decimate 1 | Locus | OpenCV ArUco | ArUco Nano | RapidTag | NAPA |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| empty | 0 | — | — | — | — | — | — | — | — |
+| clutter-only | 0 | — | — | — | — | — | — | — (1) | — |
+| decoys | 0 | — | — | — | — | — | — | — | — |
+| one-tag | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 26 | 50 |
+| many-tags | 354 | 354 | 354 | 354 | 354 | 354 | 354 | 299 | 354 |
+| small-tags | 120 | 0 | 120 | 120 | 120 | 120 | 120 | 68 | 120 |
+| large-tags | 50 | 50 | 50 | 50 | 50 | 49 | 50 | 46 | 50 |
+| steep-angle | 112 | 109 | 112 | 112 | 112 | 112 | 112 | 101 (1) | 111 |
+| blur | 89 | 89 | 89 | 89 | 89 | 89 | 89 | 77 | 89 |
+| motion-blur | 94 | 94 | 94 | 94 | 94 | 93 | 94 | 83 | 94 |
+| noise | 104 | 104 | 104 | 104 | 104 | 104 | 104 | 93 (5) | 104 |
+| uneven-light | 103 | 103 | 103 | 103 | 102 | 103 | 103 | 91 | 103 |
+| low-contrast | 100 | 95 | 95 | 100 | 93 | 100 | 100 | 57 | 99 |
+| underexposed | 99 | 99 | 99 | 99 | 69 | 99 | 99 | 99 | 99 |
+| overexposed | 112 | 112 | 112 | 112 | 107 | 112 | 112 | 112 | 112 |
+| jpeg | 100 | 100 | 100 | 100 | 100 | 100 | 100 | 83 | 100 |
+| busy-background | 87 | 87 | 87 (1) | 87 | 87 | 87 | 87 | 74 | 87 |
+| frame-edge | 105 | 103 | 105 | 105 | 105 | 96 | 105 | 81 (2) | 105 |
+| noise-free | 104 | 104 | 104 | 104 | 104 | 104 | 104 | 39 | 104 |
+| dark-background | 105 | 91 | 105 | 105 | 105 | 105 | 105 | 7 | 105 |
+
+#### 1920x1080: median call, and NAPA's median per-frame speedup in brackets
+
+| Scene | Frames | Tags | WPILib AprilTag, decimate 2 | AprilTag, decimate 2 | AprilTag, decimate 1 | Locus | OpenCV ArUco | ArUco Nano | RapidTag | NAPA |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| empty | 50 | 0 | 44.39 ms (314×) | 54.52 ms (409×) | 212.09 ms (1612×) | 18.44 ms (153×) | 6.44 ms (55×) | 2.13 ms (19×) | 5.65 ms (46×) | 0.12 ms |
+| clutter-only | 50 | 0 | 28.83 ms (69×) | 42.10 ms (95×) | 148.77 ms (365×) | 19.36 ms (53×) | 50.77 ms (50×) | 4.95 ms (10×) | 11.26 ms (26×) | 0.32 ms |
+| decoys | 50 | 0 | 39.02 ms (104×) | 48.67 ms (130×) | 193.51 ms (518×) | 18.45 ms (55×) | 22.45 ms (67×) | 5.22 ms (16×) | 7.09 ms (22×) | 0.33 ms |
+| one-tag | 50 | 50 | 38.27 ms (172×) | 46.84 ms (200×) | 191.29 ms (815×) | 19.02 ms (88×) | 8.98 ms (40×) | 2.18 ms (10×) | 5.88 ms (27×) | 0.22 ms |
+| many-tags | 50 | 303 | 27.24 ms (41×) | 35.00 ms (48×) | 134.24 ms (207×) | 22.76 ms (32×) | 30.09 ms (39×) | 5.25 ms (7.8×) | 11.58 ms (18×) | 0.76 ms |
+| small-tags | 50 | 122 | 31.31 ms (86×) | 42.18 ms (107×) | 155.53 ms (441×) | 19.86 ms (50×) | 25.20 ms (36×) | 3.09 ms (8.2×) | 9.51 ms (22×) | 0.38 ms |
+| large-tags | 50 | 50 | 31.88 ms (90×) | 39.36 ms (107×) | 153.94 ms (441×) | 20.57 ms (53×) | 24.97 ms (44×) | 3.13 ms (8.9×) | 9.25 ms (23×) | 0.36 ms |
+| steep-angle | 50 | 96 | 31.15 ms (72×) | 39.71 ms (86×) | 150.13 ms (357×) | 19.89 ms (47×) | 29.83 ms (39×) | 3.42 ms (9.0×) | 10.20 ms (22×) | 0.43 ms |
+| blur | 50 | 97 | 31.34 ms (71×) | 41.07 ms (90×) | 153.98 ms (379×) | 22.53 ms (46×) | 23.71 ms (34×) | 4.53 ms (9.4×) | 10.07 ms (21×) | 0.47 ms |
+| motion-blur | 50 | 95 | 31.04 ms (80×) | 38.59 ms (91×) | 148.69 ms (370×) | 19.89 ms (46×) | 22.43 ms (36×) | 3.57 ms (7.8×) | 9.35 ms (20×) | 0.43 ms |
+| noise | 50 | 100 | 31.38 ms (33×) | 44.54 ms (49×) | 181.86 ms (190×) | 19.23 ms (17×) | 82.05 ms (63×) | 13.85 ms (14×) | 46.82 ms (34×) | 1.02 ms |
+| uneven-light | 50 | 101 | 33.25 ms (66×) | 42.64 ms (78×) | 168.94 ms (320×) | 22.29 ms (40×) | 35.95 ms (50×) | 4.35 ms (6.9×) | 13.15 ms (18×) | 0.56 ms |
+| low-contrast | 50 | 113 | 37.83 ms (122×) | 44.93 ms (144×) | 177.42 ms (586×) | 19.52 ms (63×) | 11.91 ms (37×) | 2.49 ms (8.6×) | 6.64 ms (21×) | 0.31 ms |
+| underexposed | 50 | 95 | 36.10 ms (96×) | 46.26 ms (121×) | 187.11 ms (506×) | 22.49 ms (61×) | 22.39 ms (44×) | 3.88 ms (9.5×) | 8.35 ms (21×) | 0.38 ms |
+| overexposed | 50 | 100 | 9.29 ms (11×) | 11.10 ms (15×) | 38.40 ms (44×) | 8.67 ms (20×) | 26.85 ms (39×) | 3.25 ms (6.2×) | 9.32 ms (18×) | 0.39 ms |
+| jpeg | 50 | 100 | 7.79 ms (13×) | 9.46 ms (14×) | 27.24 ms (45×) | 11.49 ms (23×) | 29.55 ms (40×) | 3.62 ms (7.4×) | 12.16 ms (22×) | 0.43 ms |
+| busy-background | 50 | 97 | 30.38 ms (78×) | 41.29 ms (96×) | 145.04 ms (380×) | 19.52 ms (46×) | 61.28 ms (81×) | 3.44 ms (7.7×) | 9.94 ms (21×) | 0.41 ms |
+| frame-edge | 50 | 88 | 31.91 ms (86×) | 39.91 ms (104×) | 152.63 ms (423×) | 19.67 ms (47×) | 26.99 ms (40×) | 3.21 ms (8.4×) | 14.51 ms (25×) | 0.39 ms |
+| noise-free | 50 | 108 | 3.49 ms (14×) | 3.38 ms (14×) | 10.56 ms (43×) | 5.74 ms (23×) | 10.88 ms (47×) | 1.89 ms (8.3×) | 6.13 ms (25×) | 0.25 ms |
+| dark-background | 50 | 107 | 30.89 ms (91×) | 37.50 ms (110×) | 156.60 ms (466×) | 20.63 ms (57×) | 16.90 ms (41×) | 3.23 ms (8.9×) | 8.36 ms (23×) | 0.35 ms |
+
+#### 1920x1080: tags found, and wrong IDs in brackets
+
+| Scene | Tags | WPILib AprilTag, decimate 2 | AprilTag, decimate 2 | AprilTag, decimate 1 | Locus | OpenCV ArUco | ArUco Nano | RapidTag | NAPA |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| empty | 0 | — | — | — | — | — | — | — | — |
+| clutter-only | 0 | — | — | — | — | — | — | — (1) | — |
+| decoys | 0 | — | — | — | — | — | — | — | — |
+| one-tag | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 28 | 50 |
+| many-tags | 303 | 303 | 303 | 303 | 303 | 300 | 303 | 219 | 303 |
+| small-tags | 122 | 0 | 122 | 122 | 122 | 122 | 122 | 81 (1) | 121 |
+| large-tags | 50 | 50 | 50 (1) | 50 | 50 | 50 | 50 | 46 | 50 |
+| steep-angle | 96 | 88 | 96 | 96 (1) | 96 | 96 | 96 | 83 (1) | 96 |
+| blur | 97 | 97 | 97 | 97 | 97 | 97 | 97 | 81 | 97 |
+| motion-blur | 95 | 95 | 95 | 95 | 95 | 95 | 95 | 83 | 95 |
+| noise | 100 | 100 | 100 | 100 | 100 | 100 | 100 | 80 (2) | 100 |
+| uneven-light | 101 | 101 | 101 | 101 (1) | 101 | 101 | 101 | 96 | 101 |
+| low-contrast | 113 | 108 | 108 | 113 | 104 | 113 | 113 | 40 | 111 |
+| underexposed | 95 | 95 | 95 | 95 | 81 | 95 | 95 | 95 | 95 |
+| overexposed | 100 | 100 | 100 | 100 | 87 | 100 | 100 | 100 | 100 |
+| jpeg | 100 | 100 | 100 | 100 | 100 | 100 | 100 | 89 | 100 |
+| busy-background | 97 | 97 | 97 | 97 | 97 | 97 | 97 | 87 (1) | 97 |
+| frame-edge | 88 | 88 | 88 | 88 | 88 | 84 | 88 | 73 (1) | 88 |
+| noise-free | 108 | 108 | 108 | 108 | 108 | 108 | 108 | 45 | 108 |
+| dark-background | 107 | 89 | 107 | 107 | 107 | 107 | 107 | 7 | 107 |
+
+The JSON report also holds the 95th and 99th percentiles, CPU time per call, and corner error by scene; the CSV holds
+every timing sample and detection.
 
 ## Range
 
-From `results/2026-10-28_range_sweep.json`, measured with napa-vision 0.4.1: tags found out of 50 at each black-square
-size in pixels.
+From the same run: tags found out of 50 at each black-square size, in pixels.
 
-| Detector | 12–14 | 16 | 18 | 20 | 22 | 24 | 28 | 32 | 36 | 40–48 | 56 | 64 | 72 | 80–96 |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| AprilTag, decimate 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 26 | 39 | 48 | 50 |
-| AprilTag, decimate 1 | 0 | 0 | 0 | 0 | 0 | 0 | 17 | 37 | 50 | 50 | 50 | 50 | 50 | 50 |
-| NAPA | 0 | 14 | 37 | 47 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 |
+| Detector | 12 | 14 | 16 | 18 | 20 | 22 | 24–32 | 36 | 40 | 48 | 56 | 64 | 72 | 80 | 88 | 96 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| WPILib AprilTag, decimate 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 26 | 39 | 48 | 50 | 50 | 50 |
+| AprilTag, decimate 2 | 4 | 8 | 9 | 20 | 33 | 45 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 |
+| AprilTag, decimate 1 | 49 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 |
+| Locus | 44 | 48 | 46 | 49 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 |
+| OpenCV ArUco | 40 | 44 | 49 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 49 |
+| ArUco Nano | 36 | 46 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 |
+| RapidTag | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 21 | 25 | 35 | 29 | 30 | 31 | 26 | 24 | 26 |
+| NAPA | 0 | 0 | 14 | 37 | 47 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 |
 
-NAPA found every tag from 22 px, AprilTag at decimate 1 from 36 px, and at decimate 2 from 80 px. A tag's size in the
-image is inversely proportional to its distance, so on the same camera NAPA sees about 3.6× as far as decimate 2 and
-1.6× as far as decimate 1.
+NAPA's default found every tag from 22 px, upstream AprilTag at decimate 2 from 24 px, Locus from 20 px, ArUco Nano
+from 16 px, and upstream AprilTag at decimate 1 from 14 px. WPILib's AprilTag at decimate 2 needed 80 px. OpenCV
+found every tag from 18 px except one at 96 px, and RapidTag never found all of any size. A tag's size in the image
+is inversely proportional to its distance, so under this test's conditions (light noise, up to 15° of tilt) NAPA's
+default would see about 3.6× as far as WPILib's AprilTag, and detectors that find smaller tags would see farther.
+With `min_tag_px=16`, NAPA found every tag down to 12 px (`results/2026-10-28_cpu_comparison/range_sweep_latency.json`,
+30 tags per size).
 
 ## Tag families
 
-A separate family-by-family run, not part of `performance_matrix.py`, used the same scenes with each family's own
+A separate family-by-family run, not part of `performance_matrix.py`, compared NAPA with upstream AprilTag only (most
+of the other detectors above read only a few of these families). It used the same scenes with each family's own
 tags, spaced by their printed size, at 640×480 and 1280×720. Speedups are against AprilTag at decimate 2, per frame,
 from a timing pass over 80 frames per family on one pinned core.
 
@@ -213,12 +306,12 @@ explains how NAPA sets each family's correction.
 ## Reading the results
 
 - Compare scenario rows at the same resolution rather than overall averages: the scenarios differ a lot in cost.
-- Corner error is the worst corner's distance from the truth, for each tag found. AprilTag's corners are shifted by
-  −0.5 px to the pixel-centre convention, and its corner order is aligned to the truth before scoring. NAPA's are
-  scored as returned. Over the 3,000 frames, NAPA's median was 0.021 px and its 95th percentile 0.093 px, against
-  AprilTag's 0.099 px and 0.303 px at decimate 2.
-- A wrong ID ("False IDs" in the tables) is any detection whose ID isn't in the frame, or a second detection of the
-  same tag.
+- Corner error is the worst corner's distance from the truth, for each tag found, after each detector's corner order
+  is aligned to the truth. AprilTag's and Locus's corners are shifted by −0.5 px to the pixel-centre convention, as
+  their sources document. Over the 3,000 frames, NAPA's median was 0.021 px and its 95th percentile 0.093 px, against
+  0.099 px and 0.303 px for WPILib's AprilTag, 0.043 px and 0.305 px for upstream AprilTag at decimate 2, and 0.044 px
+  and 0.316 px for ArUco Nano. OpenCV and RapidTag don't refine corners by default (about 1 px).
+- A wrong ID is any detection whose ID isn't in the frame, or a second detection of the same tag.
 - Recall in `small-tags` and `steep-angle` depends on apparent size. A steeply tilted tag can look narrower than
   `min_tag_px` even when its long side is well above it.
 - NAPA's one wrong ID was a tag-shaped decoy whose random payload fell within 2 bits of a real code, the same
