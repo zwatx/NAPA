@@ -54,6 +54,10 @@ The frames are synthetic. To check NAPA on your own camera, [score it on your ow
 [detector comparison](benchmarks/results/2026-10-28_cpu_comparison/report.md) covers multicore runs, memory, and the
 other libraries' faster settings.
 
+The [native-core optimization follow-up](benchmarks/results/2026-10-29_cpu_optimization/report.md) measures the
+updated source at `min_tag_px=16`, with raw timings, CPU and memory measurements, full synthetic quality results,
+and the remaining per-image, tail-latency and corner-error losses. The tables above describe the earlier run.
+
 ## How it works
 
 ![NAPA on one frame, stage by stage: it samples every third pixel, skips flat tiles, turns dark samples into runs and blobs, drops shapes that can't be tags, and fits edges and decodes only the tags, at full resolution.](docs/napa-pipeline.webp)

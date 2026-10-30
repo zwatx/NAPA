@@ -1,0 +1,19 @@
+{
+  "base_commit": "674c91b",
+  "candidate_source_sha256": "4e43b0bd74bfd85fa1faae51455150ff0d282af7e483e40bdc3d54a4e1cd0e96",
+  "candidate_binary_sha256": "270a246d250237f36313cf66a6fc94db7afbba19d3d7fc9612d0499adbfff1d7",
+  "pre_terminal_guard_source_sha256": "6e8fb174bdd93a0c2c9d85752c77ed4b6a66317ff2bddac13c42253e44147ec3",
+  "pre_terminal_guard_binary_sha256": "722b1048d0df4f656c5cd1f216106f95af1abbb34d8d363aed8aab6f647fa50f",
+  "baseline_binary_sha256": "a6b2c425cf61d98529a9bab05af5e9ce9d77ee756985c138e0131e8647940293",
+  "baseline_source_sha256": "ed3553c89df263ee6eb191e0343830760f7b5119796e6c069e2194c18881ca33",
+  "compiler": "cc (Ubuntu 15.2.0-16ubuntu1) 15.2.0",
+  "note": "Initial diagnostic uses the pre-terminal-guard core. Main quality/resources and second seed use guarded/unpacked core. Final-prefixed timing/quality/resources use packed final core. Exact ordered output comparisons and separate source snapshots preserve provenance.",
+  "unpacked_source_sha256": "8c64288586002b7a88cbdb53f803ff106b3421bc7587c17dabedf98092ab5e98",
+  "unpacked_binary_sha256": "4494cb46ea029c9c99a0670f50839faf5990bace3efa4e5f996ff1c0ece8eb92",
+  "final_timed_files": [
+    "final_latency.json",
+    "outlier_retime.json",
+    "final_resources_*",
+    "final_quality.json"
+  ]
+}

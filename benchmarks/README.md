@@ -6,6 +6,18 @@ default `quad_decimate=2` and at full resolution) on a large set of generated gr
 [Other CPU detectors](#other-cpu-detectors)). Both measure detector calls only. Camera delivery, colour conversion,
 and pose solving are outside the timed region.
 
+The latest native-core tuning is measured in the
+[CPU optimization report](results/2026-10-29_cpu_optimization/report.md). With `min_tag_px=16`, NAPA had the lowest
+pooled single-core p50, p95 and p99 on a 149-frame diagnostic set against 13 competitor configurations. It also had
+the lowest mean wall time, CPU time and working memory at all three resolutions, with one or six P-cores available
+to each backend; NAPA itself uses one thread per frame. It found all 3,486 tags in the full synthetic replay with no
+wrong IDs or duplicates. The default `min_tag_px=32` is unchanged and finds 3,334.
+
+The diagnostic frames were chosen to include NAPA's earlier losses, so they are not a random sample. NAPA still
+loses some individual frames to ArUco Nano and Locus. At 1080p with six cores available, its p99 trails two tuned
+detectors that find fewer tags, and its worst corner error is higher than upstream AprilTag's. These are synthetic
+results from one machine. The tables below come from earlier runs and were not changed.
+
 ## What's in the corpus
 
 Every frame is rendered on its own: no image is reused, and none is a copy of another with a different label. Each tag
