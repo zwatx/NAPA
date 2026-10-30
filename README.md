@@ -10,75 +10,58 @@ python -m pip install napa-vision
 
 ## Compared with other detectors
 
-These results use the **full fixed 3,000-frame corpus**, with 5,521 expected tags at 640×480, 1280×720 and
-1920×1080: all 20 scenarios, 50 independent renders per scenario/resolution, seed 2468. NAPA32 (the default,
-`min_tag_px=32`) and NAPA16 (`min_tag_px=16`) are normal backend options in the **same run on the same frames**
-as all 13 competitor configurations. No detector-dependent frame selection is used.
+The benchmark is 3,000 rendered frames holding 5,521 tags at 640×480, 1280×720, and 1920×1080, each with exact ground
+truth. Every detector ran single-threaded on the same CPU core, on the same frames.
 
-Every backend is configured for one worker on the same verified P-core of an i7-12700H. Detectors are constructed
-once, warmed per image and timed ten times in shuffled order. Percentiles pool all 30,000 timed calls per backend.
-Rendering, scoring and initialization are excluded; required internal work, input copies and result conversion
-remain timed. The current native source was frozen before the run. This does not describe a new PyPI release.
-
-| Detector / configuration | p50 ms | p95 ms | p99 ms | CPU mean ms | Found / tags | Wrong IDs | Dup |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| NAPA32 (default) | 0.255 | 1.479 | 2.081 | 0.405 | 5513/5521 | 1 | 0 |
-| NAPA16 (tuned) | 0.741 | 5.204 | 6.518 | 1.297 | 5519/5521 | 1 | 0 |
-| WPILib AprilTag d2 | 11.306 | 41.374 | 48.317 | 14.816 | 4759/5521 | 0 | 0 |
-| AprilTag d2 | 14.990 | 51.563 | 59.852 | 19.010 | 5503/5521 | 3 | 0 |
-| AprilTag d1 | 57.010 | 204.199 | 233.535 | 72.147 | 5517/5521 | 3 | 0 |
-| Locus standard | 8.695 | 26.021 | 34.121 | 10.857 | 5393/5521 | 1 | 0 |
-| Locus d2 | 4.287 | 11.562 | 14.093 | 5.148 | 5419/5521 | 1 | 0 |
-| OpenCV ArUco | 14.745 | 90.758 | 152.710 | 26.333 | 5486/5521 | 1 | 0 |
-| OpenCV SUBPIX | 14.773 | 90.632 | 153.459 | 26.364 | 5486/5521 | 1 | 0 |
-| ArUco3 full | 7.960 | 30.161 | 67.950 | 11.333 | 5402/5521 | 1 | 0 |
-| ArUco3 min≈64 px | 2.787 | 10.137 | 15.263 | 3.811 | 4415/5521 | 0 | 0 |
-| ArUco3 min≈32 px | 3.715 | 14.699 | 21.352 | 5.360 | 5308/5521 | 1 | 0 |
-| ArUco Nano | 1.925 | 8.574 | 13.881 | 2.757 | 5517/5521 | 0 | 0 |
-| RapidTag | 4.682 | 20.446 | 39.907 | 6.801 | 4167/5521 | 19 | 0 |
-| RapidTag SUBPIX | 4.698 | 20.462 | 40.067 | 6.806 | 4167/5521 | 19 | 0 |
-
-Both NAPA options have lower pooled main-corpus p50/p95/p99 than every competitor configuration. NAPA32 has lower per-frame medians on every main-corpus image versus every competitor. NAPA16 slower-frame counts are Locus d2: 1; ArUco3 min≈64 px: 18; ArUco3 min≈32 px: 3; ArUco Nano: 24. These are observed comparisons, not significance tests; near-ties remain included.
-
-Each speedup below is competitor time ÷ NAPA time, from the ten-sample median on each of the same 3,000 frames.
-Values below one are NAPA losses; the near-tie is retained without a statistical-significance claim.
-
-| Competitor | Vs NAPA32: median (minimum) | NAPA32 slower / 3000 | Vs NAPA16: median (minimum) | NAPA16 slower / 3000 |
+| Detector | Speed vs. WPILib's defaults (median frame) | Tags found | Worst-corner error (median) | Wrong IDs |
 | --- | ---: | ---: | ---: | ---: |
-| WPILib AprilTag d2 | 24.98× (3.27607×) | 0 | 12.09× (1.54548×) | 0 |
-| AprilTag d2 | 33.59× (3.75824×) | 0 | 16.37× (2.90373×) | 0 |
-| AprilTag d1 | 127.56× (9.65688×) | 0 | 63.61× (6.58941×) | 0 |
-| Locus standard | 27.07× (7.04917×) | 0 | 10.36× (1.99490×) | 0 |
-| Locus d2 | 13.79× (3.26014×) | 0 | 6.12× (0.99987×) | 1 |
-| OpenCV ArUco | 45.86× (6.62928×) | 0 | 16.54× (2.27181×) | 0 |
-| OpenCV SUBPIX | 45.67× (6.65748×) | 0 | 16.60× (2.23070×) | 0 |
-| ArUco3 full | 26.13× (6.12180×) | 0 | 10.32× (2.09818×) | 0 |
-| ArUco3 min≈64 px | 9.61× (1.96210×) | 0 | 3.55× (0.70896×) | 18 |
-| ArUco3 min≈32 px | 12.30× (2.78592×) | 0 | 4.53× (0.74182×) | 3 |
-| ArUco Nano | 7.06× (1.83068×) | 0 | 2.52× (0.83909×) | 24 |
-| RapidTag | 16.61× (4.59048×) | 0 | 6.36× (1.50660×) | 0 |
-| RapidTag SUBPIX | 16.51× (4.61710×) | 0 | 6.36× (1.50410×) | 0 |
+| **NAPA** | **25×** | **99.9%** | **0.020 px** | 1 |
+| AprilTag, WPILib's defaults | 1× | 86.2% | 0.099 px | 0 |
+| AprilTag, decimate 2 | 0.79× | 99.7% | 0.043 px | 3 |
+| AprilTag, full resolution | 0.21× | 99.9% | 0.042 px | 3 |
+| Locus | 1.3× | 97.7% | 0.044 px | 1 |
+| Locus, decimate 2 | 2.4× | 98.2% | 0.044 px | 1 |
+| OpenCV ArUco, subpixel | 0.55× | 99.4% | 0.289 px | 1 |
+| ArUco3 | 1.2× | 97.8% | 0.986 px | 1 |
+| ArUco3, tags over 64 px | 3.1× | 80.0% | 0.282 px | 0 |
+| ArUco3, tags over 32 px | 2.2× | 96.1% | 0.284 px | 1 |
+| ArUco Nano | 4.8× | 99.9% | 0.044 px | 0 |
+| RapidTag, subpixel | 2.0× | 75.5% | 0.294 px | 19 |
 
-NAPA16 misses two low-contrast tags and reports one wrong ID. NAPA32 misses eight tags and reports one wrong ID;
-its latency advantage comes with lower recall. Nano misses four tags and reports no wrong IDs. On common tags,
-NAPA's median/p95 corner errors are lower than upstream AprilTag d1, but its maximum is worse: 3.57 versus 2.35 px
-for NAPA16, and 3.39 versus 2.16 px for NAPA32 on their respective common tags. Both NAPA settings retain
-full-resolution corner refinement.
+NAPA was faster than every other detector on every one of the 3,000 frames. The closest was ArUco Nano, and NAPA's
+smallest lead over it on any frame was 1.8×. NAPA's one wrong ID was a tag-shaped decoy with a random pattern. OpenCV
+ArUco and RapidTag without subpixel refinement run at the same speed as above, with corners about a pixel off.
 
-The same run also includes **600 stress frames** and **900 range frames**, reported separately rather than pooled
-into the headline: NAPA16 finds 4,577/4,577 stress tags and 900/900 range tags, with no wrong IDs in either group.
-NAPA32 finds 4,390/4,577 and 748/900 respectively. All peer results in these tables are newly measured on the same
-frames, not reused from an earlier run.
+NAPA's lead over AprilTag grows with resolution:
 
-AprilTag d1/d2 means decimation one/two; Locus d2 is its standard profile at decimation two. OpenCV and RapidTag
-defaults do not refine corners; SUBPIX variants are separate. ArUco3 minimum-size labels account for half-scale
-detection. The [full report](benchmarks/results/2026-10-30_cpu_full_corpus/report.md) records exact settings, corner comparisons, stress/range results,
-CPU time, thermal/load variation, raw data and the protocol recorded before timing.
+| Resolution | vs. WPILib's defaults, median (slowest frame) | vs. full resolution, median (slowest frame) |
+| --- | ---: | ---: |
+| 640×480 | 18× (3.3×) | 93× (9.7×) |
+| 1280×720 | 36× (5.1×) | 198× (19×) |
+| 1920×1080 | 74× (5.1×) | 375× (20×) |
 
-The [benchmark guide](benchmarks/README.md) has per-scene and range tables. Older
-[isolated resource measurements](benchmarks/results/2026-10-29_cpu_optimization/report.md#cpu-and-working-memory)
-use separate 96-frame sets; this new interleaved run does not measure isolated RSS. These are finite synthetic
-measurements on one host. [Score your own camera footage](docs/measuring.md) before relying on a specific result.
+**Range.** A tag looks smaller the farther away it is, so the smallest tag a detector finds sets how far it can see. In
+the [range sweep](benchmarks/README.md#range), NAPA found every tag from 22 px up, AprilTag at WPILib's defaults from 80
+px, and AprilTag at full resolution from 14 px. On the same camera, NAPA sees about 3.6× as far as WPILib's defaults.
+
+**Smaller tags.** `min_tag_px=16` found every tag in the range sweep, down to 12 px, and 5,519 of the 5,521 tags above.
+It takes about 3× as long as the default, which still makes it 12× faster than WPILib's defaults. ArUco Nano, ArUco3,
+and Locus at decimate 2 were faster than it on 43 of the 3,000 frames.
+
+**Corners.** NAPA's median worst-corner error is less than half of full-resolution AprilTag's and about a fifth of
+WPILib's defaults, and on 95% of tags it was within 0.09 px. Heavy motion blur is the exception: NAPA's largest error
+was 3.4 px, against 2.2 px for full-resolution AprilTag on the same tags.
+
+**Stress.** A separate set of 600 harder frames has tags under 32 px, very heavy noise, and up to 80 tags per frame.
+NAPA found 96% of those tags with its default settings, and all of them with `min_tag_px=16`.
+
+On tag16h5, the 2023 FRC family, AprilTag at its default two-bit correction reported 581 wrong IDs in the [family
+benchmark](benchmarks/README.md#tag-families), and NAPA reported none.
+
+The frames are synthetic, and the timings come from one laptop CPU (Intel i7-12700H). To check NAPA on your own camera,
+[score it on your own footage](docs/measuring.md). The [full
+report](benchmarks/results/2026-10-30_cpu_full_corpus/report.md) has every configuration's settings, latency
+percentiles, and raw data, and the [benchmark guide](benchmarks/README.md) has results for every scene.
 
 ## How it works
 

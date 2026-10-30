@@ -6,7 +6,7 @@ default `quad_decimate=2` and at full resolution) on a large set of generated gr
 [Other CPU detectors](#other-cpu-detectors)). Both measure detector calls only. Camera delivery, colour conversion,
 and pose solving are outside the timed region.
 
-The latest tables use the full fixed corpus in the [2026-10-30 comparison](results/2026-10-30_cpu_full_corpus/report.md). NAPA32/default and NAPA16 are ordinary backends on the same frames as every peer. Main-corpus, stress and range results have separate scopes. The previous 149-frame set is a development diagnostic only and is superseded for headline measurements.
+The latest results are from the [2026-10-30 run](results/2026-10-30_cpu_full_corpus/report.md), which ran NAPA and 13 configurations of other detectors on the same frames.
 
 ## What's in the corpus
 
@@ -91,13 +91,19 @@ The script prints the per-scene tables below and writes two files:
 
 ## Latest results
 
-Full fixed 3,000-frame corpus from [matrix.csv](results/2026-10-30_cpu_full_corpus/matrix.csv): all 20 scenarios × 50 renders × three resolutions, 5,521 placed tags. Every backend, including normal NAPA32 and NAPA16 options, receives the same frames. No prior-loss selection or frame filters. One warm-up plus ten shuffled timed calls per image on a verified P-core of the i7-12700H; source/settings frozen before timing. Each timing cell is the median of all timed calls pooled within that scene. Counts are per image, not multiplied by repetitions.
+These tables come from the [2026-10-30 run](results/2026-10-30_cpu_full_corpus/report.md), which gave every detector the
+same 3,000 frames: 50 per scene at each resolution. Each detector had one warm-up and ten timed calls per frame, in
+shuffled order, on one performance core of an Intel i7-12700H. Each time is the median of a scene's timed calls.
 
-NAPA32 is the default; NAPA16 is tuned. Both retain refinement. AprilTag d1/d2 denotes decimation one/two; Locus d2 is the standard profile at decimation two. OpenCV/RapidTag defaults do not refine corners; SUBPIX variants are separate. ArUco3 minimum sizes account for half-scale detection. Exact builds, effective settings and common-tag corner errors are in the [new report](results/2026-10-30_cpu_full_corpus/report.md). The earlier 149-frame diagnostic set is supplementary development evidence, not the source of these tables.
+AprilTag at WPILib's defaults is `robotpy-apriltag` as WPILib configures it: decimate 2, a 300 px minimum cluster, and a
+45° critical angle. The other AprilTag rows use the upstream C library's defaults. OpenCV ArUco and RapidTag refine
+corners only in their subpixel rows. The two limited ArUco3 rows detect at half scale, which sets the smallest tag they
+can find. The [report](results/2026-10-30_cpu_full_corpus/report.md) lists every configuration's exact settings, and
+compares NAPA's corners with each detector's on the tags both found.
 
 ### 640x480: median detector call
 
-| Scene | Frames | Tags | NAPA32 (default) | NAPA16 (tuned) | WPILib AprilTag d2 | AprilTag d2 | AprilTag d1 | Locus standard | Locus d2 | OpenCV ArUco | OpenCV SUBPIX | ArUco3 full | ArUco3 min≈64 px | ArUco3 min≈32 px | ArUco Nano | RapidTag | RapidTag SUBPIX |
+| Scene | Frames | Tags | NAPA | NAPA, `min_tag_px=16` | AprilTag, WPILib's defaults | AprilTag, decimate 2 | AprilTag, full resolution | Locus | Locus, decimate 2 | OpenCV ArUco | OpenCV ArUco, subpixel | ArUco3 | ArUco3, tags over 64 px | ArUco3, tags over 32 px | ArUco Nano | RapidTag | RapidTag, subpixel |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | empty | 50 | 0 | 0.035 ms | 0.089 ms | 5.661 ms | 7.246 ms | 28.407 ms | 2.744 ms | 1.084 ms | 0.918 ms | 0.907 ms | 0.987 ms | 0.329 ms | 0.330 ms | 0.434 ms | 0.821 ms | 0.826 ms |
 | clutter-only | 50 | 0 | 0.151 ms | 0.475 ms | 3.760 ms | 5.271 ms | 19.628 ms | 3.063 ms | 1.552 ms | 13.991 ms | 14.075 ms | 2.953 ms | 0.904 ms | 1.354 ms | 0.897 ms | 2.435 ms | 2.445 ms |
@@ -122,7 +128,7 @@ NAPA32 is the default; NAPA16 is tuned. Both retain refinement. AprilTag d1/d2 d
 
 ### 640x480: tags found (wrong IDs in brackets)
 
-| Scene | Tags | NAPA32 (default) | NAPA16 (tuned) | WPILib AprilTag d2 | AprilTag d2 | AprilTag d1 | Locus standard | Locus d2 | OpenCV ArUco | OpenCV SUBPIX | ArUco3 full | ArUco3 min≈64 px | ArUco3 min≈32 px | ArUco Nano | RapidTag | RapidTag SUBPIX |
+| Scene | Tags | NAPA | NAPA, `min_tag_px=16` | AprilTag, WPILib's defaults | AprilTag, decimate 2 | AprilTag, full resolution | Locus | Locus, decimate 2 | OpenCV ArUco | OpenCV ArUco, subpixel | ArUco3 | ArUco3, tags over 64 px | ArUco3, tags over 32 px | ArUco Nano | RapidTag | RapidTag, subpixel |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | empty | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | clutter-only | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
@@ -147,7 +153,7 @@ NAPA32 is the default; NAPA16 is tuned. Both retain refinement. AprilTag d1/d2 d
 
 ### 1280x720: median detector call
 
-| Scene | Frames | Tags | NAPA32 (default) | NAPA16 (tuned) | WPILib AprilTag d2 | AprilTag d2 | AprilTag d1 | Locus standard | Locus d2 | OpenCV ArUco | OpenCV SUBPIX | ArUco3 full | ArUco3 min≈64 px | ArUco3 min≈32 px | ArUco Nano | RapidTag | RapidTag SUBPIX |
+| Scene | Frames | Tags | NAPA | NAPA, `min_tag_px=16` | AprilTag, WPILib's defaults | AprilTag, decimate 2 | AprilTag, full resolution | Locus | Locus, decimate 2 | OpenCV ArUco | OpenCV ArUco, subpixel | ArUco3 | ArUco3, tags over 64 px | ArUco3, tags over 32 px | ArUco Nano | RapidTag | RapidTag, subpixel |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | empty | 50 | 0 | 0.064 ms | 0.251 ms | 17.807 ms | 21.880 ms | 89.307 ms | 8.181 ms | 3.156 ms | 2.686 ms | 2.664 ms | 2.866 ms | 0.867 ms | 0.869 ms | 0.917 ms | 2.331 ms | 2.311 ms |
 | clutter-only | 50 | 0 | 0.301 ms | 1.321 ms | 11.778 ms | 15.660 ms | 65.708 ms | 8.973 ms | 4.506 ms | 23.487 ms | 23.525 ms | 9.412 ms | 2.993 ms | 3.902 ms | 2.661 ms | 6.991 ms | 6.989 ms |
@@ -172,7 +178,7 @@ NAPA32 is the default; NAPA16 is tuned. Both retain refinement. AprilTag d1/d2 d
 
 ### 1280x720: tags found (wrong IDs in brackets)
 
-| Scene | Tags | NAPA32 (default) | NAPA16 (tuned) | WPILib AprilTag d2 | AprilTag d2 | AprilTag d1 | Locus standard | Locus d2 | OpenCV ArUco | OpenCV SUBPIX | ArUco3 full | ArUco3 min≈64 px | ArUco3 min≈32 px | ArUco Nano | RapidTag | RapidTag SUBPIX |
+| Scene | Tags | NAPA | NAPA, `min_tag_px=16` | AprilTag, WPILib's defaults | AprilTag, decimate 2 | AprilTag, full resolution | Locus | Locus, decimate 2 | OpenCV ArUco | OpenCV ArUco, subpixel | ArUco3 | ArUco3, tags over 64 px | ArUco3, tags over 32 px | ArUco Nano | RapidTag | RapidTag, subpixel |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | empty | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | clutter-only | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 (1) | 0 (1) |
@@ -197,7 +203,7 @@ NAPA32 is the default; NAPA16 is tuned. Both retain refinement. AprilTag d1/d2 d
 
 ### 1920x1080: median detector call
 
-| Scene | Frames | Tags | NAPA32 (default) | NAPA16 (tuned) | WPILib AprilTag d2 | AprilTag d2 | AprilTag d1 | Locus standard | Locus d2 | OpenCV ArUco | OpenCV SUBPIX | ArUco3 full | ArUco3 min≈64 px | ArUco3 min≈32 px | ArUco Nano | RapidTag | RapidTag SUBPIX |
+| Scene | Frames | Tags | NAPA | NAPA, `min_tag_px=16` | AprilTag, WPILib's defaults | AprilTag, decimate 2 | AprilTag, full resolution | Locus | Locus, decimate 2 | OpenCV ArUco | OpenCV ArUco, subpixel | ArUco3 | ArUco3, tags over 64 px | ArUco3, tags over 32 px | ArUco Nano | RapidTag | RapidTag, subpixel |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | empty | 50 | 0 | 0.108 ms | 0.583 ms | 44.197 ms | 54.449 ms | 213.348 ms | 18.539 ms | 7.031 ms | 6.157 ms | 6.135 ms | 6.509 ms | 1.917 ms | 1.922 ms | 2.144 ms | 5.262 ms | 5.249 ms |
 | clutter-only | 50 | 0 | 0.310 ms | 1.248 ms | 31.041 ms | 43.294 ms | 155.774 ms | 19.701 ms | 9.279 ms | 51.963 ms | 51.749 ms | 19.008 ms | 6.317 ms | 8.228 ms | 4.895 ms | 10.782 ms | 10.789 ms |
@@ -222,7 +228,7 @@ NAPA32 is the default; NAPA16 is tuned. Both retain refinement. AprilTag d1/d2 d
 
 ### 1920x1080: tags found (wrong IDs in brackets)
 
-| Scene | Tags | NAPA32 (default) | NAPA16 (tuned) | WPILib AprilTag d2 | AprilTag d2 | AprilTag d1 | Locus standard | Locus d2 | OpenCV ArUco | OpenCV SUBPIX | ArUco3 full | ArUco3 min≈64 px | ArUco3 min≈32 px | ArUco Nano | RapidTag | RapidTag SUBPIX |
+| Scene | Tags | NAPA | NAPA, `min_tag_px=16` | AprilTag, WPILib's defaults | AprilTag, decimate 2 | AprilTag, full resolution | Locus | Locus, decimate 2 | OpenCV ArUco | OpenCV ArUco, subpixel | ArUco3 | ArUco3, tags over 64 px | ArUco3, tags over 32 px | ArUco Nano | RapidTag | RapidTag, subpixel |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | empty | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | clutter-only | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 (1) | 0 (1) |
@@ -245,49 +251,52 @@ NAPA32 is the default; NAPA16 is tuned. Both retain refinement. AprilTag d1/d2 d
 | noise-free | 108 | 108 | 108 | 108 | 108 | 108 | 108 | 108 | 108 | 108 | 108 | 108 | 108 | 108 | 45 | 45 |
 | dark-background | 107 | 107 | 107 | 89 | 107 | 107 | 107 | 107 | 107 | 107 | 105 | 82 | 92 | 107 | 7 | 7 |
 
-No duplicate detections occurred in the main corpus. The same run's 600 stress frames are separate:
+No detector reported the same tag twice. The same run's 600 stress frames (tags under 32 px, noise σ 15–30, 30–80 tags
+per frame, and noisy clutter) are scored separately:
 
-| Detector / configuration | p50 ms | p95 ms | p99 ms | CPU mean ms | Found / tags | Wrong IDs | Dup |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| NAPA32 (default) | 0.600 | 2.201 | 2.728 | 0.780 | 4390/4577 | 0 | 0 |
-| NAPA16 (tuned) | 1.561 | 6.597 | 10.638 | 2.366 | 4577/4577 | 0 | 0 |
-| WPILib AprilTag d2 | 11.301 | 40.119 | 45.502 | 14.798 | 3011/4577 | 0 | 0 |
-| AprilTag d2 | 15.831 | 53.908 | 62.904 | 20.309 | 4443/4577 | 1 | 0 |
-| AprilTag d1 | 58.495 | 204.379 | 233.922 | 75.260 | 4577/4577 | 1 | 0 |
-| Locus standard | 13.389 | 33.434 | 37.747 | 14.649 | 4525/4577 | 0 | 0 |
-| Locus d2 | 6.214 | 18.127 | 21.016 | 7.256 | 4402/4577 | 0 | 0 |
-| OpenCV ArUco | 34.578 | 120.712 | 138.094 | 45.178 | 4533/4577 | 0 | 0 |
-| OpenCV SUBPIX | 34.551 | 120.577 | 138.781 | 45.223 | 4533/4577 | 0 | 0 |
-| ArUco3 full | 20.755 | 108.398 | 118.193 | 32.358 | 4070/4577 | 0 | 0 |
-| ArUco3 min≈64 px | 5.209 | 22.094 | 26.384 | 7.775 | 2330/4577 | 0 | 0 |
-| ArUco3 min≈32 px | 8.314 | 24.931 | 30.872 | 10.302 | 4043/4577 | 0 | 0 |
-| ArUco Nano | 4.759 | 18.619 | 20.433 | 6.539 | 4561/4577 | 0 | 0 |
-| RapidTag | 11.795 | 83.681 | 95.962 | 22.400 | 3354/4577 | 26 | 0 |
-| RapidTag SUBPIX | 11.820 | 84.273 | 96.223 | 22.424 | 3354/4577 | 26 | 0 |
+| Detector | Median ms | p95 ms | p99 ms | Tags found | Wrong IDs |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| NAPA | 0.600 | 2.201 | 2.728 | 4390/4577 | 0 |
+| NAPA, `min_tag_px=16` | 1.561 | 6.597 | 10.638 | 4577/4577 | 0 |
+| AprilTag, WPILib's defaults | 11.301 | 40.119 | 45.502 | 3011/4577 | 0 |
+| AprilTag, decimate 2 | 15.831 | 53.908 | 62.904 | 4443/4577 | 1 |
+| AprilTag, full resolution | 58.495 | 204.379 | 233.922 | 4577/4577 | 1 |
+| Locus | 13.389 | 33.434 | 37.747 | 4525/4577 | 0 |
+| Locus, decimate 2 | 6.214 | 18.127 | 21.016 | 4402/4577 | 0 |
+| OpenCV ArUco | 34.578 | 120.712 | 138.094 | 4533/4577 | 0 |
+| OpenCV ArUco, subpixel | 34.551 | 120.577 | 138.781 | 4533/4577 | 0 |
+| ArUco3 | 20.755 | 108.398 | 118.193 | 4070/4577 | 0 |
+| ArUco3, tags over 64 px | 5.209 | 22.094 | 26.384 | 2330/4577 | 0 |
+| ArUco3, tags over 32 px | 8.314 | 24.931 | 30.872 | 4043/4577 | 0 |
+| ArUco Nano | 4.759 | 18.619 | 20.433 | 4561/4577 | 0 |
+| RapidTag | 11.795 | 83.681 | 95.962 | 3354/4577 | 26 |
+| RapidTag, subpixel | 11.820 | 84.273 | 96.223 | 3354/4577 | 26 |
 
 ## Range
 
-Fresh measurements from the same shared run: tags found out of **50** per black-square size, 900 frames total. Every backend receives all 18 sizes, including WPILib, NAPA32 and NAPA16. No peer values are reused from prior range sweeps.
+Tags found out of 50 at each black-square size, from the same run: 900 frames at 640×480, with light noise and up to 15°
+of tilt.
 
 | Detector | 12 | 14 | 16 | 18 | 20 | 22 | 24 | 28 | 32 | 36 | 40 | 48 | 56 | 64 | 72 | 80 | 88 | 96 |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| NAPA32 (default) | 0 | 0 | 14 | 37 | 47 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 |
-| NAPA16 (tuned) | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 |
-| WPILib AprilTag d2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 26 | 39 | 48 | 50 | 50 | 50 |
-| AprilTag d2 | 4 | 8 | 9 | 20 | 33 | 45 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 |
-| AprilTag d1 | 49 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 |
-| Locus standard | 44 | 48 | 46 | 49 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 |
-| Locus d2 | 0 | 0 | 10 | 15 | 29 | 37 | 50 | 50 | 50 | 49 | 50 | 49 | 50 | 50 | 50 | 49 | 50 | 50 |
+| NAPA | 0 | 0 | 14 | 37 | 47 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 |
+| NAPA, `min_tag_px=16` | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 |
+| AprilTag, WPILib's defaults | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 26 | 39 | 48 | 50 | 50 | 50 |
+| AprilTag, decimate 2 | 4 | 8 | 9 | 20 | 33 | 45 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 |
+| AprilTag, full resolution | 49 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 |
+| Locus | 44 | 48 | 46 | 49 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 |
+| Locus, decimate 2 | 0 | 0 | 10 | 15 | 29 | 37 | 50 | 50 | 50 | 49 | 50 | 49 | 50 | 50 | 50 | 49 | 50 | 50 |
 | OpenCV ArUco | 40 | 44 | 49 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 49 |
-| OpenCV SUBPIX | 40 | 44 | 49 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 49 |
-| ArUco3 full | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 31 | 40 | 50 | 50 | 50 | 50 | 50 | 50 | 49 |
-| ArUco3 min≈64 px | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 32 | 44 | 48 | 49 |
-| ArUco3 min≈32 px | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 30 | 40 | 50 | 49 | 50 | 50 | 50 | 49 | 48 |
+| OpenCV ArUco, subpixel | 40 | 44 | 49 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 49 |
+| ArUco3 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 31 | 40 | 50 | 50 | 50 | 50 | 50 | 50 | 49 |
+| ArUco3, tags over 64 px | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 32 | 44 | 48 | 49 |
+| ArUco3, tags over 32 px | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 30 | 40 | 50 | 49 | 50 | 50 | 50 | 49 | 48 |
 | ArUco Nano | 36 | 46 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 |
 | RapidTag | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 21 | 25 | 35 | 29 | 30 | 31 | 26 | 24 | 26 |
-| RapidTag SUBPIX | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 21 | 25 | 35 | 29 | 30 | 31 | 26 | 24 | 26 |
+| RapidTag, subpixel | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 21 | 25 | 35 | 29 | 30 | 31 | 26 | 24 | 26 |
 
-NAPA16 found every tag at all tested sizes from 12–96 px. NAPA32 trades small-tag recall for latency. These images use light noise and at most 15° tilt; they do not establish real-camera range.
+With its default `min_tag_px=32`, NAPA found every tag from 22 px up. With `min_tag_px=16`, it found every tag at every
+size tested. Real cameras add blur, noise, and steeper angles, so measure range on your own.
 
 ## Tag families
 
