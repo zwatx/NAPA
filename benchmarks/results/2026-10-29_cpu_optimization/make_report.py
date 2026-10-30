@@ -334,8 +334,10 @@ lines += [
     "",
     (
         f"At 1080p, mean-of-round multicore p99 is {mc_tail['napa-mtp16']:.3f}ms for NAPA16, "
-        f"{mc_tail['locus-d2']:.3f}ms for Locus d2 and {mc_tail['opencv-aruco3-min32']:.3f}ms for "
-        "ArUco3 half-scale/min≈64px. These tuned peers have lower recall; their latency tradeoff stays visible."
+        f"{mc_tail['opencv-aruco3-half16']:.3f}ms for ArUco3 half-scale/min≈32px, "
+        f"{mc_tail['opencv-aruco3-min32']:.3f}ms for ArUco3 half-scale/min≈64px and "
+        f"{mc_tail['locus-d2']:.3f}ms for Locus d2. "
+        "These tuned peers have lower recall; their latency tradeoff stays visible."
     ),
     (
         "NAPA32 has a lower tail but misses more small tags. Frame-parallel throughput was not"
@@ -400,7 +402,7 @@ lines += [
     "",
     ("The benchmark is finite, synthetic, and developed in this repository. A new seed does not make it independent"),
     (
-        "of the renderer. No public performance table was changed. Measure on actual camera "
+        "of the renderer. Earlier raw measurements are preserved unchanged. Measure on actual camera "
         "footage before relying on a specific latency or range."
     ),
     "",

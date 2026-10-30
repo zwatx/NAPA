@@ -82,7 +82,7 @@ NAPA/closest/WPILib entries use final packed-core runs; unchanged slower backend
 | 6 | 1280x720 | 1.166 / 1.165 | opencv-aruco3-min32 2.054 ms | 2.71 | aruco-nano 4.95 |
 | 6 | 1920x1080 | 2.950 / 2.949 | opencv-aruco3-min32 3.775 ms | 6.45 | aruco-nano 7.72 |
 
-At 1080p, mean-of-round multicore p99 is 10.755ms for NAPA16, 10.377ms for Locus d2 and 10.072ms for ArUco3 half-scale/min≈64px. These tuned peers have lower recall; their latency tradeoff stays visible.
+At 1080p, mean-of-round multicore p99 is 10.755ms for NAPA16, 10.031ms for ArUco3 half-scale/min≈32px, 10.072ms for ArUco3 half-scale/min≈64px and 10.377ms for Locus d2. These tuned peers have lower recall; their latency tradeoff stays visible.
 NAPA32 has a lower tail but misses more small tags. Frame-parallel throughput was not rerun and is not claimed here.
 
 ## Quality
@@ -116,7 +116,7 @@ NAPA retains the motion-blur worst-corner weakness against upstream AprilTag. It
 The 3 AprilTag test JPEGs have reference regression output, not annotated truth. NAPA16 takes 1.23/2.09/0.92ms median per image and agrees with 44/47 reference detections (48 detections total). AprilTag d1 agrees with 46/47, Nano 31/47. No false-positive/recall claim is made for these images. No suitable annotated camera recording was available.
 
 The benchmark is finite, synthetic, and developed in this repository. A new seed does not make it independent
-of the renderer. No public performance table was changed. Measure on actual camera footage before relying on a specific latency or range.
+of the renderer. Earlier raw measurements are preserved unchanged. Measure on actual camera footage before relying on a specific latency or range.
 
 ## Adapter overhead
 
