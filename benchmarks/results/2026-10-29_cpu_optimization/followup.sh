@@ -33,4 +33,4 @@ taskset -c 2 work/venv/bin/python "$D/adapter_overhead.py"
 cc -O1 -g -std=c99 -fsanitize=address,undefined -fno-omit-frame-pointer -Isrc/napa_vision/_native -o work/optimization/safety "$D/safety.c" src/napa_vision/_native/napa_core.c -lm
 ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1 taskset -c 2 work/optimization/safety > "$R/sanitizers.txt" 2>&1
 work/venv/bin/python -m pytest -q -rs > "$R/tests.txt" 2>&1
-.venv/bin/ruff check . > "$R/lint.txt" 2>&1
+work/venv/bin/ruff check . > "$R/lint.txt" 2>&1

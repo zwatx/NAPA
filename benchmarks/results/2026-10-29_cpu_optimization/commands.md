@@ -2,10 +2,10 @@
 
 This is a follow-up to the pinned CPU builds in [the original comparison](../2026-10-28_cpu_comparison/commands.md).
 Use only its source-clone, venv, library-build and shim-build setup blocks. Do not run its older measurement scripts: they write to the preserved historical results directory. The new script generates missing resource frame sets itself.
-Add the WPILib build (the earlier setup did not require it):
+Add WPILib and Ruff to the same benchmark environment (the earlier setup did not require them):
 
 ```bash
-work/venv/bin/python -m pip install robotpy-apriltag==2026.2.2
+work/venv/bin/python -m pip install robotpy-apriltag==2026.2.2 ruff==0.17.1
 ```
 
 No system-wide dependencies, GPU backends or detector process per frame are used.
