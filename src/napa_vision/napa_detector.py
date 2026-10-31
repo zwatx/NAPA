@@ -25,6 +25,7 @@ class _Params(ctypes.Structure):
         ("min_contrast", ctypes.c_int),
         ("min_border_cells", ctypes.c_int),
         ("sharpening_x100", ctypes.c_int),
+        ("split_touching", ctypes.c_int),
     ]
 
 
@@ -132,6 +133,11 @@ class NapaDetector:
     tags may be missed. Corners are fitted at full resolution and returned in OpenCV's AprilTag corner
     order, in pixel-centre coordinates.
 
+    ``split_touching=True`` also finds tags whose border touches another dark shape at a corner, as in
+    AprilGrid calibration boards and tags set in a checkerboard: such a tag and its neighbours form one blob,
+    which isn't tag-shaped. The extra tags come after the others, which are unchanged. Splitting roughly
+    doubles detection time on natural scenes, so leave it off unless tags touch other shapes.
+
     One instance holds reusable buffers: serialize calls on each instance, and use one instance
     per thread or camera stream. The native call releases the GIL.
     """
@@ -146,6 +152,7 @@ class NapaDetector:
         min_border_cells: int = 22,
         sharpening: float = 0.25,
         max_detections: int = 64,
+        split_touching: bool = False,
     ) -> None:
         if isinstance(min_tag_px, bool) or not isinstance(min_tag_px, int) or not 8 <= min_tag_px <= _MAX_SIDE:
             raise ValueError(f"min_tag_px must be an integer from 8 to {_MAX_SIDE}")
@@ -165,6 +172,8 @@ class NapaDetector:
             raise ValueError("sharpening must be between 0 and 1")
         if isinstance(max_detections, bool) or not isinstance(max_detections, int) or max_detections < 1:
             raise ValueError("max_detections must be a positive integer")
+        if not isinstance(split_touching, bool):
+            raise ValueError("split_touching must be True or False")
         library = _library()
         if not isinstance(family, str) or family not in families():
             raise ValueError(f"family must be one of {', '.join(families())}")
@@ -179,11 +188,14 @@ class NapaDetector:
         self._library = library
         self._handle = ctypes.c_void_p(handle)
         self._finalizer = weakref.finalize(self, library.napa_destroy, self._handle)
-        self._params = _Params(min_tag_px, max_hamming, min_contrast, min_border_cells, round(float(sharpening) * 100))
+        self._params = _Params(
+            min_tag_px, max_hamming, min_contrast, min_border_cells, round(float(sharpening) * 100), split_touching
+        )
         self._results = (_Detection * max_detections)()
         self._rows = np.ctypeslib.as_array(self._results)  # a numpy view of the same buffer
         self.min_tag_px = min_tag_px
         self.max_hamming = max_hamming
+        self.split_touching = split_touching
 
     def detect(self, image: np.ndarray) -> list[FiducialImageObservation]:
         if not self._finalizer.alive:

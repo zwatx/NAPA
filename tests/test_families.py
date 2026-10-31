@@ -142,3 +142,69 @@ def test_tag16h5_rejects_random_patterns() -> None:
             image[50 : 50 + pattern.shape[0], 30 + 140 * k : 30 + 140 * k + pattern.shape[1]] = pattern
         false_ids += len(detector.detect(image))
     assert false_ids <= 2
+
+
+def _grid(family: str, ids: list[int], *, columns: int = 4, cell: int = 8, angle_deg: float = 0.0) -> np.ndarray:
+    """A classic family's tags in an AprilGrid layout: two-cell gaps with a black square at every crossing,
+    touching the four tags around it at their corners."""
+
+    width = family_layout(family).width
+    pitch = (width + 2) * cell
+    rows = len(ids) // columns
+    board = np.full((rows * pitch + 2 * cell, columns * pitch + 2 * cell), 255, np.uint8)
+    for row in range(rows + 1):
+        for column in range(columns + 1):
+            board[row * pitch : row * pitch + 2 * cell, column * pitch : column * pitch + 2 * cell] = 0
+    for index, tag_id in enumerate(ids):
+        y, x = 2 * cell + (index // columns) * pitch, 2 * cell + (index % columns) * pitch
+        board[y : y + width * cell, x : x + width * cell] = tag_image(
+            tag_id, family=family, cell_px=cell, quiet_zone_cells=0
+        )
+    board = np.pad(board, 6 * cell, constant_values=255)
+    if angle_deg:
+        centre = (board.shape[1] / 2, board.shape[0] / 2)
+        board = cv2.warpAffine(
+            board,
+            cv2.getRotationMatrix2D(centre, angle_deg, 1.0),
+            board.shape[::-1],
+            flags=cv2.INTER_AREA,
+            borderValue=255,
+        )
+    return board
+
+
+@pytest.mark.parametrize("family", ["tag36h11", "tag25h9", "tag36h10"])
+def test_split_touching_finds_grids_of_classic_families(family: str) -> None:
+    ids = list(range(1, 13))
+    for angle in (0.0, 10.0):
+        image = _grid(family, ids, angle_deg=angle)
+        assert len(NapaDetector(family=family, min_tag_px=16, max_detections=64).detect(image)) <= 3
+        found = NapaDetector(family=family, min_tag_px=16, max_detections=64, split_touching=True).detect(image)
+        assert {observation.tag_id for observation in found} <= set(ids)
+        assert len(found) >= (12 if angle == 0.0 else 9)
+
+
+@pytest.mark.parametrize("family", ["tag16h5", "tagCircle21h7"])
+def test_split_touching_skips_families_whose_short_codes_match_pieces(family: str) -> None:
+    """Exact chance matches of 16- and 21-bit codes are too likely among the many extra pieces."""
+
+    image = _grid("tag16h5", list(range(1, 13))) if family == "tag16h5" else _grid("tag36h11", list(range(1, 13)))
+    rng = np.random.default_rng(5)
+    noisy = np.clip(image + rng.normal(0, 6, image.shape), 0, 255).astype(np.uint8)
+    for frame in (image, noisy):
+        ordinary = NapaDetector(family=family, min_tag_px=16).detect(frame)
+        split = NapaDetector(family=family, min_tag_px=16, split_touching=True).detect(frame)
+        assert [(o.tag_id, o.corners.tolist()) for o in split] == [(o.tag_id, o.corners.tolist()) for o in ordinary]
+
+
+@pytest.mark.parametrize("family", families())
+def test_split_touching_leaves_isolated_tags_unchanged(family: str) -> None:
+    layout = family_layout(family)
+    art = tag_image(layout.ncodes // 3, family=family, cell_px=12, quiet_zone_cells=2)
+    image = np.full((art.shape[0] + 60, art.shape[1] + 80), 255, np.uint8)
+    image[30 : 30 + art.shape[0], 40 : 40 + art.shape[1]] = art
+    for min_tag_px in (16, 32):
+        ordinary = NapaDetector(family=family, min_tag_px=min_tag_px).detect(image)
+        split = NapaDetector(family=family, min_tag_px=min_tag_px, split_touching=True).detect(image)
+        assert [(o.tag_id, o.corners.tolist()) for o in split] == [(o.tag_id, o.corners.tolist()) for o in ordinary]
+        assert [o.tag_id for o in ordinary] == [layout.ncodes // 3]

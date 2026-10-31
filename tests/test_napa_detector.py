@@ -356,3 +356,95 @@ def test_local_quiet_zone_damage_does_not_reject_intact_border(side, size) -> No
     [observation] = NapaDetector(min_tag_px=16).detect(image)
     assert observation.tag_id == 42
     assert np.abs(observation.corners - corners).max() < 0.5
+
+
+def _aprilgrid(ids, *, columns: int, tag_px: int, angle_deg: float, size=(1280, 960)):
+    """An AprilGrid-style board: tags separated by quarter-tag gaps, with a black square at every gap
+    crossing that touches the four tags around it at their corners. Returns the frame and each tag's
+    OpenCV-order corners."""
+
+    cell = 10  # board pixels per tag cell before warping
+    rows = len(ids) // columns
+    pitch = 10 * cell  # an 8-cell tag and a 2-cell gap
+    board = np.full((rows * pitch + 2 * cell, columns * pitch + 2 * cell), 255, np.uint8)
+    for row in range(rows + 1):
+        for column in range(columns + 1):
+            board[row * pitch : row * pitch + 2 * cell, column * pitch : column * pitch + 2 * cell] = 0
+    truth = {}
+    for index, tag_id in enumerate(ids):
+        y, x = 2 * cell + (index // columns) * pitch, 2 * cell + (index % columns) * pitch
+        board[y : y + 8 * cell, x : x + 8 * cell] = cv2.aruco.generateImageMarker(
+            DICTIONARY, tag_id, 8 * cell, borderBits=1
+        )
+        truth[tag_id] = (
+            np.array([[x, y], [x + 8 * cell, y], [x + 8 * cell, y + 8 * cell], [x, y + 8 * cell]], float) - 0.5
+        )
+    margin = np.pad(board, 4 * cell, constant_values=255)
+    angle = np.deg2rad(angle_deg)
+    scale = tag_px / (8 * cell)
+    rotation = np.array([[np.cos(angle), -np.sin(angle)], [np.sin(angle), np.cos(angle)]]) * scale
+    centre = np.array(margin.shape[::-1]) / 2
+    affine = np.hstack([rotation, (np.array(size) / 2 - rotation @ centre)[:, None]])
+    image = cv2.warpAffine(margin, affine, size, flags=cv2.INTER_AREA, borderValue=255)
+    corners = {i: (c + 4 * cell + 0.5) @ rotation.T + affine[:, 2] - 0.5 for i, c in truth.items()}
+    return image, corners
+
+
+@pytest.mark.parametrize(
+    ("tag_px", "angle", "min_tag_px", "at_least"),
+    [(48, 0.0, 32, 36), (48, 0.0, 16, 36), (48, 12.0, 16, 33), (36, 8.0, 32, 30), (90, 25.0, 16, 24)],
+)
+def test_split_touching_finds_aprilgrid_tags(tag_px: int, angle: float, min_tag_px: int, at_least: int) -> None:
+    ids = list(range(100, 136))
+    image, corners = _aprilgrid(ids, columns=6, tag_px=tag_px, angle_deg=angle)
+    ordinary = NapaDetector(min_tag_px=min_tag_px, max_detections=128).detect(image)
+    found = NapaDetector(min_tag_px=min_tag_px, max_detections=128, split_touching=True).detect(image)
+    # Corner squares join every tag to its neighbours: without splitting, the board is a few large blobs.
+    assert len(ordinary) < len(ids) // 4
+    assert len(found) >= at_least
+    assert len({observation.tag_id for observation in found}) == len(found)
+    for observation in found:
+        assert observation.tag_id in corners
+        assert np.abs(observation.corners - corners[observation.tag_id]).max() < 1.5
+    # Pieces are only appended: the other detections are exactly the ordinary ones.
+    assert [(o.tag_id, o.corners.tolist()) for o in found[: len(ordinary)]] == [
+        (o.tag_id, o.corners.tolist()) for o in ordinary
+    ]
+
+
+def test_split_touching_changes_nothing_without_touching_shapes() -> None:
+    frames = [_scene(tag_id, side, angle_deg=angle)[0] for tag_id, side, angle in ((3, 40, 10.0), (77, 120, 33.0))]
+    frames.append(cv2.GaussianBlur(np.random.default_rng(3).integers(0, 256, (480, 640), dtype=np.uint8), (3, 3), 0))
+    for min_tag_px in (16, 32):
+        ordinary = NapaDetector(min_tag_px=min_tag_px)
+        split = NapaDetector(min_tag_px=min_tag_px, split_touching=True)
+        for frame in frames:
+            assert [(o.tag_id, o.corners.tolist()) for o in split.detect(frame)] == [
+                (o.tag_id, o.corners.tolist()) for o in ordinary.detect(frame)
+            ]
+
+
+def test_split_touching_has_no_false_positives_on_noise_text_and_checkers() -> None:
+    rng = np.random.default_rng(11)
+    frames = [rng.integers(0, 256, (480, 640), dtype=np.uint8)]
+    frames.append(cv2.GaussianBlur(rng.integers(0, 256, (480, 640), dtype=np.uint8), (5, 5), 0))
+    for square in (6, 13, 40):  # checkerboards: every square touches four others at its corners
+        frames.append(
+            np.kron((np.indices((480 // square + 1, 640 // square + 1)).sum(0) % 2) * 255, np.ones((square, square)))[
+                :480, :640
+            ].astype(np.uint8)
+        )
+    for min_tag_px in (16, 32):
+        detector = NapaDetector(min_tag_px=min_tag_px, split_touching=True)
+        for frame in frames:
+            assert detector.detect(frame) == []
+
+
+def test_split_touching_must_be_a_bool() -> None:
+    for value in (1, 0, "yes", None):
+        with pytest.raises(ValueError, match="split_touching"):
+            NapaDetector(split_touching=value)
+    detector = NapaDetector()
+    detector._params.split_touching = 2  # the C core validates the field too
+    with pytest.raises(RuntimeError, match="status -1"):
+        detector.detect(_scene(1, 100)[0])
