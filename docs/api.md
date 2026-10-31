@@ -61,7 +61,7 @@ the first frame in the transform's name: the field for `field_to_camera`, the ca
 
 ```python
 NapaDetector(*, family="tag36h11", min_tag_px=32, max_hamming=None, min_contrast=20, min_border_cells=22,
-             sharpening=0.25, max_detections=64)
+             sharpening=0.25, max_detections=64, split_touching=False)
 ```
 
 The native detector for one tag family. [Detection](detection.md#tuning) explains each parameter. Invalid values
@@ -76,6 +76,7 @@ raise `ValueError`.
 | `min_border_cells` | 0–28 | Border cells that must read dark before decoding, out of tag36h11's 28; scaled for other families |
 | `sharpening` | 0–1 | Cell sharpening before decoding |
 | `max_detections` | ≥ 1 | Results returned per frame. A frame with more tags warns (`RuntimeWarning`) and drops the rest |
+| `split_touching` | `bool` | Also decode blobs split where they touch only at a corner, for tags in AprilGrid boards and checkerboards (see [Calibration boards](detection.md#calibration-boards-and-touching-tags)). Their tags come after the others, which are unchanged. Slower. |
 
 **`detect(image) -> list[FiducialImageObservation]`**: detects tags in a `uint8` grayscale (H×W), BGR (H×W×3), or BGRA
 (H×W×4) array. Strided views are accepted. Frames smaller than 16 px on a side return `[]`; frames larger than

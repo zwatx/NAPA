@@ -35,9 +35,26 @@ Detection needs only numpy. OpenCV converts BGR frames when it's installed, and 
 | `min_border_cells` | 22 | How many of tag36h11's 28 border cells must read dark before a candidate is decoded, scaled for other families |
 | `sharpening` | 0.25 | Cell sharpening before decoding, as upstream's `decode_sharpening` |
 | `max_detections` | 64 | Results returned per frame. A frame with more tags warns (`RuntimeWarning`) and drops the rest |
+| `split_touching` | `False` | Also find tags whose border touches another dark shape at a corner, as in AprilGrid boards. Slower; see below |
 
 A detector reuses its buffers between frames. Use one per camera stream, and don't call one from two threads at once.
 The native call releases the GIL, so separate detectors run in parallel. `close()` frees the buffers early.
+
+## Calibration boards and touching tags
+
+In an AprilGrid calibration board, and in tags set in a checkerboard, a black square touches each tag's border at
+its corners. NAPA groups dark pixels that touch, including at a corner, so the tags and squares form one large blob
+that isn't tag-shaped, and most of the board is missed. `split_touching=True` also splits such blobs where shapes
+touch only at a corner or through a one-pixel neck, and decodes the pieces:
+
+```python
+detector = NapaDetector(min_tag_px=16, split_touching=True, max_detections=256)
+```
+
+The tags found this way come after the others, which are exactly what the detector returns without the option.
+Pieces may correct at most two bits, fewer for families whose codes are closer together; tag16h5 and tagCircle21h7
+aren't split, because random pieces match their short codes too often. Splitting roughly doubles the time on natural
+scenes, so leave it off unless tags touch other shapes. With it off, detection is unchanged.
 
 ## Tag families
 
