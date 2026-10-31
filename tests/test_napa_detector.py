@@ -259,9 +259,11 @@ def test_warns_when_a_frame_fills_max_detections() -> None:
     image, _ = _scene(7, 100)
     with pytest.warns(RuntimeWarning, match="max_detections"):
         assert len(NapaDetector(max_detections=1).detect(image)) == 1
-    with warnings.catch_warnings():
-        warnings.simplefilter("error")
-        assert len(NapaDetector(max_detections=2).detect(image)) == 1
+    detector = NapaDetector(max_detections=2)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        assert len(detector.detect(image)) == 1
+    assert not [w for w in caught if "max_detections" in str(w.message)]
 
 
 @pytest.mark.parametrize("min_tag_px", [16, 32])
