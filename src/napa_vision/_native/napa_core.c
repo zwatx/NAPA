@@ -1,6 +1,6 @@
 /* NAPA. Copyright (c) 2026 Zachary Wilson.
- * Licensed under the PolyForm Noncommercial License 1.0.0: see LICENSE. Commercial use needs a separate
- * license. Copies and works based on this file must keep this notice and credit Zachary Wilson. */
+ * SPDX-License-Identifier: GPL-3.0-only. Also available under a commercial license: see NOTICE.
+ * Copies and works based on this file must keep this notice and credit Zachary Wilson. */
 /*
  * Napa core: a sparse-sampling ("rake") AprilTag 36h11 detector in portable C99.
  *

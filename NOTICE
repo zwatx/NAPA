@@ -1,0 +1,15 @@
+NAPA
+Copyright (c) 2026 Zachary Wilson (https://github.com/zwatx/NAPA)
+
+NAPA is dual-licensed. You may use it under either:
+
+1. the GNU General Public License, version 3 only (GPL-3.0-only), in LICENSE; or
+2. a commercial license from Zachary Wilson, for uses the GPL doesn't allow, such as closed-source
+   products. Ask through https://github.com/zwatx/NAPA.
+
+Additional term under section 7(b) of the GPL: copies, forks, and works based on NAPA must keep this
+notice and credit Zachary Wilson as NAPA's author in their Appropriate Legal Notices.
+
+Releases before 0.5.0 were published under the PolyForm Noncommercial License 1.0.0.
+
+The tag families' codewords come from AprilTag under its BSD license: see THIRD_PARTY_NOTICES.

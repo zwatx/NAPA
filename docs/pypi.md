@@ -122,11 +122,11 @@ result = processor.process(frame, timestamp=capture_time)
 
 ## License
 
-Copyright © 2026 Zachary Wilson. NAPA is free for noncommercial use under the [PolyForm Noncommercial License
-1.0.0](https://github.com/zwatx/NAPA/blob/master/LICENSE): personal projects, research, education, student robotics teams, and other noncommercial organizations
-can use, modify, and share it. Copies, forks, and works based on NAPA must include the license and its notices
-crediting Zachary Wilson. Commercial use, including selling NAPA or products built on it, needs a separate license.
-Ask through [the repository](https://github.com/zwatx/NAPA).
+Copyright © 2026 Zachary Wilson. NAPA is open source under the [GNU General Public License v3.0](https://github.com/zwatx/NAPA/blob/master/LICENSE):
+anyone can use, modify, and share it, including in other GPL projects such as PhotonVision. Software that
+includes NAPA and is shared with others must also be released under the GPL and credit Zachary Wilson as NAPA's
+author ([NOTICE](https://github.com/zwatx/NAPA/blob/master/NOTICE)). For a closed-source product, get a commercial license: ask through
+[the repository](https://github.com/zwatx/NAPA).
 
 The tag families' codewords come from [AprilTag](https://github.com/AprilRobotics/apriltag) under its BSD license. See
 [THIRD_PARTY_NOTICES](https://github.com/zwatx/NAPA/blob/master/THIRD_PARTY_NOTICES).
