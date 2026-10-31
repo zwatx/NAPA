@@ -1,7 +1,7 @@
 # Independent detector baseline — 2026-10-31
 
 The ≥90% target is **not achieved across the evaluated benchmarks**. No detector algorithm or default has been
-changed: the tested proposals either lost existing detections or materially slowed real FRC imagery. The new
+changed: the tested proposals either lost existing detections or materially slowed the FRC-heavy real-image corpus. The new
 external evaluator is the deliverable; rejected experiments remain available for further algorithm work.
 
 ## Protocol and scope
@@ -47,12 +47,13 @@ and tiny/distant tags expose large gaps. This is evidence against treating our g
 of general performance. ICRA forward starts at roughly 8px tags, below the default minimum-size setting; the full
 published denominator remains visible rather than being filtered to make the result look better.
 
-## Real FRC reference agreement — separate evidence
+## FRC-heavy real-image reference agreement — separate evidence
 
 Fixed hash selection of 200 entries from `wt200999/apriltag-dataset` revision
 `527979f5ee524ea769cf1d15a948fa19d389129c`, before testing detector outcomes. Twelve selected image files are missing
 from that pinned repository; **188 images / 363 reference detections** were available. Selection metadata is retained
 in `frc-selection.json`; unavailable entries are listed in `frc-agreement.json.gz`. No replacements or outcome filters.
+The selection includes FRC practice/event scenes and other real-world tag scenes.
 Labels are pupil-apriltags outputs: agreement is not independent accuracy and unmatched detections may be correct.
 
 | Setting | Spatial reference matches | Reference agreement | Unmatched detections |
