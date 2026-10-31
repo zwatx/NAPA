@@ -1,0 +1,70 @@
+--- a/src/napa_vision/_native/napa_core.c
++++ b/src/napa_vision/_native/napa_core.c
+@@ -887,9 +887,9 @@
+             if (prev_y == y - 1) {
+                 int a = prev_start, b = start;
+                 while (a < prev_end && b < n) {
+-                    if (R[a].x1 + 1 < R[b].x0) {
++                    if (R[a].x1 < R[b].x0) {
+                         a++;
+-                    } else if (R[b].x1 + 1 < R[a].x0) {
++                    } else if (R[b].x1 < R[a].x0) {
+                         b++;
+                     } else {
+                         /* A run of this row that touches nothing yet is a singleton (runs of one row
+@@ -1787,6 +1787,47 @@
+             }
+             P[i] = -r - 1;
+         }
++        /* Four-connected borders stay separate at checkerboard corners. Rejoin
++         * diagonal fragments only where a piece is too narrow to contain a tag. */
++        for (int i = 0; i < nroots; i++) det->slot[i] = i;
++        int prev_start = 0, prev_end = 0;
++        for (int start = 0; start < nruns;) {
++            int end = start + 1;
++            while (end < nruns && R[end].y == R[start].y) end++;
++            if (prev_end > prev_start && R[prev_start].y == R[start].y - 1) {
++                int a = prev_start, b = start;
++                while (a < prev_end && b < end) {
++                    if (R[a].x1 + 1 < R[b].x0) a++;
++                    else if (R[b].x1 + 1 < R[a].x0) b++;
++                    else {
++                        int ia = -P[a] - 1, ib = -P[b] - 1;
++                        if (ia != ib &&
++                            (B[ia].maxx - B[ia].minx + 1 < lo || B[ia].maxy - B[ia].miny + 1 < lo ||
++                             B[ib].maxx - B[ib].minx + 1 < lo || B[ib].maxy - B[ib].miny + 1 < lo)) {
++                            int ra = find_root(det->slot, ia), rb = find_root(det->slot, ib);
++                            if (ra < rb) det->slot[rb] = ra;
++                            else if (rb < ra) det->slot[ra] = rb;
++                        }
++                        if (R[a].x1 < R[b].x1) a++;
++                        else b++;
++                    }
++                }
++            }
++            prev_start = start, prev_end = end;
++            start = end;
++        }
++        for (int i = 0; i < nroots; i++) det->slot[i] = find_root(det->slot, i);
++        for (int i = 0; i < nruns; i++) P[i] = -det->slot[-P[i] - 1] - 1;
++        for (int i = 0; i < nroots; i++) {
++            int root = det->slot[i];
++            if (root == i) continue;
++            B[root].count += B[i].count;
++            if (B[i].minx < B[root].minx) B[root].minx = B[i].minx;
++            if (B[i].miny < B[root].miny) B[root].miny = B[i].miny;
++            if (B[i].maxx > B[root].maxx) B[root].maxx = B[i].maxx;
++            if (B[i].maxy > B[root].maxy) B[root].maxy = B[i].maxy;
++            B[i].count = 0;
++        }
+         /* Keep tag-sized, tag-shaped blobs as candidates, in raster order of their first sample. A tag
+          * tilted by t looks about 1 / cos(t) times longer than it is wide, more with perspective: an 8:1
+          * box admits tilts to about 80 degrees. Clean tags stay readable past 75 degrees whenever their
+@@ -1798,6 +1839,7 @@
+         int ncand = 0;
+         for (int i = 0; i < nroots; i++) {
+             det->slot[i] = -1;
++            if (!B[i].count) continue;
+             int t_minx = B[i].minx, t_maxx = B[i].maxx, t_miny = B[i].miny, t_maxy = B[i].maxy;
+             int bw = t_maxx - t_minx + 1, bh = t_maxy - t_miny + 1;
+             int big = bw > bh ? bw : bh, small = bw < bh ? bw : bh;

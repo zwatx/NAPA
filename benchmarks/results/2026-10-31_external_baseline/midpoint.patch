@@ -1,0 +1,38 @@
+--- a/src/napa_vision/_native/napa_core.c
++++ b/src/napa_vision/_native/napa_core.c
+@@ -795,7 +795,7 @@
+ 
+ /* Threshold the level and label its dark samples as runs joined by union-find (8-connected:
+  * runs in adjacent rows touch if they overlap within one sample). Returns the run count. */
+-static int threshold_level(napa_detector *det, int lw, int lh, int factor) {
++static int threshold_level(napa_detector *det, int lw, int lh, int factor, const image_view *im, int step) {
+     const uint8_t *L = det->level;
+     napa_run *R = det->runs;
+     int32_t *P = det->parent;
+@@ -892,6 +892,17 @@
+                     } else if (R[b].x1 + 1 < R[a].x0) {
+                         b++;
+                     } else {
++                        /* Sparse samples may step across a white gap at two touching corners.
++                         * Preserve ambiguous/thin borders; split only a confidently light midpoint. */
++                        if (step >= 2 && (R[a].x1 + 1 == R[b].x0 || R[b].x1 + 1 == R[a].x0)) {
++                            int x0 = R[a].x1 < R[b].x0 ? R[a].x1 : R[b].x1;
++                            double mid = sample_bilinear(im, (x0 + 0.5) * step, (y - 0.5) * step);
++                            if (mid > trow[x0] + 10) {
++                                if (R[a].x1 < R[b].x1) a++;
++                                else b++;
++                                continue;
++                            }
++                        }
+                         /* A run of this row that touches nothing yet is a singleton (runs of one row
+                          * join only through the row above): hang it under a's parent, which still
+                          * precedes it. Runs whose parents match are already joined. */
+@@ -1761,7 +1772,7 @@
+             }
+             if (contrast < 0) return -2;
+         }
+-        int nruns = threshold_level(det, lw, lh, s / floor_stride);
++        int nruns = threshold_level(det, lw, lh, s / floor_stride, &view, s);
+         PROF_MARK(PROF_THRESHOLD);
+ 
+         /* Resolve runs into packed components, preserving root raster order. */
