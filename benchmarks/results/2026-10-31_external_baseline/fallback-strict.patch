@@ -1,0 +1,82 @@
+--- a/src/napa_vision/_native/napa_core.c
++++ b/src/napa_vision/_native/napa_core.c
+@@ -913,6 +913,35 @@
+     return n;
+ }
+ 
++/* Relabel existing runs without diagonal links. Used only to split oversized
++ * components after the ordinary pass has retained thin, diagonally sampled borders. */
++static void split_diagonal_runs(napa_detector *det, int n) {
++    napa_run *R = det->runs;
++    int32_t *P = det->parent;
++    for (int i = 0; i < n; i++) P[i] = i;
++    int prev_start = 0, prev_end = 0;
++    for (int start = 0; start < n;) {
++        int end = start + 1;
++        while (end < n && R[end].y == R[start].y) end++;
++        if (prev_end > prev_start && R[prev_start].y == R[start].y - 1) {
++            int a = prev_start, b = start;
++            while (a < prev_end && b < end) {
++                if (R[a].x1 < R[b].x0) a++;
++                else if (R[b].x1 < R[a].x0) b++;
++                else {
++                    int32_t ra = find_root(P, a), rb = find_root(P, b);
++                    if (ra < rb) P[rb] = ra;
++                    else if (rb < ra) P[ra] = rb;
++                    if (R[a].x1 < R[b].x1) a++;
++                    else b++;
++                }
++            }
++        }
++        prev_start = start, prev_end = end;
++        start = end;
++    }
++}
++
+ /* ---------------------------------------------------------------- geometry */
+ 
+ /* Fit each side to the outer border edge searched from r_out outside to r_in inside the given quad. */
+@@ -1764,6 +1793,8 @@
+         int nruns = threshold_level(det, lw, lh, s / floor_stride);
+         PROF_MARK(PROF_THRESHOLD);
+ 
++        int split = 0;
++    split_components:;
+         /* Resolve runs into packed components, preserving root raster order. */
+         napa_run *R = det->runs;
+         int32_t *P = det->parent;
+@@ -1795,13 +1826,14 @@
+         /* Dense levels propose small tags only. Larger tags have wider cells and are cheaper to
+          * propose on the next level; the overlapping bands retain steeply tilted small tags. */
+         int max_size = last ? 1 << 30 : hi;
+-        int ncand = 0;
++        int ncand = 0, split_needed = 0;
+         for (int i = 0; i < nroots; i++) {
+             det->slot[i] = -1;
+             int t_minx = B[i].minx, t_maxx = B[i].maxx, t_miny = B[i].miny, t_maxy = B[i].maxy;
+             int bw = t_maxx - t_minx + 1, bh = t_maxy - t_miny + 1;
+             int big = bw > bh ? bw : bh, small = bw < bh ? bw : bh;
+             if (!last && base == 1 && s <= 2 && small > 72) continue;
++            if (!split && big > max_size && small >= min_size) split_needed = 1;
+             if (small < min_size || big > max_size || big > 8 * small) {
+                 if (big >= 4) TRACE(small < min_size ? 1 : big > max_size ? 2 : 3);
+                 continue;
+@@ -2081,10 +2113,18 @@
+                 TRACE(11);
+                 continue;
+             }
++            /* A split component is an extra proposal; require an uncorrected code
++             * so breaking a background component cannot spend the error budget. */
++            if (split && d.hamming != 0) continue;
+             TRACE(12);
+             if (found < max_out) out[found] = d;
+             found++;
+         }
++        if (!split && split_needed) {
++            split = 1;
++            split_diagonal_runs(det, nruns);
++            goto split_components;
++        }
+         PROF_MARK(PROF_BLOBS);
+         if (last) break;
+     }
