@@ -8,8 +8,8 @@ dynamic = ["version"]
 description = "A fast, dependency-free AprilTag detector for every tag family, with sub-pixel corners and poses with covariances"
 # PyPI's page: the README's essentials, with absolute links, since PyPI can't follow the repository's relative ones.
 readme = "docs/pypi.md"
-license = "PolyForm-Noncommercial-1.0.0"
-license-files = ["LICENSE", "THIRD_PARTY_NOTICES"]
+license = "GPL-3.0-only"
+license-files = ["LICENSE", "NOTICE", "THIRD_PARTY_NOTICES"]
 authors = [{ name = "Zachary Wilson" }]
 requires-python = ">=3.11"
 keywords = ["apriltag", "computer-vision", "fiducial", "pose-estimation", "robotics"]

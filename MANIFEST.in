@@ -1,4 +1,4 @@
-include LICENSE THIRD_PARTY_NOTICES CMakeLists.txt
+include LICENSE NOTICE THIRD_PARTY_NOTICES CMakeLists.txt
 recursive-include examples *.c
 include benchmarks/corpus.example.json
 recursive-include docs *.md

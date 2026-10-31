@@ -1,4 +1,4 @@
-# Napa. Copyright (c) 2026 Zachary Wilson. PolyForm Noncommercial License 1.0.0: see LICENSE.
+# Napa. Copyright (c) 2026 Zachary Wilson. GPL-3.0-only, or a commercial license: see LICENSE and NOTICE.
 # Napa's detector core as a plain C library, for C and C++ programs. Python users: pip install napa-vision.
 #
 #   cmake -S . -B build && cmake --build build && cmake --install build --prefix /usr/local
@@ -39,7 +39,7 @@ install(TARGETS napa EXPORT napaTargets
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
   PUBLIC_HEADER DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
-install(FILES LICENSE THIRD_PARTY_NOTICES DESTINATION ${CMAKE_INSTALL_DATADIR}/doc/napa)
+install(FILES LICENSE NOTICE THIRD_PARTY_NOTICES DESTINATION ${CMAKE_INSTALL_DATADIR}/doc/napa)
 install(EXPORT napaTargets NAMESPACE napa:: FILE napaConfig.cmake DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/napa)
 
 if(NAPA_BUILD_EXAMPLES)
