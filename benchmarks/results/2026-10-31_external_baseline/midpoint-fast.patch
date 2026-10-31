@@ -1,0 +1,45 @@
+--- a/src/napa_vision/_native/napa_core.c
++++ b/src/napa_vision/_native/napa_core.c
+@@ -795,7 +795,7 @@
+ 
+ /* Threshold the level and label its dark samples as runs joined by union-find (8-connected:
+  * runs in adjacent rows touch if they overlap within one sample). Returns the run count. */
+-static int threshold_level(napa_detector *det, int lw, int lh, int factor) {
++static int threshold_level(napa_detector *det, int lw, int lh, int factor, const image_view *im, int step) {
+     const uint8_t *L = det->level;
+     napa_run *R = det->runs;
+     int32_t *P = det->parent;
+@@ -892,6 +892,24 @@
+                     } else if (R[b].x1 + 1 < R[a].x0) {
+                         b++;
+                     } else {
++                        /* Sparse samples may step across a white gap at two touching corners.
++                         * Preserve ambiguous/thin borders; split only a confidently light midpoint. */
++                        if (step >= 2 && (R[a].x1 + 1 == R[b].x0 || R[b].x1 + 1 == R[a].x0)) {
++                            int x0 = R[a].x1 < R[b].x0 ? R[a].x1 : R[b].x1;
++                            /* The midpoint is inside the image and lies on an integer or half
++                             * pixel. Read it directly; odd strides need exactly four pixels. */
++                            const uint8_t *p = im->p + (size_t)((y - 1) * step + step / 2) * im->stride + x0 * step + step / 2;
++                            int mid4 = step & 1 ? p[0] + p[1] + p[im->stride] + p[im->stride + 1] : 4 * p[0];
++                            if (im->invert) mid4 = 1020 - mid4;
++                            const uint8_t *up = L + (size_t)(y - 1) * lw, *dn = L + (size_t)y * lw;
++                            int dark = R[a].x1 < R[b].x0 ? up[x0] + dn[x0 + 1] : up[x0 + 1] + dn[x0];
++                            int light = R[a].x1 < R[b].x0 ? up[x0 + 1] + dn[x0] : up[x0] + dn[x0 + 1];
++                            if (light > dark && 2 * mid4 > dark + 3 * light) {
++                                if (R[a].x1 < R[b].x1) a++;
++                                else b++;
++                                continue;
++                            }
++                        }
+                         /* A run of this row that touches nothing yet is a singleton (runs of one row
+                          * join only through the row above): hang it under a's parent, which still
+                          * precedes it. Runs whose parents match are already joined. */
+@@ -1761,7 +1779,7 @@
+             }
+             if (contrast < 0) return -2;
+         }
+-        int nruns = threshold_level(det, lw, lh, s / floor_stride);
++        int nruns = threshold_level(det, lw, lh, s / floor_stride, &view, s);
+         PROF_MARK(PROF_THRESHOLD);
+ 
+         /* Resolve runs into packed components, preserving root raster order. */

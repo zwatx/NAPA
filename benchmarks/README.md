@@ -403,3 +403,57 @@ whether it was accepted and why, the observations used, the RMS error, the trans
 standard deviations, and NEES, the squared pose error weighted by the inverse covariance. Timing reports p50 and p95
 separately for detecting both images and for the joint solve, measured once per pair without warm-up. File loading and
 the baseline solves aren't timed.
+
+## Independent datasets
+
+`external.py` evaluates unchanged third-party images, independently of our renderer. It pins
+[Locus-Tag Bench](https://huggingface.co/datasets/NoeFontana/locus-tag-bench) to revision
+`5346835a9ed350828472a4c83d6e3999cf94fefb`: all 700 images in its eleven AprilTag configurations.
+ChArUco is excluded because its marker dictionary is not an AprilTag family. The runner checks image and truth
+checksums, reads authoritative `rich_truth.json` TAG records, and rejects incomplete Parquet shards.
+
+Install the optional reader in your benchmark environment (`python -m pip install pyarrow`), alongside the existing
+headless benchmark dependencies. From the repository root:
+
+```bash
+# Download pinned data once, into ignored work/.
+python -m benchmarks.external --download
+# NAPA and upstream AprilTag d1; construct once, warm up per image, shuffle three timed calls.
+# Set NAPA_CORE_LIBRARY to the exact build being evaluated, as in the CPU comparison workflow.
+python -m benchmarks.external --output work/external/locus-results.json
+# Ordinary NAPA settings only, without the optional peer build:
+python -m benchmarks.external --backends napa napa16 --output work/external/napa-results.json
+```
+
+Scoring requires the correct ID **and quad IoU ≥ 0.5**, with one-to-one matches. Duplicate detections and unmatched
+predictions count as false positives under this annotation protocol. Only complete, in-margin ground-truth tags
+enter the recall denominator; detections matching partial truth are ignored. Unmatched predictions can include
+partially visible tags omitted from the source annotations, so inspect them before interpreting them as invented
+IDs. Geometry is aligned cyclically (including reflected order); this does not validate canonical corner order.
+Both datasets' truth coordinates are shifted by −0.5 to our integer pixel-centre convention.
+
+Each configuration reports recall, precision, corner-error median/p95, and `corner_accuracy_at_1px`: the fraction
+of **all eligible truths**, including missed tags, detected with all four corners within one pixel. These are
+separate metrics, not an undefined aggregate “accuracy.” Timings include the detector adapter and exclude image
+loading. NAPA output capacity is 1,024 to avoid truncating dense boards. Results preserve per-image detections,
+checksums, effective settings, the loaded core hash, and evaluator hash. Files are not overwritten.
+
+The same runner reads the [ICRA 2020 AprilTag accuracy dataset](https://huggingface.co/datasets/NoeFontana/apriltag-validation-data)
+(Kallwies, Forkel and Wuensche, *Determining and Improving the Localization Accuracy of AprilTag Detection*, ICRA 2020).
+Download an archive from mirror revision `6c7653385d480351fe8235d010dedc18fbc0b992` and extract its scenario directory
+under `work/external/icra/`, retaining `tags.csv`, `pure_tags_images/`, and `checkerboard_corners_images/`. Then:
+
+```bash
+python -m benchmarks.external --root work/external/icra --configs icra-forward \
+  --backends napa napa16 apriltag3-d1 --output work/external/icra-forward.json
+```
+
+`icra-circle`, `icra-random`, and `icra-rotation` use the same layout. Missing images are errors; the mirror documents
+one removed corrupt checkerboard image in `circle`, so that archive requires an explicit, recorded exclusion protocol
+before it can be evaluated by this strict loader. Do not silently reduce denominators. The 2026-10-31 measurements
+cover **forward only**, both variants, not the full ICRA dataset.
+
+Detector-generated labels, including the FRC-heavy
+[willtoth collection](https://github.com/willtoth/apriltag_dataset), establish reference agreement rather than
+independent ground-truth accuracy. Keep those results separate. Current measured gaps and rejected experiments are
+in the [independent baseline report](results/2026-10-31_external_baseline/report.md).

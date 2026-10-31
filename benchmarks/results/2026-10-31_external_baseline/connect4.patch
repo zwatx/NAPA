@@ -1,0 +1,14 @@
+--- a/src/napa_vision/_native/napa_core.c
++++ b/src/napa_vision/_native/napa_core.c
+@@ -887,9 +887,9 @@
+             if (prev_y == y - 1) {
+                 int a = prev_start, b = start;
+                 while (a < prev_end && b < n) {
+-                    if (R[a].x1 + 1 < R[b].x0) {
++                    if (R[a].x1 < R[b].x0) {
+                         a++;
+-                    } else if (R[b].x1 + 1 < R[a].x0) {
++                    } else if (R[b].x1 < R[a].x0) {
+                         b++;
+                     } else {
+                         /* A run of this row that touches nothing yet is a singleton (runs of one row
