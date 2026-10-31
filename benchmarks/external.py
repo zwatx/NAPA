@@ -39,6 +39,8 @@ CONFIGS = (
     ),
 )
 FILES = ("train-00000-of-00001.parquet", "rich_truth.json", "manifest.json", "checksums.json")
+# NAPA settings: default and min_tag_px=16, each also with split_touching (for tags touching other shapes).
+NAPA_BACKENDS = ("napa", "napa16", "napa-split", "napa16-split")
 
 
 def files_for(config: str) -> tuple[str, ...]:
@@ -231,14 +233,20 @@ def evaluate(root: Path, configs: list[str], names: list[str], repeats: int) -> 
         detectors = {}
         owned = []
         for name in names:
-            if name in ("napa", "napa16"):
-                det = NapaDetector(family=family, min_tag_px=16 if name == "napa16" else 32, max_detections=1024)
+            if name in NAPA_BACKENDS:
+                det = NapaDetector(
+                    family=family,
+                    min_tag_px=16 if name.startswith("napa16") else 32,
+                    max_detections=1024,
+                    split_touching=name.endswith("-split"),
+                )
                 owned.append(det)
                 detectors[name] = lambda image, det=det: [(o.tag_id, o.corners) for o in det.detect(image)]
                 settings[f"{config}/{name}"] = {
                     "family": family,
                     "min_tag_px": det._params.min_tag_px,
                     "max_detections": 1024,
+                    "split_touching": det.split_touching,
                 }
             elif family == "tag36h11":
                 backends, skipped = cb.build_backends([name], 1)
