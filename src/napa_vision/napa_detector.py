@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ctypes
 import os
+import warnings
 import weakref
 from functools import cache
 from pathlib import Path
@@ -204,6 +205,13 @@ class NapaDetector:
         )
         if count < 0:
             raise RuntimeError(f"napa_detect failed with status {count}")
+        if count == len(self._results):
+            warnings.warn(
+                f"a frame filled all {count} results (max_detections), so any further tags in it were dropped; "
+                "pass a larger max_detections to keep them",
+                RuntimeWarning,
+                stacklevel=2,
+            )
         if count == 0:
             return []
         rows = self._rows[:count]

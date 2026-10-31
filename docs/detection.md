@@ -34,7 +34,7 @@ Detection needs only numpy. OpenCV converts BGR frames when it's installed, and 
 | `min_contrast` | 20 | Minimum grey-level difference between the tag's black and its white margin. NAPA raises it automatically where the frame is noisy or textured. Lowering it finds fainter tags in washed-out scenes, but costs speed on every frame, because sensor noise starts passing the threshold too. |
 | `min_border_cells` | 22 | How many of tag36h11's 28 border cells must read dark before a candidate is decoded, scaled for other families |
 | `sharpening` | 0.25 | Cell sharpening before decoding, as upstream's `decode_sharpening` |
-| `max_detections` | 64 | Results returned per frame |
+| `max_detections` | 64 | Results returned per frame. A frame with more tags warns (`RuntimeWarning`) and drops the rest |
 
 A detector reuses its buffers between frames. Use one per camera stream, and don't call one from two threads at once.
 The native call releases the GIL, so separate detectors run in parallel. `close()` frees the buffers early.

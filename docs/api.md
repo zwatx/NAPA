@@ -75,7 +75,7 @@ raise `ValueError`.
 | `min_contrast` | 1–255 | Minimum grey-level difference between tag black and its white quiet zone |
 | `min_border_cells` | 0–28 | Border cells that must read dark before decoding, out of tag36h11's 28; scaled for other families |
 | `sharpening` | 0–1 | Cell sharpening before decoding |
-| `max_detections` | ≥ 1 | Results returned per frame |
+| `max_detections` | ≥ 1 | Results returned per frame. A frame with more tags warns (`RuntimeWarning`) and drops the rest |
 
 **`detect(image) -> list[FiducialImageObservation]`**: detects tags in a `uint8` grayscale (H×W), BGR (H×W×3), or BGRA
 (H×W×4) array. Strided views are accepted. Frames smaller than 16 px on a side return `[]`; frames larger than

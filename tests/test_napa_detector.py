@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import warnings
+
 import cv2
 import numpy as np
 import pytest
@@ -241,6 +243,27 @@ def test_finds_steeply_tilted_tags_at_any_rotation() -> None:
         if not found or np.abs(found[0].corners - corners).max() > 0.5:
             misses.append(spin)
     assert misses == []
+
+
+@pytest.mark.parametrize("tilt", [78.0, 80.0])
+def test_finds_tags_tilted_past_seventy_five_degrees(tilt: float) -> None:
+    """Foreshortened more than 4:1, but with a narrow side still well above min_tag_px."""
+
+    image, corners = _tilted_scene(42, 300, tilt, 0, size=(640, 480))
+    observations = NapaDetector(min_tag_px=16).detect(image)
+    assert [o.tag_id for o in observations] == [42]
+    assert np.abs(observations[0].corners - corners).max() < 0.5
+
+
+def test_warns_when_a_frame_fills_max_detections() -> None:
+    image, _ = _scene(7, 100)
+    with pytest.warns(RuntimeWarning, match="max_detections"):
+        assert len(NapaDetector(max_detections=1).detect(image)) == 1
+    detector = NapaDetector(max_detections=2)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        assert len(detector.detect(image)) == 1
+    assert not [w for w in caught if "max_detections" in str(w.message)]
 
 
 @pytest.mark.parametrize("min_tag_px", [16, 32])
