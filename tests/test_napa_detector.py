@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import warnings
+
 import cv2
 import numpy as np
 import pytest
@@ -251,6 +253,15 @@ def test_finds_tags_tilted_past_seventy_five_degrees(tilt: float) -> None:
     observations = NapaDetector(min_tag_px=16).detect(image)
     assert [o.tag_id for o in observations] == [42]
     assert np.abs(observations[0].corners - corners).max() < 0.5
+
+
+def test_warns_when_a_frame_fills_max_detections() -> None:
+    image, _ = _scene(7, 100)
+    with pytest.warns(RuntimeWarning, match="max_detections"):
+        assert len(NapaDetector(max_detections=1).detect(image)) == 1
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        assert len(NapaDetector(max_detections=2).detect(image)) == 1
 
 
 @pytest.mark.parametrize("min_tag_px", [16, 32])
