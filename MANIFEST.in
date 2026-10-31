@@ -1,5 +1,5 @@
 include LICENSE NOTICE THIRD_PARTY_NOTICES CMakeLists.txt
-recursive-include examples *.c
+recursive-include examples *.c *.py *.md
 include benchmarks/corpus.example.json
 recursive-include docs *.md
 recursive-include src/napa_vision/_native *.c *.h
