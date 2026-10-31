@@ -10,6 +10,8 @@ without a detector.
 `src/napa_vision/_native/napa_core.h` is the whole C API: create a detector, call `napa_detect` on a greyscale buffer
 with a stride, and destroy the detector. `napa_create()` reads tag36h11, `napa_create_family("tag25h9")` reads another
 family, and `napa_family_info()` describes each. The library needs nothing beyond the C standard library and `libm`.
+Initialise `napa_params` with designated initialisers or zeros, as `examples/c/detect_pgm.c` does, so fields added in
+later versions (such as `split_touching`) start off; rebuild against the new header when you update the library.
 
 Build and install it with CMake, without Python:
 

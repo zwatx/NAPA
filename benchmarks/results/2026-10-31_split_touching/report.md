@@ -8,7 +8,9 @@ With it on, every ordinary detection is still returned first, unchanged, and the
 
 - Source: branch `feat/split-touching-tags` on `4f9eecb`, core source SHA-256 `15e92f4c…`, evaluator
   `benchmarks/external.py` SHA-256 `fb28380e…`, library SHA-256 `4312717901e0…` (all in the raw files). GCC 15.2,
-  `setup.py` flags, one thread pinned to one core of an Intel i7-12700H.
+  `setup.py` flags, one thread pinned to one core of an Intel i7-12700H. A later review fix (pieces no longer add to
+  the shared failed-quad list, and pass their fate to their own pieces) changes one Golden detection's corners, the
+  same tag found by another piece, and no metric.
 - Data and scoring as in the [baseline report](../2026-10-31_external_baseline/report.md): all 700 Locus-Tag Bench
   images (revision `5346835`) and the 100 ICRA 2020 forward scenes (pure tags and checkerboard), correct ID and
   quad IoU ≥ 0.5, one-to-one, complete truths only. "Within 1 px" counts all four corners within a pixel, over all
@@ -66,17 +68,17 @@ FRC set: the fixed 188-image selection of the baseline report. Its labels come f
 measure agreement, not accuracy. With the option on, agreement rises from 286 to 288 of 363 at the default and from
 358 to 361 at 16. On 900 frames of the synthetic corpus, 6 more tags are found at the default and none are lost.
 
-Paired timing, interleaved per frame, median of seven calls, over the 188 FRC images and 288 synthetic frames. An
-identical copy of the default library is the noise control.
+Paired timing of the final build, interleaved per frame, median of seven calls, over the 188 FRC images and 288
+synthetic frames. An identical copy of the default library is the noise control.
 
 | Setting | Default library | Identical copy | Option off | Option on |
 | --- | ---: | ---: | ---: | ---: |
-| FRC, `min_tag_px=32` | 0.45 ms/frame | 1.03× | 1.01× | 2.06× (0.93 ms) |
-| FRC, `min_tag_px=16` | 2.08 ms/frame | 1.00× | 0.99× | 1.71× (3.55 ms) |
-| Synthetic, `min_tag_px=32` | 0.40 ms/frame | 1.04× | 1.01× | 1.81× |
+| FRC, `min_tag_px=32` | 0.43 ms/frame | 1.02× | 1.00× | 2.09× (0.89 ms) |
+| FRC, `min_tag_px=16` | 2.07 ms/frame | 1.00× | 1.00× | 1.72× (3.57 ms) |
+| Synthetic, `min_tag_px=32` | 0.37 ms/frame | 1.04× | 1.01× | 1.83× |
 | Synthetic, `min_tag_px=16` | 1.36 ms/frame | 1.01× | 1.00× | 1.83× |
 
-Most of the added time goes to labelling and joining the one-sample necks; corner contacts alone cost 1.33× and
-1.17× on the FRC set. Splitting necks on only some pyramid levels saved up to half of the added time at one setting
-but lost 150–420 board tags at the other, and splitting them only at the tips of shapes lost the checkerboard gain,
-so necks are split on every level.
+The slowest frames take up to about 4× as long: noise creates one-sample necks everywhere. Most of the added time goes
+to labelling and joining the one-sample necks; corner contacts alone cost 1.33× and 1.17× on the FRC set. Splitting
+necks on only some pyramid levels saved up to half of the added time at one setting but lost 150–420 board tags at the
+other, and splitting them only at the tips of shapes lost the checkerboard gain, so necks are split on every level.

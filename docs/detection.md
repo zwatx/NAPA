@@ -54,7 +54,8 @@ detector = NapaDetector(min_tag_px=16, split_touching=True, max_detections=256)
 The tags found this way come after the others, which are exactly what the detector returns without the option.
 Pieces may correct at most two bits, fewer for families whose codes are closer together; tag16h5 and tagCircle21h7
 aren't split, because random pieces match their short codes too often. Splitting roughly doubles the time on natural
-scenes, so leave it off unless tags touch other shapes. With it off, detection is unchanged.
+scenes, and noisy frames can take up to four times as long, so leave it off unless tags touch other shapes. With it
+off, detection is unchanged.
 
 ## Tag families
 

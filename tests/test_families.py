@@ -184,16 +184,17 @@ def test_split_touching_finds_grids_of_classic_families(family: str) -> None:
         assert len(found) >= (12 if angle == 0.0 else 9)
 
 
-@pytest.mark.parametrize("family", ["tag16h5", "tagCircle21h7"])
-def test_split_touching_skips_families_whose_short_codes_match_pieces(family: str) -> None:
-    """Exact chance matches of 16- and 21-bit codes are too likely among the many extra pieces."""
+def test_split_touching_skips_tag16h5_whose_short_codes_match_pieces() -> None:
+    """Exact chance matches of tag16h5's 16-bit codes are too likely among the many extra pieces, so its touching
+    tags stay hidden (tagCircle21h7 is skipped the same way)."""
 
-    image = _grid("tag16h5", list(range(1, 13))) if family == "tag16h5" else _grid("tag36h11", list(range(1, 13)))
+    image = _grid("tag16h5", list(range(1, 13)))
     rng = np.random.default_rng(5)
     noisy = np.clip(image + rng.normal(0, 6, image.shape), 0, 255).astype(np.uint8)
     for frame in (image, noisy):
-        ordinary = NapaDetector(family=family, min_tag_px=16).detect(frame)
-        split = NapaDetector(family=family, min_tag_px=16, split_touching=True).detect(frame)
+        ordinary = NapaDetector(family="tag16h5", min_tag_px=16).detect(frame)
+        split = NapaDetector(family="tag16h5", min_tag_px=16, split_touching=True).detect(frame)
+        assert len(ordinary) <= 3  # the corner squares hide the board, as in the classic families above
         assert [(o.tag_id, o.corners.tolist()) for o in split] == [(o.tag_id, o.corners.tolist()) for o in ordinary]
 
 

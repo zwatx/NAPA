@@ -136,7 +136,8 @@ class NapaDetector:
     ``split_touching=True`` also finds tags whose border touches another dark shape at a corner, as in
     AprilGrid calibration boards and tags set in a checkerboard: such a tag and its neighbours form one blob,
     which isn't tag-shaped. The extra tags come after the others, which are unchanged. Splitting roughly
-    doubles detection time on natural scenes, so leave it off unless tags touch other shapes.
+    doubles detection time on natural scenes (up to 4x on noisy frames), so leave it off unless tags touch other
+    shapes.
 
     One instance holds reusable buffers: serialize calls on each instance, and use one instance
     per thread or camera stream. The native call releases the GIL.

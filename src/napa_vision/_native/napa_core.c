@@ -2055,7 +2055,10 @@ int napa_detect(napa_detector *det, const uint8_t *img, int width, int height, i
                                          : det->piece_cand[k] >= 0 ? &det->cands[det->piece_cand[k]] : NULL;
                 int fate = whole ? -whole->row_y : 0;
                 if (det->piece_cand[k] >= 0 && s == 1) continue;
-                if (fate == 6 || fate >= 9) continue;
+                if (fate == 6 || fate >= 9) {
+                    self->row_y = whole->row_y; /* its own pieces share the fate */
+                    continue;
+                }
             }
             int t_minx = comp.minx, t_maxx = comp.maxx, t_miny = comp.miny, t_maxy = comp.maxy;
             int bw = t_maxx - t_minx + 1, bh = t_maxy - t_miny + 1;
@@ -2158,7 +2161,7 @@ int napa_detect(napa_detector *det, const uint8_t *img, int width, int height, i
                 if (good_sides < 3) {
                     PROF_MARK(PROF_FIT1);
                     TRACE(7);
-                self->row_y = -7;
+                    self->row_y = -7;
                     continue;
                 }
             }
@@ -2215,8 +2218,9 @@ int napa_detect(napa_detector *det, const uint8_t *img, int width, int height, i
                 if (!rescued) {
                     PROF_MARK(PROF_DECODE1);
                     TRACE(8);
-                self->row_y = -8;
-                    remember_failure(det, fine, s);
+                    self->row_y = -8;
+                    /* Pieces only read the list, so the other detections can't depend on them. */
+                    if (!piece) remember_failure(det, fine, s);
                     continue;
                 }
             }
@@ -2313,6 +2317,7 @@ int napa_detect(napa_detector *det, const uint8_t *img, int width, int height, i
             if (piece) {
                 /* Pieces are many and mostly not tags: correct fewer bits (in tag36h11, three admitted
                  * chance matches from random-payload grids), and keep them apart until the end. */
+                self->row_y = -12;
                 if (d.hamming > det->fam.piece_hamming || already_found(det->piece_out, piece_found, &d)) continue;
                 if ((size_t)piece_found == det->piece_out_capacity) {
                     size_t cap = det->piece_out_capacity ? 2 * det->piece_out_capacity : 64;
@@ -2330,7 +2335,7 @@ int napa_detect(napa_detector *det, const uint8_t *img, int width, int height, i
                 continue;
             }
             TRACE(12);
-                self->row_y = -12;
+            self->row_y = -12;
             if (found < max_out) out[found] = d;
             found++;
         }
