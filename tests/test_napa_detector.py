@@ -243,6 +243,16 @@ def test_finds_steeply_tilted_tags_at_any_rotation() -> None:
     assert misses == []
 
 
+@pytest.mark.parametrize("tilt", [78.0, 80.0])
+def test_finds_tags_tilted_past_seventy_five_degrees(tilt: float) -> None:
+    """Foreshortened more than 4:1, but with a narrow side still well above min_tag_px."""
+
+    image, corners = _tilted_scene(42, 300, tilt, 0, size=(640, 480))
+    observations = NapaDetector(min_tag_px=16).detect(image)
+    assert [o.tag_id for o in observations] == [42]
+    assert np.abs(observations[0].corners - corners).max() < 0.5
+
+
 @pytest.mark.parametrize("min_tag_px", [16, 32])
 def test_finds_low_contrast_tags_in_heavy_sensor_noise(min_tag_px: int) -> None:
     """Tag black and white 40 grey levels apart under noise of sigma 12: the averaging rake's case."""

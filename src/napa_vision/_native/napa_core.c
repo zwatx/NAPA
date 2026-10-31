@@ -1788,8 +1788,9 @@ int napa_detect(napa_detector *det, const uint8_t *img, int width, int height, i
             P[i] = -r - 1;
         }
         /* Keep tag-sized, tag-shaped blobs as candidates, in raster order of their first sample. A tag
-         * tilted by t looks about 1 / cos(t) times longer than it is wide, more with perspective: a 4:1
-         * box admits tilts to about 70-75 degrees, beyond which the cells are too thin to read anyway. */
+         * tilted by t looks about 1 / cos(t) times longer than it is wide, more with perspective: an 8:1
+         * box admits tilts to about 80 degrees. Clean tags stay readable past 75 degrees whenever their
+         * narrow side is still min_tag_px or more, and decoding rejects thin blobs that aren't tags. */
         int min_size = lo;
         /* Dense levels propose small tags only. Larger tags have wider cells and are cheaper to
          * propose on the next level; the overlapping bands retain steeply tilted small tags. */
@@ -1801,7 +1802,7 @@ int napa_detect(napa_detector *det, const uint8_t *img, int width, int height, i
             int bw = t_maxx - t_minx + 1, bh = t_maxy - t_miny + 1;
             int big = bw > bh ? bw : bh, small = bw < bh ? bw : bh;
             if (!last && base == 1 && s <= 2 && small > 72) continue;
-            if (small < min_size || big > max_size || big > 4 * small) {
+            if (small < min_size || big > max_size || big > 8 * small) {
                 if (big >= 4) TRACE(small < min_size ? 1 : big > max_size ? 2 : 3);
                 continue;
             }
