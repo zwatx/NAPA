@@ -42,16 +42,16 @@ Each row shows correct detections / eligible tags; percentages are per configura
 | icra-forward/pure_tags_images | 2687/7700 | 34.90% | 34.90% | 5615/7700 | 72.92% | 72.91% |
 | icra-forward/checkerboard_corners_images | 0/7700 | 0.00% | 0.00% | 0/7700 | 0.00% | 0.00% |
 
-The single-tag campaigns clear90% recall and one-pixel corner accuracy. Adjacent grid tags, strong lens distortion,
+The single-tag campaigns clear 90% recall and one-pixel corner accuracy. Adjacent grid tags, strong lens distortion,
 and tiny/distant tags expose large gaps. This is evidence against treating our generated corpus as sufficient proof
-of general performance. ICRA forward starts at roughly8px tags, below the default minimum-size setting; the full
+of general performance. ICRA forward starts at roughly 8px tags, below the default minimum-size setting; the full
 published denominator remains visible rather than being filtered to make the result look better.
 
 ## Real FRC reference agreement — separate evidence
 
-Fixed hash selection of200 entries from `wt200999/apriltag-dataset` revision
+Fixed hash selection of 200 entries from `wt200999/apriltag-dataset` revision
 `527979f5ee524ea769cf1d15a948fa19d389129c`, before testing detector outcomes. Twelve selected image files are missing
-from that pinned repository; **188 images /363 reference detections** were available. Selection metadata is retained
+from that pinned repository; **188 images / 363 reference detections** were available. Selection metadata is retained
 in `frc-selection.json`; unavailable entries are listed in `frc-agreement.json.gz`. No replacements or outcome filters.
 Labels are pupil-apriltags outputs: agreement is not independent accuracy and unmatched detections may be correct.
 
@@ -63,32 +63,32 @@ Labels are pupil-apriltags outputs: agreement is not independent accuracy and un
 ## Rejected algorithm experiments
 
 1. **Global four-connectivity:** separates touching tag borders, but the 900-frame existing-corpus subset had a net decrease of 40
-   default detections (2063→2023; 46 baseline matches lost, 6 gained). Tuned16 stayed2131/2131. Rejected for default small-tag regressions.
+   default detections (2063→2023; 46 baseline matches lost, 6 gained). Tuned16 stayed 2131/2131. Rejected for default small-tag regressions.
 2. **Eight-connected first, then split oversized components:** preserved every baseline match in that subset,
    recovered 3 default tags, and improved independent grid recall. However, repeated shuffled FRC timing over 188
-   images found median per-frame candidate/baseline ratios of **1.505× at 16 and1.581× at 32**.
+   images found median per-frame candidate/baseline ratios of **1.505× at 16 and 1.581× at 32**.
    It recovered only 2 reference matches per setting. Rejected: the FRC slowdown violates the priority.
    Requiring uncorrected codes or adding an early border screen did not remove the problem.
 3. **Adaptive four-connectivity with diagonal fragment repair:** preserved the 900-frame baseline matches
-   (+4 default detections), but was1.30–1.34× slower on FRC. Its original-box rule also permits transitive
+   (+4 default detections), but was 1.30–1.34× slower on FRC. Its original-box rule also permits transitive
    bridges through a small fragment between full tags. Rejected.
 4. **Component-local splitting:** restricted the fallback relabeling to runs in oversized original components.
-   This removed duplicated work on ordinary components, but still cost1.225× at 16 and1.241× at 32 on FRC.
+   This removed duplicated work on ordinary components, but still cost 1.225× at 16 and 1.241× at 32 on FRC.
    Native profiling attributed much of the extra cost to relabeling/packing. Rejected.
 5. **Midpoint image evidence in the existing union loop:** improved grid recall without relabeling, but lost
-   existing tiny-tag matches in the 900-frame subset and2 default FRC reference matches. Rejected despite
+   existing tiny-tag matches in the 900-frame subset and 2 default FRC reference matches. Rejected despite
    aggregate gains. A more conservative integer/half-pixel version preserved FRC reference counts but still
-   cost1.060–1.073× in that paired replay; it has not passed full regression gates and is not adopted.
+   cost 1.060–1.073× in that paired replay; it has not passed full regression gates and is not adopted.
 
-The149-frame cached diagnostic gave only~2% overhead for the split fallback; real FRC imagery revealed the larger
+The 149-frame cached diagnostic gave only ~2% overhead for the split fallback; real FRC imagery revealed the larger
 cost. This is precisely why independent images and separate per-source reporting are necessary. No candidate has
 been promoted on the strength of the diagnostic subset.
 
 The next proposal needs to address merged-border topology without generating substantially more fitted quads in
 ordinary FRC scenes. Increasing default work or weakening decode acceptance simply to reach a headline score is
 not an accepted solution. The ICRA CSV contains 2,772 eligible tags below 12 px on their shortest side,
-   including 1,694 below 10 px. Even perfect detection of larger tags would require at least2,002 of the former,
-   including 924 of the latter, to reach 90%. `min_tag_px=8` and16 both use stride 1 for tag36h11; simply lowering that
+   including 1,694 below 10 px. Even perfect detection of larger tags would require at least 2,002 of the former,
+   including 924 of the latter, to reach 90%. `min_tag_px=8` and 16 both use stride 1 for tag36h11; simply lowering that
    setting cannot resolve this. Remaining work includes a viable algorithm, untouched additional sequences, complete
 FRC ground truth, and full existing-corpus performance/quality gates before adoption.
 
@@ -113,9 +113,9 @@ Experimental patches apply to the recorded baseline source and are **not recomme
 
 ## Verification
 
-- Full local suite:304 passed, including9 new evaluator tests.
+- Full local suite: 304 passed, including 9 new evaluator tests.
 - Separate read-only evaluator review found pixel-origin and incomplete-extraction defects; both fixed and covered.
-- Image/truth checksums verified during the fresh700-image run; ICRA requires complete filename sets in both variants.
+- Image/truth checksums verified during the fresh 700-image run; ICRA requires complete filename sets in both variants.
 - Detector C source and defaults are unchanged from the recorded measurement baseline. This report records an evaluator milestone; it does not establish completion of the algorithm-improvement target.
 
 The recorded FRC timing experiment can be replayed from the repository root with
@@ -124,7 +124,7 @@ The recorded FRC timing experiment can be replayed from the repository root with
 `fallback-strict.patch` as `work/external/baseline.so` and `work/external/fallback-strict.so` with the flags above.
 It checks the fixed selection and image hashes, honors the 12 recorded unavailable entries, and writes a fresh
 `work/external/frc-paired-reproduction.json`. The script uses integer-centre reference corners, one warm-up and
-10 shuffled calls per frame/setting, order seed42. Its ID-match diagnostics follow our existing CPU scorer;
+10 shuffled calls per frame/setting, order seed 42. Its ID-match diagnostics follow our existing CPU scorer;
 the separate agreement file applies the spatial IoU gate. These are reference comparisons, not ground-truth scores.
 
 The packaged FRC replay also ran successfully: all reference counts reproduced, with median candidate/baseline ratios 1.485× at 16 and 1.564× at 32. The FRC sample and three grid sets are now development data; future adoption requires untouched validation sources.
