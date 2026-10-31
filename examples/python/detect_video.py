@@ -1,4 +1,4 @@
-"""Detect tags in a webcam or video; emit one JSON object per frame, with optional display."""
+"""Detect tags in webcam or video frames and print one JSON line per frame."""
 
 import argparse
 import json
@@ -16,7 +16,9 @@ def main() -> None:
     source.add_argument("--camera", type=int, help="camera index, usually 0")
     source.add_argument("--video", help="path to a recorded video")
     parser.add_argument(
-        "--display", action="store_true", help="show detections; press q or Escape to stop (needs gui extra)"
+        "--display",
+        action="store_true",
+        help="show detections in a window; press q or Escape to stop (needs the gui extra)",
     )
     parser.add_argument("--max-frames", type=int, help="stop after this many frames")
     parser.add_argument("--family", default="tag36h11")
@@ -38,7 +40,7 @@ def main() -> None:
                     parser.error("capture source did not return a frame")
                 break  # End of a recorded video.
             start = perf_counter()
-            detections = detector.detect(frame)  # Reuse one detector and its buffers for the entire stream.
+            detections = detector.detect(frame)  # One detector reuses its buffers for every frame.
             detection_ms = (perf_counter() - start) * 1000
             print(
                 json.dumps(

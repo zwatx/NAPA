@@ -1,4 +1,4 @@
-"""Detect tags in an image, print JSON, and optionally save an annotated copy."""
+"""Detect tags in an image, print them as JSON, and optionally save an annotated copy."""
 
 import argparse
 import json
@@ -13,9 +13,9 @@ from napa_vision import NapaDetector
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("image", type=Path)
-    parser.add_argument("--output", type=Path, help="save an annotated image, e.g. detected.png")
+    parser.add_argument("--output", type=Path, help="save a copy with tags outlined, e.g. detected.png")
     parser.add_argument("--family", default="tag36h11")
-    parser.add_argument("--min-tag-px", type=int, default=32, help="lower to 16 for smaller or distant tags")
+    parser.add_argument("--min-tag-px", type=int, default=32, help="lower to 16 for small or distant tags")
     args = parser.parse_args()
 
     image = cv2.imread(str(args.image), cv2.IMREAD_COLOR)
@@ -24,7 +24,7 @@ def main() -> None:
 
     detector = NapaDetector(family=args.family, min_tag_px=args.min_tag_px)
     try:
-        detections = detector.detect(image)  # BGR is accepted directly; no conversion needed.
+        detections = detector.detect(image)  # detect() accepts BGR directly.
     finally:
         detector.close()
 

@@ -1,4 +1,4 @@
-"""Estimate camera-to-tag poses in a photo using a measured camera calibration."""
+"""Estimate camera-to-tag poses in a photo from a measured camera calibration."""
 
 import argparse
 import json
@@ -14,7 +14,10 @@ def main() -> None:
     parser.add_argument("image", type=Path)
     parser.add_argument("--calibration", type=Path, required=True, help="camera JSON from napa-calibrate")
     parser.add_argument(
-        "--tag-size-m", type=float, required=True, help="measured side of the tag-size square in metres"
+        "--tag-size-m",
+        type=float,
+        required=True,
+        help="measured edge of the tag-size square (the black square on tag36h11), in metres",
     )
     parser.add_argument("--family", default="tag36h11")
     parser.add_argument("--min-tag-px", type=int, default=32)
@@ -29,7 +32,7 @@ def main() -> None:
     detector = NapaDetector(family=args.family, min_tag_px=args.min_tag_px)
     try:
         processor = VisionProcessor(detector=detector, calibration=calibration, tag_size_m=args.tag_size_m)
-        # A still image has no capture clock here. For a live robot, pass the exposure timestamp in its clock.
+        # A photo has no capture time, so 0.0 stands in. On a robot, pass each frame's exposure timestamp.
         result = processor.process(image, timestamp=0.0)
     finally:
         detector.close()
@@ -40,7 +43,7 @@ def main() -> None:
         for index, error in enumerate((single.error_0, single.error_1)):
             if error is None:
                 continue
-            # This accessor converts the raw OpenCV result to WPILib camera axes: forward, left, up.
+            # camera_to_tag() converts from OpenCV axes to WPILib camera axes (forward, left, up).
             pose = single.camera_to_tag(index)
             solutions.append(
                 {

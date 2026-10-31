@@ -1,6 +1,6 @@
 # NAPA documentation
 
-- [Runnable examples](../examples/README.md): image detection, webcam/video, calibrated poses, and the C API
+- [Runnable examples](../examples/README.md): a hardware-free quick start, images, webcam and video, calibrated poses, and the C API
 - [Detection](detection.md): tuning, tag families, printing tags, and switching from `pupil_apriltags`
 - [Poses and filters](poses.md): metric poses, coordinate frames, and WPILib pose estimators
 - [Camera calibration](calibration.md)

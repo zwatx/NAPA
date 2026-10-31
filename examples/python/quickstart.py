@@ -1,4 +1,4 @@
-"""Generate and detect a tag using only NAPA and NumPy. No camera or OpenCV needed."""
+"""Generate a tag and detect it with only NAPA and NumPy, no camera or OpenCV."""
 
 import numpy as np
 
