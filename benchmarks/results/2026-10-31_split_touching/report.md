@@ -10,9 +10,11 @@ such corners and which cost far more to split. Frames without touching tags, mos
 
 ## Method
 
-- Source: branch `feat/split-touching-tags`, core source SHA-256 `6855eca7…`, evaluator `benchmarks/external.py`
-  SHA-256 `fb28380e…`, library SHA-256 `3b76310f…` (all in the raw files). GCC 15.2, `setup.py` flags, one thread
-  pinned to one core of an Intel i7-12700H.
+- Source: branch `feat/split-touching-tags`, evaluator `benchmarks/external.py` SHA-256 `fb28380e…`, library SHA-256
+  `3b76310f…` (all in the raw files). The raw files record core source `6855eca7…`; later comment-only edits give
+  the committed `d63c153f…`, whose library has identical code and data sections (only debug information and the
+  build ID differ). GCC 15.2, `setup.py` flags, one thread pinned to one core
+  of an Intel i7-12700H.
 - Data and scoring as in the [baseline report](../2026-10-31_external_baseline/report.md): all 700 Locus-Tag Bench
   images (revision `5346835`) and the 100 ICRA 2020 forward scenes (pure tags and checkerboard), correct ID and
   quad IoU ≥ 0.5, one-to-one, complete truths only. "Within 1 px" counts all four corners within a pixel, over all

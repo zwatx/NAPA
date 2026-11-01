@@ -1707,7 +1707,8 @@ static int split_pieces(napa_detector *det, int lo, int hi, int dense, int *fine
 }
 
 /* Whether a found tag touches dark shapes at its corners, as grid tags do: just outside at least two corners,
- * diagonally, the image is darker than halfway between the tag's border there and its quiet zone. */
+ * diagonally, the image is darker than halfway between the tag's border there and its quiet zone. Families with
+ * data cells outside the border have them where these samples fall, so their boards may not be recognised. */
 static int corners_touch(const image_view *view, const napa_detection *d, double cells) {
     const double *c = d->corners;
     int dark = 0;
