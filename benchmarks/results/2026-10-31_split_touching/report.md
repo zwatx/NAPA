@@ -7,13 +7,14 @@ With it on, every ordinary detection is still returned first, unchanged, and the
 A frame first splits only where shapes touch at a corner. Once it finds a tag with dark shapes just beyond its
 corners, as every tag on a board has, it starts over and also splits one-pixel necks, which anti-aliasing leaves at
 such corners and which cost far more to split. Frames without touching tags, most FRC frames, never take that step.
-Until then, the single piece of a blob that already failed its first edge fit isn't tried either: outside boards,
-whose blobs hold many pieces, such pieces never held a tag. If the frame starts over, they are tried then.
+Until then, a piece isn't tried either when it is nearly all of a blob that already failed its first edge fit and
+the blob's only piece: it fails the same way. (A tag touching a bar, or a board, is a small part of its blob.) If the
+frame starts over, such pieces are tried then.
 
 ## Method
 
-- Source: branch `feat/split-touching-tags`, core source SHA-256 `82c3cf4b…`, evaluator `benchmarks/external.py`
-  SHA-256 `fb28380e…`, library SHA-256 `703219bf…` (all in the raw files). GCC 15.2, `setup.py` flags, one thread
+- Source: branch `feat/split-touching-tags`, core source SHA-256 `25b34316…`, evaluator `benchmarks/external.py`
+  SHA-256 `fb28380e…`, library SHA-256 `275ec45b…` (all in the raw files). GCC 15.2, `setup.py` flags, one thread
   pinned to one core of an Intel i7-12700H.
 - Data and scoring as in the [baseline report](../2026-10-31_external_baseline/report.md): all 700 Locus-Tag Bench
   images (revision `5346835`) and the 100 ICRA 2020 forward scenes (pure tags and checkerboard), correct ID and
@@ -29,17 +30,17 @@ Recall (within 1 px), protocol false positives, and median latency.
 
 | Configuration | napa16 | napa16-split | AprilTag 3, full resolution |
 | --- | ---: | ---: | ---: |
-| AprilGrid, golden | 81.8% (81.7%), 18 FP, 5.8 ms | **96.9% (96.8%)**, 27 FP, 14.4 ms | 98.0% (97.9%), 31 FP, 75 ms |
-| AprilGrid, Brown–Conrady | 79.8% (79.4%), 5 FP, 5.5 ms | **96.2% (95.6%)**, 9 FP, 15.4 ms | 96.1% (89.4%), 10 FP, 73 ms |
-| AprilGrid, Kannala–Brandt | 41.8% (16.7%), 7 FP, 3.3 ms | 80.5% (27.1%), 15 FP, 8.7 ms | 94.1% (18.3%), 18 FP, 47 ms |
-| ICRA checkerboard | 0.0%, 0 FP, 5.1 ms | **64.9% (64.9%)**, 0 FP, 14.0 ms | 31.5% (31.5%), 0 FP, 115 ms |
+| AprilGrid, golden | 81.8% (81.7%), 18 FP, 5.9 ms | **96.9% (96.8%)**, 27 FP, 15.1 ms | 98.0% (97.9%), 31 FP, 74 ms |
+| AprilGrid, Brown–Conrady | 79.8% (79.4%), 5 FP, 5.9 ms | **96.2% (95.6%)**, 9 FP, 15.7 ms | 96.1% (89.4%), 10 FP, 79 ms |
+| AprilGrid, Kannala–Brandt | 41.8% (16.7%), 7 FP, 3.3 ms | 80.5% (27.1%), 15 FP, 8.6 ms | 94.1% (18.3%), 18 FP, 45 ms |
+| ICRA checkerboard | 0.0%, 0 FP, 5.2 ms | **64.9% (64.9%)**, 0 FP, 13.9 ms | 31.5% (31.5%), 0 FP, 118 ms |
 
 | Configuration | napa | napa-split |
 | --- | ---: | ---: |
-| AprilGrid, golden | 54.5% (54.5%), 1.6 ms | 86.3% (86.3%), 3.9 ms |
-| AprilGrid, Brown–Conrady | 40.3% (40.2%), 1.5 ms | 81.0% (80.7%), 4.1 ms |
+| AprilGrid, golden | 54.5% (54.5%), 1.7 ms | 86.3% (86.3%), 4.0 ms |
+| AprilGrid, Brown–Conrady | 40.3% (40.2%), 1.6 ms | 81.0% (80.7%), 3.9 ms |
 | AprilGrid, Kannala–Brandt | 23.3% (8.5%), 0.8 ms | 68.9% (22.2%), 2.7 ms |
-| ICRA checkerboard | 0.0%, 1.1 ms | 31.2% (31.2%), 1.8 ms |
+| ICRA checkerboard | 0.0%, 1.2 ms | 31.2% (31.2%), 1.8 ms |
 
 The eight single-tag Locus configurations and ICRA's pure-tag scenes are unchanged in recall, false positives and
 corners at both settings. ICRA's tags are mostly under 10 px, so `min_tag_px=16` is the relevant setting there.
@@ -77,15 +78,20 @@ synthetic frames. An identical copy of the default library is the noise control.
 
 | Setting | Default library | Identical copy | Option off | Option on |
 | --- | ---: | ---: | ---: | ---: |
-| FRC, `min_tag_px=32` | 0.44 ms/frame | 1.01× | 0.99× | 1.31× (0.58 ms) |
-| FRC, `min_tag_px=16` | 2.18 ms/frame | 1.00× | 1.00× | 1.19× (2.59 ms) |
-| Synthetic, `min_tag_px=32` | 0.39 ms/frame | 1.02× | 1.01× | 1.26× |
-| Synthetic, `min_tag_px=16` | 1.42 ms/frame | 1.00× | 1.00× | 1.22× |
+| FRC, `min_tag_px=32` | 0.44 ms/frame | 1.02× | 1.00× | 1.32× (0.58 ms) |
+| FRC, `min_tag_px=16` | 2.14 ms/frame | 1.02× | 1.00× | 1.19× (2.56 ms) |
+| Synthetic, `min_tag_px=32` | 0.39 ms/frame | 1.03× | 1.01× | 1.27× |
+| Synthetic, `min_tag_px=16` | 1.41 ms/frame | 1.02× | 1.01× | 1.24× |
 
-Splitting every frame at necks as well, as an earlier version did, cost 2.10× and 1.71× on the FRC set for one more FRC
-agreement at 16, and the same board recall. A frame that finds touching tags runs twice and can take up to about 5× as
-long; board frames above take 2.5–2.8× napa16's time. Skipping every piece of a blob that failed its first fit, not only
-a lone one, saved a few more percent but missed a whole small board, which is one such blob, so the frame never started
-over. Waiting for touching tags before splitting at stride one saved another 0.08× at 16 but lost two FRC agreements and
-565 checkerboard tags, whose frames hold only tiny tags. What remains on FRC frames is about two-fifths bookkeeping for
-the split itself and three-fifths the pieces' extrema and decoding.
+Splitting every frame at necks as well, as an earlier version did, cost 2.10× and 1.72× on the FRC set in the same
+session, for one more FRC agreement at 16 and the same board recall. A frame that finds touching tags runs twice and can
+take up to about 5× as long; board frames above take 2.6–2.7× napa16's time, about a fifth of AprilTag's. What remains
+on FRC frames is about two-fifths bookkeeping for the split itself and three-fifths the pieces' extrema and decoding.
+
+Rejected along the way: skipping every piece of a blob that failed its first fit missed a whole small board, which is
+one such blob, so the frame never started over; skipping a blob's only piece whatever its size missed tags touching a
+bar, whose bar isn't proposed (`test_split_touching_finds_a_tag_touching_one_shape`); waiting for touching tags before
+splitting at stride one saved another 0.08× at 16 but lost two FRC agreements and 565 checkerboard tags, whose frames
+hold only tiny tags. The cost cuts that were kept give up a little board recall against the slowest version: 3
+checkerboard and 2 Kannala–Brandt tags on the benchmarks above, and on the real-code decoy boards 1,849 and 1,198 tags
+against 1,873 and 1,236.
