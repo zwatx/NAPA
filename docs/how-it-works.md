@@ -6,8 +6,6 @@ first, skips anything without contrast, and only does full-resolution work on th
 
 ![NAPA on one frame, stage by stage: it samples every third pixel, skips flat tiles, turns dark samples into runs and blobs, drops shapes that can't be tags, and fits edges and decodes only the tags, at full resolution.](napa-pipeline.webp)
 
-*One synthetic frame, stage by stage. Every overlay is computed from the frame by a port of NAPA's pipeline.*
-
 ## 1. Sample a sparse grid
 
 A tag36h11 tag is 8 cells across, and its black border is one cell wide. NAPA reads only the pixels on a grid spaced ¾
