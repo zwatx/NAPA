@@ -25,6 +25,8 @@ typedef struct {
     int min_contrast;     /* grey levels between tag black and the white quiet zone (1-255) */
     int min_border_cells; /* dark border cells required out of 28 (0-28) */
     int sharpening_x100;  /* cell sharpening strength x100 (0-100); upstream AprilTag uses 25 */
+    int split_touching;   /* 1: also decode dark shapes that touch others only at a corner, as tags do in
+                           * AprilGrid boards and checkerboards; slower. 0 (the default): off */
 } napa_params;
 
 typedef struct {

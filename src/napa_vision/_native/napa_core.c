@@ -77,6 +77,8 @@ typedef struct {
     int ext[16][2]; /* extreme points along the 16 directions of comp_dirs, in angular order */
     int extv[16];
     int row_y, row_x0, row_x1; /* the blob's current row: its leftmost and rightmost dark sample */
+    /* Spent once the extrema are flushed; napa_detect then reuses row_y for how far the blob got and
+     * row_x1 for how many split pieces it has. */
 } component;
 
 /* The fitted quad, in pixels, of a candidate that failed its early decode, and its level's stride. */
@@ -103,6 +105,7 @@ typedef struct {
     int width, outer, grid, nbits, ncodes, nrot, max_hamming;
     int recommended_hamming; /* the default correction: chance matches no likelier than tag36h11's at 3 */
     int soft_hamming; /* families whose default corrects fewer bits than 3: the most bits a soft correction may fix */
+    int piece_hamming; /* split_touching: the most bits a piece may correct, or -1 if pieces aren't decoded */
     double cells;      /* width as a double */
     double fill_limit; /* largest dark fraction a blob may have of its grown quad */
     double bias_slack; /* border_bias's side-agreement tolerance, relative to tag36h11's */
@@ -150,6 +153,19 @@ struct napa_detector {
     size_t tile_capacity;
     failed_quad *failed; /* this frame's failed candidates, for skipping the same blob at a coarser level */
     size_t failed_n, failed_capacity;
+    /* split_touching: run pairs of this level that touch only at a corner, or through a one-sample neck
+     * (then their pieces); each neck pair's pieces' roots once the necks are joined; and each piece
+     * proposed on its own: its component, its root, its blob's candidate, and the next candidate its runs
+     * belong to (the larger piece holding it, or its blob's candidate). */
+    int32_t *diag, *neck, *neck_root;
+    size_t diag_n, neck_n, diag_capacity, neck_capacity;
+    component *pieces;
+    int32_t *piece_root, *piece_cand, *piece_next;
+    size_t piece_capacity;
+    napa_detection *piece_out; /* decoded pieces, appended after the other detections */
+    size_t piece_out_capacity;
+    uint8_t *fates; /* before necks are split: each level's candidates' and pieces' fates, for redoing it */
+    size_t fate_capacity;
 };
 
 typedef struct {
@@ -292,9 +308,14 @@ static int init_layout(family_layout *L, const napa_family *f, int8_t perm[64]) 
                 placements[3] += errors_connected(L, bits);
             }
     double chance = 0;
+    L->piece_hamming = -1;
     for (int h = 0; h <= 3 && h <= L->max_hamming; h++) {
         chance += L->nrot * placements[h] / ldexp(1.0, f->nbits);
         if (h == 0 || chance <= 1e-4) L->recommended_hamming = h;
+        /* split_touching proposes many more blobs, mostly not tags: its pieces may correct only as many
+         * bits as keep chance matches no likelier than tag36h11's at 2 (2.3e-5). Short codes (tag16h5,
+         * the 21h7 families) match random pieces too often even exactly, and aren't split. */
+        if (h <= 2 && chance <= 2.5e-5) L->piece_hamming = h;
         if (chance > 1e-4) break;
     }
     /* Families that can't afford three hard corrections get soft ones (decode_quad), up to 3 bits. */
@@ -420,6 +441,15 @@ void napa_destroy(napa_detector *det) {
     free(det->boxes);
     free(det->slot);
     free(det->cands);
+    free(det->diag);
+    free(det->neck);
+    free(det->neck_root);
+    free(det->pieces);
+    free(det->piece_root);
+    free(det->piece_cand);
+    free(det->piece_next);
+    free(det->piece_out);
+    free(det->fates);
     free(det->row_bits);
     free(det->floors);
     free(det->box_rows);
@@ -785,6 +815,14 @@ static void expand4(uint8_t *dst, const uint8_t *src, int n) {
     for (; i < n; i++) memset(dst + 4 * i, src[i], 4);
 }
 
+#if defined(__GNUC__) || defined(__clang__)
+#define NAPA_FORCE_INLINE inline __attribute__((always_inline))
+#elif defined(_MSC_VER)
+#define NAPA_FORCE_INLINE __forceinline
+#else
+#define NAPA_FORCE_INLINE inline
+#endif
+
 static inline int32_t find_root(int32_t *P, int32_t i) {
     while (P[i] != i) {
         P[i] = P[P[i]];
@@ -793,13 +831,53 @@ static inline int32_t find_root(int32_t *P, int32_t i) {
     return i;
 }
 
+/* Join the runs a .. a_end - 1 of one row and b .. b_end - 1 of the next where they touch, except, with split,
+ * corner contacts (and with split 2, one-sample necks), which are recorded instead. Inlined with a constant
+ * split, so ordinary labelling has no test for it. */
+static NAPA_FORCE_INLINE void join_rows(napa_detector *det, const napa_run *R, int32_t *P, int a, int a_end, int b,
+                                        int b_end, const int split) {
+    while (a < a_end && b < b_end) {
+        if (R[a].x1 + 1 < R[b].x0) {
+            a++;
+        } else if (R[b].x1 + 1 < R[a].x0) {
+            b++;
+        } else if (split == 2 ? (R[a].x1 < R[b].x1 ? R[a].x1 : R[b].x1) <= (R[a].x0 > R[b].x0 ? R[a].x0 : R[b].x0)
+                              : split && (R[a].x1 + 1 == R[b].x0 || R[b].x1 + 1 == R[a].x0)) {
+            /* A corner contact (no overlap) or, with split 2, a neck (one sample). */
+            int corner = R[a].x1 + 1 == R[b].x0 || R[b].x1 + 1 == R[a].x0;
+            int32_t *pairs = corner ? det->diag : det->neck;
+            size_t *count = corner ? &det->diag_n : &det->neck_n;
+            pairs[(*count)++] = a;
+            pairs[(*count)++] = b;
+            if (R[a].x1 < R[b].x1) a++;
+            else b++;
+        } else {
+            /* A run of this row that touches nothing yet is a singleton (runs of one row
+             * join only through the row above): hang it under a's parent, which still
+             * precedes it. Runs whose parents match are already joined. */
+            if (P[b] == b) {
+                P[b] = P[a];
+            } else if (P[b] != P[a]) {
+                int32_t ra = find_root(P, a), rb = find_root(P, b);
+                if (ra < rb) P[rb] = ra;
+                else if (rb < ra) P[ra] = rb;
+            }
+            if (R[a].x1 < R[b].x1) a++;
+            else b++;
+        }
+    }
+}
+
 /* Threshold the level and label its dark samples as runs joined by union-find (8-connected:
- * runs in adjacent rows touch if they overlap within one sample). Returns the run count. */
-static int threshold_level(napa_detector *det, int lw, int lh, int factor) {
+ * runs in adjacent rows touch if they overlap within one sample). Returns the run count, or -1 when out
+ * of memory. With split, runs that touch only at a corner (split 1), or also overlap by one sample (split 2),
+ * aren't joined: each such pair is recorded in det->diag or det->neck, for split_pieces. */
+static int threshold_level(napa_detector *det, int lw, int lh, int factor, const int split) {
     const uint8_t *L = det->level;
     napa_run *R = det->runs;
     int32_t *P = det->parent;
     int n = 0, prev_y = -2, prev_start = 0, prev_end = 0;
+    det->diag_n = det->neck_n = 0;
     int tw = (lw + TILE - 1) / TILE;
     int th = (lh + TILE - 1) / TILE;
     uint8_t *vmin = det->row_min, *vmax = det->row_max, *trow = det->row_thr;
@@ -885,27 +963,29 @@ static int threshold_level(napa_detector *det, int lw, int lh, int factor) {
             n = extract_runs(bits, lw, y, R, n);
             for (int i = start; i < n; i++) P[i] = i;
             if (prev_y == y - 1) {
-                int a = prev_start, b = start;
-                while (a < prev_end && b < n) {
-                    if (R[a].x1 + 1 < R[b].x0) {
-                        a++;
-                    } else if (R[b].x1 + 1 < R[a].x0) {
-                        b++;
-                    } else {
-                        /* A run of this row that touches nothing yet is a singleton (runs of one row
-                         * join only through the row above): hang it under a's parent, which still
-                         * precedes it. Runs whose parents match are already joined. */
-                        if (P[b] == b) {
-                            P[b] = P[a];
-                        } else if (P[b] != P[a]) {
-                            int32_t ra = find_root(P, a), rb = find_root(P, b);
-                            if (ra < rb) P[rb] = ra;
-                            else if (rb < ra) P[ra] = rb;
-                        }
-                        if (R[a].x1 < R[b].x1) a++;
-                        else b++;
-                    }
+                /* Two adjacent rows touch at most once per run of either. */
+                size_t most = 2 * ((size_t)(prev_end - prev_start) + (size_t)(n - start));
+                if (split && det->diag_n + most > det->diag_capacity) {
+                    size_t cap = det->diag_capacity ? 2 * det->diag_capacity : 4096;
+                    while (cap < det->diag_n + most) cap *= 2;
+                    int32_t *p = (int32_t *)realloc(det->diag, cap * sizeof(int32_t));
+                    if (p == NULL) return -1;
+                    det->diag = p;
+                    det->diag_capacity = cap;
                 }
+                if (split == 2 && det->neck_n + most > det->neck_capacity) {
+                    size_t cap = det->neck_capacity ? 2 * det->neck_capacity : 4096;
+                    while (cap < det->neck_n + most) cap *= 2;
+                    int32_t *p = (int32_t *)realloc(det->neck, cap * sizeof(int32_t));
+                    if (p == NULL) return -1;
+                    det->neck = p;
+                    if ((p = (int32_t *)realloc(det->neck_root, cap * sizeof(int32_t))) == NULL) return -1;
+                    det->neck_root = p;
+                    det->neck_capacity = cap;
+                }
+                if (split == 2) join_rows(det, R, P, prev_start, prev_end, start, n, 2);
+                else if (split) join_rows(det, R, P, prev_start, prev_end, start, n, 1);
+                else join_rows(det, R, P, prev_start, prev_end, start, n, 0);
             }
             prev_y = y, prev_start = start, prev_end = n;
         }
@@ -1535,6 +1615,129 @@ static double quad_area_pts(int p[4][2]) {
     return fabs(0.5 * s);
 }
 
+/* The component holding piece r, once split_pieces has joined pieces: a joined piece's count holds
+ * -(parent + 1), and parents are earlier pieces, so the root is the component's first. */
+static int32_t joined_root(blob_box *B, int32_t r) {
+    while (B[r].count < 0) {
+        int32_t p = -B[r].count - 1;
+        if (B[p].count < 0) B[r].count = B[p].count; /* path halving */
+        r = p;
+    }
+    return r;
+}
+
+static int grow_pieces(napa_detector *det, size_t n) {
+    if (n <= det->piece_capacity) return 0;
+    size_t cap = det->piece_capacity ? 2 * det->piece_capacity : 64;
+    void *p;
+    if ((p = realloc(det->pieces, cap * sizeof(component))) == NULL) return -1;
+    det->pieces = (component *)p;
+    if ((p = realloc(det->piece_root, cap * sizeof(int32_t))) == NULL) return -1;
+    det->piece_root = (int32_t *)p;
+    if ((p = realloc(det->piece_cand, cap * sizeof(int32_t))) == NULL) return -1;
+    det->piece_cand = (int32_t *)p;
+    if ((p = realloc(det->piece_next, cap * sizeof(int32_t))) == NULL) return -1;
+    det->piece_next = (int32_t *)p;
+    det->piece_capacity = cap;
+    return 0;
+}
+
+/* Level coordinates stay below 30000, so a box's minx has a spare top bit: it marks a component seen this stage. */
+#define PIECE_SEEN 0x8000u
+
+/* Propose component r as piece n if it passes the candidate size and shape test on its own, the first time it
+ * is seen this stage. Returns the new piece count, or -1 when out of memory. */
+static int propose_piece(napa_detector *det, int32_t r, int n, int lo, int hi, int dense) {
+    blob_box *B = det->boxes;
+    if (B[r].minx & PIECE_SEEN) return n;
+    int w = B[r].maxx - B[r].minx + 1, h = B[r].maxy - B[r].miny + 1;
+    B[r].minx |= PIECE_SEEN;
+    int small = w < h ? w : h, big = w > h ? w : h;
+    if (small < lo || big > hi || big > 8 * small || (dense && small > 72) || (double)B[r].count < 0.2 * (double)w * h)
+        return n;
+    if (grow_pieces(det, (size_t)n + 1) != 0) return -1;
+    component *c = &det->pieces[n];
+    c->count = 0;
+    for (int k = 0; k < 16; k++) c->extv[k] = INT32_MIN;
+    c->row_y = -1;
+    c->minx = B[r].minx & ~PIECE_SEEN, c->maxx = B[r].maxx, c->miny = B[r].miny, c->maxy = B[r].maxy;
+    det->piece_root[n] = r;
+    return n + 1;
+}
+
+/* One stage of split_pieces: E holds *n_pairs run pairs. Rewrite them as pairs of the components they
+ * join so far (dropping pairs already joined), propose each such component that passes the candidate
+ * size and shape test on its own, then join the pairs. Returns the new piece count, or -1. */
+static int join_pairs(napa_detector *det, int32_t *E, size_t *n_pairs, int n, int lo, int hi, int dense) {
+    blob_box *B = det->boxes;
+    const int32_t *P = det->parent;
+    size_t ne = 0;
+    for (size_t e = 0; e < *n_pairs; e += 2) {
+        int32_t ra = joined_root(B, -P[E[e]] - 1), rb = joined_root(B, -P[E[e + 1]] - 1);
+        if (ra == rb) continue; /* joined another way */
+        E[ne++] = ra;
+        E[ne++] = rb;
+        if ((n = propose_piece(det, ra, n, lo, hi, dense)) < 0 || (n = propose_piece(det, rb, n, lo, hi, dense)) < 0)
+            return -1;
+    }
+    *n_pairs = ne;
+    /* The later component merges into the earlier one. Every component a join touches is the root of a pair
+     * already reached here, so clearing marks pair by pair leaves none in a box that is read. */
+    for (size_t e = 0; e < ne; e += 2) {
+        B[E[e]].minx &= ~PIECE_SEEN;
+        B[E[e + 1]].minx &= ~PIECE_SEEN;
+        int32_t ra = joined_root(B, E[e]), rb = joined_root(B, E[e + 1]);
+        if (ra == rb) continue;
+        int32_t root = ra < rb ? ra : rb, child = ra < rb ? rb : ra;
+        blob_box *t = &B[root], *c = &B[child];
+        t->count += c->count;
+        if (c->minx < t->minx) t->minx = c->minx;
+        if (c->miny < t->miny) t->miny = c->miny;
+        if (c->maxx > t->maxx) t->maxx = c->maxx;
+        if (c->maxy > t->maxy) t->maxy = c->maxy;
+        c->count = -root - 1;
+    }
+    return n;
+}
+
+/* split_touching: the level was labelled with necks and corner contacts left unjoined. A tag whose border
+ * touches another dark shape only at a corner (an AprilGrid's corner squares, a checkerboard) is one
+ * eight-connected blob with it, which isn't tag-shaped; anti-aliasing often leaves a one-sample neck at
+ * such a corner instead. Join the necks, then the corners, proposing the pieces on either side of each
+ * before it is joined: the finest pieces separate tags at necks, the next keep a tag whole where its own
+ * thin border has necks. Afterwards the boxes are the ordinary blobs again. Returns the number of pieces,
+ * neck-stage pieces first (*fine of them), or -1 when out of memory. */
+static int split_pieces(napa_detector *det, int lo, int hi, int dense, int *fine) {
+    int n = join_pairs(det, det->neck, &det->neck_n, 0, lo, hi, dense);
+    if (n < 0) return -1;
+    *fine = n;
+    /* Each neck pair's components' roots now, before corner joins (and path halving) pass them by. */
+    for (size_t e = 0; e < det->neck_n; e++) det->neck_root[e] = joined_root(det->boxes, det->neck[e]);
+    return join_pairs(det, det->diag, &det->diag_n, n, lo, hi, dense);
+}
+
+/* Whether a found tag touches dark shapes at its corners, as grid tags do: just outside at least three corners,
+ * diagonally, the image is darker than halfway between the tag's border there and its quiet zone. (A tag lying on
+ * grass or against an edge has dark beyond one or two corners.) Families with
+ * data cells outside the border have them where these samples fall, so their boards may not be recognised. */
+static int corners_touch(const image_view *view, const napa_detection *d, double cells) {
+    const double *c = d->corners;
+    int dark = 0;
+    for (int k = 0; k < 4; k++) {
+        int a = (k + 3) & 3, b = (k + 1) & 3, n = (k + 2) & 3;
+        /* One cell along each side, away from the corner's two neighbours. */
+        double ux = (c[2 * k] - c[2 * b]) / cells, uy = (c[2 * k + 1] - c[2 * b + 1]) / cells;
+        double vx = (c[2 * k] - c[2 * a]) / cells, vy = (c[2 * k + 1] - c[2 * a + 1]) / cells;
+        double outside = sample_bilinear(view, c[2 * k] + 0.6 * (ux + vx), c[2 * k + 1] + 0.6 * (uy + vy));
+        double border = sample_bilinear(view, c[2 * k] - 0.5 * (ux + vx), c[2 * k + 1] - 0.5 * (uy + vy));
+        /* The quiet zone beside the side from this corner to the next. */
+        double qx = 0.5 * (c[2 * k] + c[2 * b]) + 0.6 * 0.5 * (vx + (c[2 * b] - c[2 * n]) / cells);
+        double qy = 0.5 * (c[2 * k + 1] + c[2 * b + 1]) + 0.6 * 0.5 * (vy + (c[2 * b + 1] - c[2 * n + 1]) / cells);
+        dark += outside < 0.5 * (border + sample_bilinear(view, qx, qy));
+    }
+    return dark >= 3;
+}
+
 static int covered(const napa_detection *out, int n, double x, double y, double radius) {
     for (int i = 0; i < n; i++) {
         double ox = 0, oy = 0;
@@ -1696,7 +1899,9 @@ int napa_detect(napa_detector *det, const uint8_t *img, int width, int height, i
         params->min_contrast < 1 || params->min_contrast > 255 || params->min_border_cells < 0 ||
         params->min_border_cells > 28 || params->sharpening_x100 < 0 || params->sharpening_x100 > 100)
         return -1;
+    if (params->split_touching != 0 && params->split_touching != 1) return -1;
     if (width < 16 || height < 16) return 0;
+    const int split = params->split_touching && det->fam.piece_hamming >= 0;
     const int W = det->fam.width;
     const double cells = det->fam.cells;
     /* Reversed families print the square light in a dark frame: read inverted, they look like every other
@@ -1707,13 +1912,20 @@ int napa_detect(napa_detector *det, const uint8_t *img, int width, int height, i
      * reliably dark. Sampling every 3/4 cell guarantees a sample inside that core. */
     int base = params->min_tag_px * 3 / (4 * W);
     if (base < 1) base = 1;
-    int found = 0;
-    int contrast = params->min_contrast;
+    int found = 0, piece_found = 0;
+    /* split_touching splits at corners only until it finds a tag that touches dark shapes at its corners:
+     * one-sample necks (anti-aliased corners) cost far more and only pay where tags do touch. Then the frame
+     * starts over splitting necks too, and the levels already done (to redone) decode only their new pieces. */
+    int necks = 0, redone = 0, touching = 0;
+    size_t fates_kept = 0; /* fates written before the restart */
     det->failed_n = 0;
     /* Size band in level samples. Adjacent levels overlap (7-24 here is 14-48 one level finer),
      * because a blob's measured extent varies by a sample or two with phase, blur and rotation. */
     const int lo = (7 * W + 4) / 8, hi = NAPA_HI * W / 8;
 
+start:;
+    int contrast = params->min_contrast;
+    size_t fate_off = 0; /* where this level's fates are kept in det->fates */
     int prev_lw = 0, floor_stride = base;
     for (int s = base;; s *= 2) {
         int lw = (width + s - 1) / s;
@@ -1761,7 +1973,9 @@ int napa_detect(napa_detector *det, const uint8_t *img, int width, int height, i
             }
             if (contrast < 0) return -2;
         }
-        int nruns = threshold_level(det, lw, lh, s / floor_stride);
+        const int redo = s <= redone;
+        int nruns = threshold_level(det, lw, lh, s / floor_stride, split ? 1 + necks : 0);
+        if (nruns < 0) return -2;
         PROF_MARK(PROF_THRESHOLD);
 
         /* Resolve runs into packed components, preserving root raster order. */
@@ -1787,6 +2001,11 @@ int napa_detect(napa_detector *det, const uint8_t *img, int width, int height, i
             }
             P[i] = -r - 1;
         }
+        int npieces = 0, fine = 0;
+        if (det->diag_n || det->neck_n) {
+            npieces = split_pieces(det, lo, last ? 1 << 30 : hi, !last && base == 1 && s <= 2, &fine);
+            if (npieces < 0) return -2;
+        }
         /* Keep tag-sized, tag-shaped blobs as candidates, in raster order of their first sample. A tag
          * tilted by t looks about 1 / cos(t) times longer than it is wide, more with perspective: an 8:1
          * box admits tilts to about 80 degrees. Clean tags stay readable past 75 degrees whenever their
@@ -1798,6 +2017,7 @@ int napa_detect(napa_detector *det, const uint8_t *img, int width, int height, i
         int ncand = 0;
         for (int i = 0; i < nroots; i++) {
             det->slot[i] = -1;
+            if (B[i].count < 0) continue; /* a piece joined into an earlier one */
             int t_minx = B[i].minx, t_maxx = B[i].maxx, t_miny = B[i].miny, t_maxy = B[i].maxy;
             int bw = t_maxx - t_minx + 1, bh = t_maxy - t_miny + 1;
             int big = bw > bh ? bw : bh, small = bw < bh ? bw : bh;
@@ -1825,22 +2045,98 @@ int napa_detect(napa_detector *det, const uint8_t *img, int width, int height, i
             det->slot[i] = ncand++;
         }
         /* Extreme points only for the candidates: one more pass over the runs. */
-        for (int i = 0; i < nruns; i++) {
-            int32_t c = det->slot[-P[i] - 1];
-            if (c >= 0) comp_add_run(&det->cands[c], &R[i]);
+        if (det->diag_n || det->neck_n) {
+            /* Runs carry their piece. A joined piece takes the slot of what joined it: its blob's
+             * candidate, or the corner-stage piece holding it. A proposed piece takes ncand + its index,
+             * and passes its runs on to that slot next. Blobs' candidates are read before any changes. */
+            for (int k = 0; k < npieces; k++) det->piece_cand[k] = det->slot[joined_root(B, det->piece_root[k])];
+            for (size_t e = 0; e < det->diag_n; e++) {
+                int32_t r = det->diag[e];
+                if (B[r].count < 0) det->slot[r] = det->slot[joined_root(B, r)];
+            }
+            /* At stride one, pieces of candidate blobs are never decoded (below): their runs skip them. */
+            for (int k = fine; k < npieces; k++) {
+                det->piece_next[k] = det->slot[det->piece_root[k]];
+                if (s > 1 || det->piece_cand[k] < 0) det->slot[det->piece_root[k]] = ncand + k;
+            }
+            for (size_t e = 0; e < det->neck_n; e++)
+                if (det->neck_root[e] != det->neck[e]) det->slot[det->neck[e]] = det->slot[det->neck_root[e]];
+            for (int k = 0; k < fine; k++) {
+                det->piece_next[k] = det->slot[det->piece_root[k]];
+                if (s > 1 || det->piece_cand[k] < 0) det->slot[det->piece_root[k]] = ncand + k;
+            }
+        }
+        if (npieces == 0) {
+            for (int i = 0; i < nruns; i++) {
+                int32_t c = det->slot[-P[i] - 1];
+                if (c >= 0) comp_add_run(&det->cands[c], &R[i]);
+            }
+        } else {
+            for (int i = 0; i < nruns; i++) {
+                int32_t c = det->slot[-P[i] - 1];
+                for (; c >= ncand; c = det->piece_next[c - ncand]) comp_add_run(&det->pieces[c - ncand], &R[i]);
+                if (c >= 0) comp_add_run(&det->cands[c], &R[i]);
+            }
+            for (int k = 0; k < npieces; k++)
+                if (det->pieces[k].row_y >= 0) comp_flush_row(&det->pieces[k]); /* not: pieces given no runs */
         }
         for (int ci = 0; ci < ncand; ci++) comp_flush_row(&det->cands[ci]);
+        if (npieces) {
+            /* row_x1 is spent after the flush: it counts each candidate blob's proposed pieces. */
+            for (int ci = 0; ci < ncand; ci++) det->cands[ci].row_x1 = 0;
+            for (int k = 0; k < npieces; k++)
+                if (det->piece_cand[k] >= 0) det->cands[det->piece_cand[k]].row_x1++;
+        }
+        if (redo && fate_off + (size_t)ncand + (size_t)(npieces - fine) <= fates_kept) {
+            /* The first pass's fates: the corner-stage pieces are the same pieces, in the same order. */
+            for (int ci = 0; ci < ncand; ci++) det->cands[ci].row_y = -det->fates[fate_off + ci];
+            for (int k = fine; k < npieces; k++) det->pieces[k].row_y = -det->fates[fate_off + ncand + k - fine];
+        }
         PROF_MARK(PROF_BLOBS);
 
-        for (int ci = 0; ci < ncand; ci++) {
-            component comp = det->cands[ci];
+        for (int ci = 0; ci < ncand + npieces; ci++) {
+            const int piece = ci >= ncand;
+            /* Corner-stage pieces first: a tag kept whole there is found as without necks. */
+            int k = ci - ncand < npieces - fine ? fine + ci - ncand : ci - ncand - (npieces - fine);
+            /* Redone levels decode only the pieces not tried before (whose fate reads -1, below). */
+            if (redo && (!piece || (k >= fine && det->pieces[k].row_y != -1))) continue;
+            component *self = piece ? &det->pieces[k] : &det->cands[ci];
+            component comp = *self;
+            /* row_y is spent after the extrema pass: it records how far each proposal got (-TRACE stage). */
+            self->row_y = -5;
+            if (piece) {
+                /* A blob or larger piece that failed its rough quad or its refinement, or decoded, never
+                 * held another tag in its pieces; at stride one, nor did any candidate blob (only tiny
+                 * tags in large blobs are new there). */
+                int next = det->piece_next[k];
+                const component *whole = next >= ncand ? &det->pieces[next - ncand]
+                                         : det->piece_cand[k] >= 0 ? &det->cands[det->piece_cand[k]] : NULL;
+                int fate = whole ? -whole->row_y : 0;
+                if (det->piece_cand[k] >= 0 && s == 1) continue;
+                /* Until tags are seen touching, a piece that is nearly all of its blob, and its blob's only
+                 * piece, waits when the blob failed its first fit: it fails the same way. (A tag touching a
+                 * bar or a board is a small part of its blob.) Untried, it is decoded if the level is redone. */
+                const component *blob = det->piece_cand[k] >= 0 ? &det->cands[det->piece_cand[k]] : NULL;
+                if (!necks && blob && fate == 7 && blob->row_x1 == 1 &&
+                    5 * (comp.maxx - comp.minx + 1) * (comp.maxy - comp.miny + 1) >=
+                        4 * (blob->maxx - blob->minx + 1) * (blob->maxy - blob->miny + 1)) {
+                    self->row_y = -1;
+                    continue;
+                }
+                if (fate == 6 || fate >= 9) {
+                    self->row_y = whole->row_y; /* its own pieces share the fate */
+                    continue;
+                }
+            }
             int t_minx = comp.minx, t_maxx = comp.maxx, t_miny = comp.miny, t_maxy = comp.maxy;
             int bw = t_maxx - t_minx + 1, bh = t_maxy - t_miny + 1;
             int big = bw > bh ? bw : bh;
             /* Levels run fine to coarse; skip a blob whose centre a finer level already decoded. */
             double ccx = 0.5 * (comp.minx + comp.maxx) * s, ccy = 0.5 * (comp.miny + comp.maxy) * s;
-            if (covered(out, found < max_out ? found : max_out, ccx, ccy, 0.3 * big * s + 2.0)) {
+            if (covered(out, found < max_out ? found : max_out, ccx, ccy, 0.3 * big * s + 2.0) ||
+                (piece && covered(det->piece_out, piece_found, ccx, ccy, 0.3 * big * s + 2.0))) {
                 TRACE(5);
+                self->row_y = -5;
                 continue;
             }
             /* Rough quad: of the extreme points (in clockwise angular order), the four that span the
@@ -1890,11 +2186,13 @@ int napa_detect(napa_detector *det, const uint8_t *img, int width, int height, i
             if (comp.count > det->fam.fill_limit * (best_area + 0.5 * perim_q + 1.0)) {
                 PROF_MARK(PROF_QUAD);
                 TRACE(6);
+                self->row_y = -6;
                 continue;
             }
             if (best_area < 0.3 * bw * bh) {
                 PROF_MARK(PROF_QUAD);
                 TRACE(6);
+                self->row_y = -6;
                 continue;
             }
             PROF_MARK(PROF_QUAD);
@@ -1908,7 +2206,7 @@ int napa_detect(napa_detector *det, const uint8_t *img, int width, int height, i
             /* Sparse paired border samples reject noise before the expensive edge profiles.
              * Permit one weak side and leave terminal proposals unscreened: their ring can have
              * local clutter that a later level would normally resolve. Final decode is unchanged. */
-            if (s <= 2 && !last && params->min_border_cells >= 22) {
+            if ((piece || (s <= 2 && !last)) && params->min_border_cells >= 22) {
                 vec2 q[4];
                 double H[9];
                 grow_quad(rough, 0.5 * s, q);
@@ -1931,6 +2229,7 @@ int napa_detect(napa_detector *det, const uint8_t *img, int width, int height, i
                 if (good_sides < 3) {
                     PROF_MARK(PROF_FIT1);
                     TRACE(7);
+                    self->row_y = -7;
                     continue;
                 }
             }
@@ -1939,6 +2238,7 @@ int napa_detect(napa_detector *det, const uint8_t *img, int width, int height, i
             if (!fit_sides(&view, rough, fine, 1.5 * s + 1.0, 0.5 * s + 1.0, params->min_contrast, 1, 6, &edge_w, NULL, cells)) {
                 PROF_MARK(PROF_FIT1);
                 TRACE(7);
+                self->row_y = -7;
                 continue;
             }
             /* The first fit is already within a fraction of a cell: decode now, with two bits of
@@ -1951,6 +2251,7 @@ int napa_detect(napa_detector *det, const uint8_t *img, int width, int height, i
             if (failed_before(det, fine, s, 0.3)) {
                 PROF_MARK(PROF_DECODE1);
                 TRACE(8);
+                self->row_y = -8;
                 continue;
             }
             vec2 probe[4];
@@ -1985,7 +2286,9 @@ int napa_detect(napa_detector *det, const uint8_t *img, int width, int height, i
                 if (!rescued) {
                     PROF_MARK(PROF_DECODE1);
                     TRACE(8);
-                    remember_failure(det, fine, s);
+                    self->row_y = -8;
+                    /* Pieces only read the list, so the other detections can't depend on them. */
+                    if (!piece) remember_failure(det, fine, s);
                     continue;
                 }
             }
@@ -2017,6 +2320,7 @@ int napa_detect(napa_detector *det, const uint8_t *img, int width, int height, i
             if (!ok) {
                 PROF_MARK(PROF_REFINE);
                 TRACE(9);
+                self->row_y = -9;
                 continue;
             }
             PROF_MARK(PROF_REFINE);
@@ -2027,6 +2331,7 @@ int napa_detect(napa_detector *det, const uint8_t *img, int width, int height, i
             PROF_MARK(PROF_DECODE2);
             if (!decoded_) {
                 TRACE(10);
+                self->row_y = -10;
                 continue;
             }
             /* A side whose border cells read white was fitted one cell out, on the quiet zone's outer
@@ -2077,17 +2382,60 @@ int napa_detect(napa_detector *det, const uint8_t *img, int width, int height, i
                     if (decode_quad(det, &view, grown, params, 0, &d3, NULL, NULL) && d3.id == d.id) d = d3;
                 }
             }
+            if (piece) {
+                /* Pieces are many and mostly not tags: correct fewer bits (in tag36h11, three admitted
+                 * chance matches from random-payload grids), and keep them apart until the end. */
+                self->row_y = -12;
+                if (d.hamming > det->fam.piece_hamming || already_found(det->piece_out, piece_found, &d)) continue;
+                if ((size_t)piece_found == det->piece_out_capacity) {
+                    size_t cap = det->piece_out_capacity ? 2 * det->piece_out_capacity : 64;
+                    napa_detection *p = (napa_detection *)realloc(det->piece_out, cap * sizeof(napa_detection));
+                    if (p == NULL) return -2;
+                    det->piece_out = p;
+                    det->piece_out_capacity = cap;
+                }
+                if (!necks && !touching) touching = corners_touch(&view, &d, cells);
+                det->piece_out[piece_found++] = d;
+                continue;
+            }
             if (already_found(out, found < max_out ? found : max_out, &d)) {
                 TRACE(11);
+                self->row_y = -11;
                 continue;
             }
             TRACE(12);
+            self->row_y = -12;
+            if (split && !necks && !touching) touching = corners_touch(&view, &d, cells);
             if (found < max_out) out[found] = d;
             found++;
         }
         PROF_MARK(PROF_BLOBS);
+        if (split && !necks) {
+            /* Keep this level's fates, in case the frame is redone with necks. */
+            size_t n = (size_t)ncand + (size_t)npieces;
+            if (fate_off + n > det->fate_capacity) {
+                size_t cap = det->fate_capacity ? 2 * det->fate_capacity : 4096;
+                while (cap < fate_off + n) cap *= 2;
+                uint8_t *f = (uint8_t *)realloc(det->fates, cap);
+                if (f == NULL) return -2;
+                det->fates = f;
+                det->fate_capacity = cap;
+            }
+            for (int ci = 0; ci < ncand; ci++) det->fates[fate_off + ci] = (uint8_t)-det->cands[ci].row_y;
+            for (int k = 0; k < npieces; k++) det->fates[fate_off + ncand + k] = (uint8_t)-det->pieces[k].row_y;
+            fates_kept = fate_off + n;
+        }
+        fate_off += (size_t)ncand + (size_t)(npieces - fine);
+        if (split && !necks && touching) {
+            necks = 1;
+            redone = s;
+            goto start;
+        }
         if (last) break;
     }
+    /* Pieces come last, so the other detections are unchanged by split_touching. */
+    for (int k = 0; k < piece_found && found < max_out; k++)
+        if (!already_found(out, found, &det->piece_out[k])) out[found++] = det->piece_out[k];
     return found < max_out ? found : max_out;
 }
 
