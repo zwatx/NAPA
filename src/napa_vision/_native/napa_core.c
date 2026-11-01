@@ -826,8 +826,9 @@ static inline int32_t find_root(int32_t *P, int32_t i) {
     return i;
 }
 
-/* Join the runs a .. a_end - 1 of one row and b .. b_end - 1 of the next where they touch. Inlined with a
- * constant split, so ordinary labelling has no test for it. */
+/* Join the runs a .. a_end - 1 of one row and b .. b_end - 1 of the next where they touch, except, with split,
+ * corner contacts (and with split 2, one-sample necks), which are recorded instead. Inlined with a constant
+ * split, so ordinary labelling has no test for it. */
 static NAPA_FORCE_INLINE void join_rows(napa_detector *det, const napa_run *R, int32_t *P, int a, int a_end, int b,
                                         int b_end, const int split) {
     while (a < a_end && b < b_end) {
@@ -835,8 +836,9 @@ static NAPA_FORCE_INLINE void join_rows(napa_detector *det, const napa_run *R, i
             a++;
         } else if (R[b].x1 + 1 < R[a].x0) {
             b++;
-        } else if (split && (R[a].x1 < R[b].x1 ? R[a].x1 : R[b].x1) <= (R[a].x0 > R[b].x0 ? R[a].x0 : R[b].x0)) {
-            /* At most one sample of overlap: a corner contact (none) or a neck (one). */
+        } else if (split == 2 ? (R[a].x1 < R[b].x1 ? R[a].x1 : R[b].x1) <= (R[a].x0 > R[b].x0 ? R[a].x0 : R[b].x0)
+                              : split && (R[a].x1 + 1 == R[b].x0 || R[b].x1 + 1 == R[a].x0)) {
+            /* A corner contact (no overlap) or, with split 2, a neck (one sample). */
             int corner = R[a].x1 + 1 == R[b].x0 || R[b].x1 + 1 == R[a].x0;
             int32_t *pairs = corner ? det->diag : det->neck;
             size_t *count = corner ? &det->diag_n : &det->neck_n;
@@ -863,8 +865,8 @@ static NAPA_FORCE_INLINE void join_rows(napa_detector *det, const napa_run *R, i
 
 /* Threshold the level and label its dark samples as runs joined by union-find (8-connected:
  * runs in adjacent rows touch if they overlap within one sample). Returns the run count, or -1 when out
- * of memory. With split, runs that touch only at a corner, or overlap by one sample, aren't joined: each
- * such pair is recorded in det->diag or det->neck, for split_pieces. */
+ * of memory. With split, runs that touch only at a corner (split 1), or also overlap by one sample (split 2),
+ * aren't joined: each such pair is recorded in det->diag or det->neck, for split_pieces. */
 static int threshold_level(napa_detector *det, int lw, int lh, int factor, const int split) {
     const uint8_t *L = det->level;
     napa_run *R = det->runs;
@@ -966,7 +968,7 @@ static int threshold_level(napa_detector *det, int lw, int lh, int factor, const
                     det->diag = p;
                     det->diag_capacity = cap;
                 }
-                if (split && det->neck_n + most > det->neck_capacity) {
+                if (split == 2 && det->neck_n + most > det->neck_capacity) {
                     size_t cap = det->neck_capacity ? 2 * det->neck_capacity : 4096;
                     while (cap < det->neck_n + most) cap *= 2;
                     int32_t *p = (int32_t *)realloc(det->neck, cap * sizeof(int32_t));
@@ -976,7 +978,8 @@ static int threshold_level(napa_detector *det, int lw, int lh, int factor, const
                     det->neck_root = p;
                     det->neck_capacity = cap;
                 }
-                if (split) join_rows(det, R, P, prev_start, prev_end, start, n, 1);
+                if (split == 2) join_rows(det, R, P, prev_start, prev_end, start, n, 2);
+                else if (split) join_rows(det, R, P, prev_start, prev_end, start, n, 1);
                 else join_rows(det, R, P, prev_start, prev_end, start, n, 0);
             }
             prev_y = y, prev_start = start, prev_end = n;
@@ -1703,6 +1706,26 @@ static int split_pieces(napa_detector *det, int lo, int hi, int dense, int *fine
     return join_pairs(det, det->diag, &det->diag_n, n, lo, hi, dense);
 }
 
+/* Whether a found tag touches dark shapes at its corners, as grid tags do: just outside at least two corners,
+ * diagonally, the image is darker than halfway between the tag's border there and its quiet zone. */
+static int corners_touch(const image_view *view, const napa_detection *d, double cells) {
+    const double *c = d->corners;
+    int dark = 0;
+    for (int k = 0; k < 4; k++) {
+        int a = (k + 3) & 3, b = (k + 1) & 3, n = (k + 2) & 3;
+        /* One cell along each side, away from the corner's two neighbours. */
+        double ux = (c[2 * k] - c[2 * b]) / cells, uy = (c[2 * k + 1] - c[2 * b + 1]) / cells;
+        double vx = (c[2 * k] - c[2 * a]) / cells, vy = (c[2 * k + 1] - c[2 * a + 1]) / cells;
+        double outside = sample_bilinear(view, c[2 * k] + 0.6 * (ux + vx), c[2 * k + 1] + 0.6 * (uy + vy));
+        double border = sample_bilinear(view, c[2 * k] - 0.5 * (ux + vx), c[2 * k + 1] - 0.5 * (uy + vy));
+        /* The quiet zone beside the side from this corner to the next. */
+        double qx = 0.5 * (c[2 * k] + c[2 * b]) + 0.6 * 0.5 * (vx + (c[2 * b] - c[2 * n]) / cells);
+        double qy = 0.5 * (c[2 * k + 1] + c[2 * b + 1]) + 0.6 * 0.5 * (vy + (c[2 * b + 1] - c[2 * n + 1]) / cells);
+        dark += outside < 0.5 * (border + sample_bilinear(view, qx, qy));
+    }
+    return dark >= 2;
+}
+
 static int covered(const napa_detection *out, int n, double x, double y, double radius) {
     for (int i = 0; i < n; i++) {
         double ox = 0, oy = 0;
@@ -1878,12 +1901,17 @@ int napa_detect(napa_detector *det, const uint8_t *img, int width, int height, i
     int base = params->min_tag_px * 3 / (4 * W);
     if (base < 1) base = 1;
     int found = 0, piece_found = 0;
-    int contrast = params->min_contrast;
+    /* split_touching splits at corners only until it finds a tag that touches dark shapes at its corners:
+     * one-sample necks (anti-aliased corners) cost far more and only pay where tags do touch. Then the frame
+     * starts over splitting necks too, and the levels already done (to redone) decode only their new pieces. */
+    int necks = 0, redone = 0, touching = 0;
     det->failed_n = 0;
     /* Size band in level samples. Adjacent levels overlap (7-24 here is 14-48 one level finer),
      * because a blob's measured extent varies by a sample or two with phase, blur and rotation. */
     const int lo = (7 * W + 4) / 8, hi = NAPA_HI * W / 8;
 
+start:;
+    int contrast = params->min_contrast;
     int prev_lw = 0, floor_stride = base;
     for (int s = base;; s *= 2) {
         int lw = (width + s - 1) / s;
@@ -1931,7 +1959,8 @@ int napa_detect(napa_detector *det, const uint8_t *img, int width, int height, i
             }
             if (contrast < 0) return -2;
         }
-        int nruns = threshold_level(det, lw, lh, s / floor_stride, split);
+        const int redo = s <= redone;
+        int nruns = threshold_level(det, lw, lh, s / floor_stride, split ? 1 + necks : 0);
         if (nruns < 0) return -2;
         PROF_MARK(PROF_THRESHOLD);
 
@@ -2042,6 +2071,7 @@ int napa_detect(napa_detector *det, const uint8_t *img, int width, int height, i
             const int piece = ci >= ncand;
             /* Corner-stage pieces first: a tag kept whole there is found as without necks. */
             int k = ci - ncand < npieces - fine ? fine + ci - ncand : ci - ncand - (npieces - fine);
+            if (redo && (!piece || k >= fine)) continue; /* only the neck pieces are new */
             component *self = piece ? &det->pieces[k] : &det->cands[ci];
             component comp = *self;
             /* row_y is spent after the extrema pass: it records how far each proposal got (-TRACE stage). */
@@ -2326,6 +2356,7 @@ int napa_detect(napa_detector *det, const uint8_t *img, int width, int height, i
                     det->piece_out = p;
                     det->piece_out_capacity = cap;
                 }
+                if (!necks && !touching) touching = corners_touch(&view, &d, cells);
                 det->piece_out[piece_found++] = d;
                 continue;
             }
@@ -2336,10 +2367,16 @@ int napa_detect(napa_detector *det, const uint8_t *img, int width, int height, i
             }
             TRACE(12);
             self->row_y = -12;
+            if (split && !necks && !touching) touching = corners_touch(&view, &d, cells);
             if (found < max_out) out[found] = d;
             found++;
         }
         PROF_MARK(PROF_BLOBS);
+        if (split && !necks && touching) {
+            necks = 1;
+            redone = s;
+            goto start;
+        }
         if (last) break;
     }
     /* Pieces come last, so the other detections are unchanged by split_touching. */
