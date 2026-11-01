@@ -55,9 +55,9 @@ The tags found this way come after the others, which are exactly what the detect
 Pieces may correct at most two bits, fewer for families whose codes are closer together; tag16h5 and tagCircle21h7
 aren't split, because random pieces match their short codes too often.
 
-A frame splits only at corners until it finds a tag with dark shapes just beyond its corners. Then it starts over and
-also splits one-pixel necks, which anti-aliasing leaves where tags meet squares and which cost much more. On frames
-without touching tags, such as most FRC footage, the option costs about 1.2–1.35× the time; frames of boards take
+A frame splits only at corners until it finds a tag with dark shapes just beyond three of its corners. Then it starts
+over and also splits one-pixel necks, which anti-aliasing leaves where tags meet squares and which cost much more. On
+frames without touching tags, such as most FRC footage, the option costs about 1.15–1.3× the time; frames of boards take
 about 2.5–3×. With it off, detection is unchanged.
 
 ## Tag families
