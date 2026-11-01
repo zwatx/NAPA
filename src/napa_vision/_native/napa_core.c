@@ -162,6 +162,8 @@ struct napa_detector {
     size_t piece_capacity;
     napa_detection *piece_out; /* decoded pieces, appended after the other detections */
     size_t piece_out_capacity;
+    uint8_t *fates; /* before necks are split: each level's candidates' and pieces' fates, for redoing it */
+    size_t fate_capacity;
 };
 
 typedef struct {
@@ -445,6 +447,7 @@ void napa_destroy(napa_detector *det) {
     free(det->piece_cand);
     free(det->piece_next);
     free(det->piece_out);
+    free(det->fates);
     free(det->row_bits);
     free(det->floors);
     free(det->box_rows);
@@ -1637,6 +1640,26 @@ static int grow_pieces(napa_detector *det, size_t n) {
     return 0;
 }
 
+/* Propose component r as piece n if it passes the candidate size and shape test on its own, the first time it
+ * is seen this stage (a negated count marks it seen). Returns the new piece count, or -1 when out of memory. */
+static int propose_piece(napa_detector *det, int32_t r, int n, int lo, int hi, int dense) {
+    blob_box *B = det->boxes;
+    if (B[r].count < 0) return n;
+    B[r].count = -B[r].count;
+    int w = B[r].maxx - B[r].minx + 1, h = B[r].maxy - B[r].miny + 1;
+    int small = w < h ? w : h, big = w > h ? w : h;
+    if (small < lo || big > hi || big > 8 * small || (dense && small > 72) || (double)-B[r].count < 0.2 * (double)w * h)
+        return n;
+    if (grow_pieces(det, (size_t)n + 1) != 0) return -1;
+    component *c = &det->pieces[n];
+    c->count = 0;
+    for (int k = 0; k < 16; k++) c->extv[k] = INT32_MIN;
+    c->row_y = -1;
+    c->minx = B[r].minx, c->maxx = B[r].maxx, c->miny = B[r].miny, c->maxy = B[r].maxy;
+    det->piece_root[n] = r;
+    return n + 1;
+}
+
 /* One stage of split_pieces: E holds *n_pairs run pairs. Rewrite them as pairs of the components they
  * join so far (dropping pairs already joined), propose each such component that passes the candidate
  * size and shape test on its own, then join the pairs. Returns the new piece count, or -1. */
@@ -1644,34 +1667,16 @@ static int join_pairs(napa_detector *det, int32_t *E, size_t *n_pairs, int n, in
     blob_box *B = det->boxes;
     const int32_t *P = det->parent;
     size_t ne = 0;
+    /* Resolve every pair before marking any component: a mark would read as a join. */
     for (size_t e = 0; e < *n_pairs; e += 2) {
         int32_t ra = joined_root(B, -P[E[e]] - 1), rb = joined_root(B, -P[E[e + 1]] - 1);
         if (ra == rb) continue; /* joined another way */
         E[ne++] = ra;
         E[ne++] = rb;
     }
+    for (size_t e = 0; e < ne; e++)
+        if ((n = propose_piece(det, E[e], n, lo, hi, dense)) < 0) return -1;
     *n_pairs = ne;
-    /* Before this stage's joins, each component has its own box. A negated count marks one seen. */
-    for (size_t e = 0; e < ne; e += 2) {
-        int32_t ra = E[e], rb = E[e + 1];
-        for (int side = 0; side < 2; side++) {
-            int32_t r = side ? rb : ra;
-            if (B[r].count < 0) continue;
-            B[r].count = -B[r].count;
-            int w = B[r].maxx - B[r].minx + 1, h = B[r].maxy - B[r].miny + 1;
-            int small = w < h ? w : h, big = w > h ? w : h;
-            if (small < lo || big > hi || big > 8 * small || (dense && small > 72) ||
-                (double)-B[r].count < 0.2 * (double)w * h)
-                continue;
-            if (grow_pieces(det, (size_t)n + 1) != 0) return -1;
-            component *c = &det->pieces[n];
-            c->count = 0;
-            for (int k = 0; k < 16; k++) c->extv[k] = INT32_MIN;
-            c->row_y = -1;
-            c->minx = B[r].minx, c->maxx = B[r].maxx, c->miny = B[r].miny, c->maxy = B[r].maxy;
-            det->piece_root[n++] = r;
-        }
-    }
     for (size_t e = 0; e < ne; e++)
         if (B[E[e]].count < 0) B[E[e]].count = -B[E[e]].count;
     /* The later component merges into the earlier one. */
@@ -1906,6 +1911,7 @@ int napa_detect(napa_detector *det, const uint8_t *img, int width, int height, i
      * one-sample necks (anti-aliased corners) cost far more and only pay where tags do touch. Then the frame
      * starts over splitting necks too, and the levels already done (to redone) decode only their new pieces. */
     int necks = 0, redone = 0, touching = 0;
+    size_t fates_kept = 0; /* fates written before the restart */
     det->failed_n = 0;
     /* Size band in level samples. Adjacent levels overlap (7-24 here is 14-48 one level finer),
      * because a blob's measured extent varies by a sample or two with phase, blur and rotation. */
@@ -1913,6 +1919,7 @@ int napa_detect(napa_detector *det, const uint8_t *img, int width, int height, i
 
 start:;
     int contrast = params->min_contrast;
+    size_t fate_off = 0; /* where this level's fates are kept in det->fates */
     int prev_lw = 0, floor_stride = base;
     for (int s = base;; s *= 2) {
         int lw = (width + s - 1) / s;
@@ -2041,15 +2048,16 @@ start:;
                 int32_t r = det->diag[e];
                 if (B[r].count < 0) det->slot[r] = det->slot[joined_root(B, r)];
             }
+            /* At stride one, pieces of candidate blobs are never decoded (below): their runs skip them. */
             for (int k = fine; k < npieces; k++) {
                 det->piece_next[k] = det->slot[det->piece_root[k]];
-                det->slot[det->piece_root[k]] = ncand + k;
+                if (s > 1 || det->piece_cand[k] < 0) det->slot[det->piece_root[k]] = ncand + k;
             }
             for (size_t e = 0; e < det->neck_n; e++)
                 if (det->neck_root[e] != det->neck[e]) det->slot[det->neck[e]] = det->slot[det->neck_root[e]];
             for (int k = 0; k < fine; k++) {
                 det->piece_next[k] = det->slot[det->piece_root[k]];
-                det->slot[det->piece_root[k]] = ncand + k;
+                if (s > 1 || det->piece_cand[k] < 0) det->slot[det->piece_root[k]] = ncand + k;
             }
         }
         if (npieces == 0) {
@@ -2063,16 +2071,29 @@ start:;
                 for (; c >= ncand; c = det->piece_next[c - ncand]) comp_add_run(&det->pieces[c - ncand], &R[i]);
                 if (c >= 0) comp_add_run(&det->cands[c], &R[i]);
             }
-            for (int k = 0; k < npieces; k++) comp_flush_row(&det->pieces[k]);
+            for (int k = 0; k < npieces; k++)
+                if (det->pieces[k].row_y >= 0) comp_flush_row(&det->pieces[k]); /* not: pieces given no runs */
         }
         for (int ci = 0; ci < ncand; ci++) comp_flush_row(&det->cands[ci]);
+        if (npieces) {
+            /* row_x1 is spent after the flush: it counts each candidate blob's proposed pieces. */
+            for (int ci = 0; ci < ncand; ci++) det->cands[ci].row_x1 = 0;
+            for (int k = 0; k < npieces; k++)
+                if (det->piece_cand[k] >= 0) det->cands[det->piece_cand[k]].row_x1++;
+        }
+        if (redo && fate_off + (size_t)ncand + (size_t)(npieces - fine) <= fates_kept) {
+            /* The first pass's fates: the corner-stage pieces are the same pieces, in the same order. */
+            for (int ci = 0; ci < ncand; ci++) det->cands[ci].row_y = -det->fates[fate_off + ci];
+            for (int k = fine; k < npieces; k++) det->pieces[k].row_y = -det->fates[fate_off + ncand + k - fine];
+        }
         PROF_MARK(PROF_BLOBS);
 
         for (int ci = 0; ci < ncand + npieces; ci++) {
             const int piece = ci >= ncand;
             /* Corner-stage pieces first: a tag kept whole there is found as without necks. */
             int k = ci - ncand < npieces - fine ? fine + ci - ncand : ci - ncand - (npieces - fine);
-            if (redo && (!piece || k >= fine)) continue; /* only the neck pieces are new */
+            /* Redone levels decode only the pieces not tried before (whose fate reads -1, below). */
+            if (redo && (!piece || (k >= fine && det->pieces[k].row_y != -1))) continue;
             component *self = piece ? &det->pieces[k] : &det->cands[ci];
             component comp = *self;
             /* row_y is spent after the extrema pass: it records how far each proposal got (-TRACE stage). */
@@ -2086,6 +2107,13 @@ start:;
                                          : det->piece_cand[k] >= 0 ? &det->cands[det->piece_cand[k]] : NULL;
                 int fate = whole ? -whole->row_y : 0;
                 if (det->piece_cand[k] >= 0 && s == 1) continue;
+                /* Until tags are seen touching, the lone piece of a blob that failed its first fit waits:
+                 * outside boards, whose blobs hold many pieces, it never held a tag. Untried, it is decoded
+                 * if the level is redone. */
+                if (!necks && det->piece_cand[k] >= 0 && fate == 7 && det->cands[det->piece_cand[k]].row_x1 == 1) {
+                    self->row_y = -1;
+                    continue;
+                }
                 if (fate == 6 || fate >= 9) {
                     self->row_y = whole->row_y; /* its own pieces share the fate */
                     continue;
@@ -2373,6 +2401,22 @@ start:;
             found++;
         }
         PROF_MARK(PROF_BLOBS);
+        if (split && !necks) {
+            /* Keep this level's fates, in case the frame is redone with necks. */
+            size_t n = (size_t)ncand + (size_t)npieces;
+            if (fate_off + n > det->fate_capacity) {
+                size_t cap = det->fate_capacity ? 2 * det->fate_capacity : 4096;
+                while (cap < fate_off + n) cap *= 2;
+                uint8_t *f = (uint8_t *)realloc(det->fates, cap);
+                if (f == NULL) return -2;
+                det->fates = f;
+                det->fate_capacity = cap;
+            }
+            for (int ci = 0; ci < ncand; ci++) det->fates[fate_off + ci] = (uint8_t)-det->cands[ci].row_y;
+            for (int k = 0; k < npieces; k++) det->fates[fate_off + ncand + k] = (uint8_t)-det->pieces[k].row_y;
+            fates_kept = fate_off + n;
+        }
+        fate_off += (size_t)ncand + (size_t)(npieces - fine);
         if (split && !necks && touching) {
             necks = 1;
             redone = s;

@@ -135,7 +135,7 @@ class NapaDetector:
 
     ``split_touching=True`` also finds tags whose border touches another dark shape at a corner, as in
     AprilGrid calibration boards and tags set in a checkerboard: such a tag and its neighbours form one blob,
-    which isn't tag-shaped. The extra tags come after the others, which are unchanged. It adds about 20-35% to
+    which isn't tag-shaped. The extra tags come after the others, which are unchanged. It adds about 20-30% to
     frames without touching tags, and boards take about 2.5-3x as long.
 
     One instance holds reusable buffers: serialize calls on each instance, and use one instance
