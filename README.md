@@ -58,9 +58,9 @@ NAPA found 96% of those tags with its default settings, and all of them with `mi
 **Calibration boards.** In an AprilGrid board a black square touches each tag at its corners, which hides most of the
 board from the default detector. With `split_touching=True` and `min_tag_px=16`, NAPA found 96.9% of the tags in the
 independent [Locus](benchmarks/results/2026-10-31_split_touching/report.md) AprilGrid renders, against 98.0% for
-AprilTag at full resolution, and 96.2% under lens distortion, against 96.1%, in about a sixth of the time. Fisheye
-boards remain harder: 80% against AprilTag's 94%. Splitting roughly doubles NAPA's time (up to 4× on noisy frames), so
-it is off by default.
+AprilTag at full resolution, and 96.2% under lens distortion, against 96.1%, in about a fifth of the time. Fisheye
+boards remain harder: 80% against AprilTag's 94%. It is off by default: it adds about a third to the time of FRC frames
+without touching tags, and boards take 2.5–3× as long as without it.
 
 On tag16h5, the 2023 FRC family, AprilTag at its default two-bit correction reported 581 wrong IDs in the [family
 benchmark](benchmarks/README.md#tag-families), and NAPA reported none.
