@@ -412,6 +412,27 @@ def test_split_touching_finds_aprilgrid_tags(tag_px: int, angle: float, min_tag_
     ]
 
 
+@pytest.mark.parametrize("shape", ["square", "bar", "bar_neck"])
+@pytest.mark.parametrize("tag_px", [48, 96, 160])
+def test_split_touching_finds_a_tag_touching_one_shape(shape: str, tag_px: int) -> None:
+    """A tag against one dark shape at a corner, such as a field element's edge: the case outside boards."""
+
+    image = np.full((480, 640), 255, np.uint8)
+    x0, y0 = 240, 160
+    image[y0 : y0 + tag_px, x0 : x0 + tag_px] = cv2.aruco.generateImageMarker(DICTIONARY, 7, tag_px, borderBits=1)
+    if shape == "square":
+        image[y0 - 40 : y0, x0 - 40 : x0] = 0
+    elif shape == "bar":  # a long bar, not tag-shaped itself
+        image[y0 - 12 : y0, 20:x0] = 0
+    else:  # the bar touches through a one-pixel neck
+        image[y0 - 12 : y0 - 1, 20 : x0 - 1] = 0
+        image[y0 - 1, x0 - 1] = 0
+    for frame in (image, cv2.GaussianBlur(image, (0, 0), 1.0)):
+        for min_tag_px in (16, 32):
+            found = NapaDetector(min_tag_px=min_tag_px, split_touching=True).detect(frame)
+            assert [observation.tag_id for observation in found] == [7]
+
+
 def test_split_touching_changes_nothing_without_touching_shapes() -> None:
     frames = [_scene(tag_id, side, angle_deg=angle)[0] for tag_id, side, angle in ((3, 40, 10.0), (77, 120, 33.0))]
     frames.append(cv2.GaussianBlur(np.random.default_rng(3).integers(0, 256, (480, 640), dtype=np.uint8), (3, 3), 0))

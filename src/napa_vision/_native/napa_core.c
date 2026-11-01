@@ -77,6 +77,8 @@ typedef struct {
     int ext[16][2]; /* extreme points along the 16 directions of comp_dirs, in angular order */
     int extv[16];
     int row_y, row_x0, row_x1; /* the blob's current row: its leftmost and rightmost dark sample */
+    /* Spent once the extrema are flushed; napa_detect then reuses row_y for how far the blob got and
+     * row_x1 for how many split pieces it has. */
 } component;
 
 /* The fitted quad, in pixels, of a candidate that failed its early decode, and its level's stride. */
@@ -2107,10 +2109,13 @@ start:;
                                          : det->piece_cand[k] >= 0 ? &det->cands[det->piece_cand[k]] : NULL;
                 int fate = whole ? -whole->row_y : 0;
                 if (det->piece_cand[k] >= 0 && s == 1) continue;
-                /* Until tags are seen touching, the lone piece of a blob that failed its first fit waits:
-                 * outside boards, whose blobs hold many pieces, it never held a tag. Untried, it is decoded
-                 * if the level is redone. */
-                if (!necks && det->piece_cand[k] >= 0 && fate == 7 && det->cands[det->piece_cand[k]].row_x1 == 1) {
+                /* Until tags are seen touching, a piece that is nearly all of its blob, and its blob's only
+                 * piece, waits when the blob failed its first fit: it fails the same way. (A tag touching a
+                 * bar or a board is a small part of its blob.) Untried, it is decoded if the level is redone. */
+                const component *blob = det->piece_cand[k] >= 0 ? &det->cands[det->piece_cand[k]] : NULL;
+                if (!necks && blob && fate == 7 && blob->row_x1 == 1 &&
+                    5 * (comp.maxx - comp.minx + 1) * (comp.maxy - comp.miny + 1) >=
+                        4 * (blob->maxx - blob->minx + 1) * (blob->maxy - blob->miny + 1)) {
                     self->row_y = -1;
                     continue;
                 }
