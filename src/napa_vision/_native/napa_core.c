@@ -1642,22 +1642,25 @@ static int grow_pieces(napa_detector *det, size_t n) {
     return 0;
 }
 
+/* Level coordinates stay below 30000, so a box's minx has a spare top bit: it marks a component seen this stage. */
+#define PIECE_SEEN 0x8000u
+
 /* Propose component r as piece n if it passes the candidate size and shape test on its own, the first time it
- * is seen this stage (a negated count marks it seen). Returns the new piece count, or -1 when out of memory. */
+ * is seen this stage. Returns the new piece count, or -1 when out of memory. */
 static int propose_piece(napa_detector *det, int32_t r, int n, int lo, int hi, int dense) {
     blob_box *B = det->boxes;
-    if (B[r].count < 0) return n;
-    B[r].count = -B[r].count;
+    if (B[r].minx & PIECE_SEEN) return n;
     int w = B[r].maxx - B[r].minx + 1, h = B[r].maxy - B[r].miny + 1;
+    B[r].minx |= PIECE_SEEN;
     int small = w < h ? w : h, big = w > h ? w : h;
-    if (small < lo || big > hi || big > 8 * small || (dense && small > 72) || (double)-B[r].count < 0.2 * (double)w * h)
+    if (small < lo || big > hi || big > 8 * small || (dense && small > 72) || (double)B[r].count < 0.2 * (double)w * h)
         return n;
     if (grow_pieces(det, (size_t)n + 1) != 0) return -1;
     component *c = &det->pieces[n];
     c->count = 0;
     for (int k = 0; k < 16; k++) c->extv[k] = INT32_MIN;
     c->row_y = -1;
-    c->minx = B[r].minx, c->maxx = B[r].maxx, c->miny = B[r].miny, c->maxy = B[r].maxy;
+    c->minx = B[r].minx & ~PIECE_SEEN, c->maxx = B[r].maxx, c->miny = B[r].miny, c->maxy = B[r].maxy;
     det->piece_root[n] = r;
     return n + 1;
 }
@@ -1669,20 +1672,20 @@ static int join_pairs(napa_detector *det, int32_t *E, size_t *n_pairs, int n, in
     blob_box *B = det->boxes;
     const int32_t *P = det->parent;
     size_t ne = 0;
-    /* Resolve every pair before marking any component: a mark would read as a join. */
     for (size_t e = 0; e < *n_pairs; e += 2) {
         int32_t ra = joined_root(B, -P[E[e]] - 1), rb = joined_root(B, -P[E[e + 1]] - 1);
         if (ra == rb) continue; /* joined another way */
         E[ne++] = ra;
         E[ne++] = rb;
+        if ((n = propose_piece(det, ra, n, lo, hi, dense)) < 0 || (n = propose_piece(det, rb, n, lo, hi, dense)) < 0)
+            return -1;
     }
-    for (size_t e = 0; e < ne; e++)
-        if ((n = propose_piece(det, E[e], n, lo, hi, dense)) < 0) return -1;
     *n_pairs = ne;
-    for (size_t e = 0; e < ne; e++)
-        if (B[E[e]].count < 0) B[E[e]].count = -B[E[e]].count;
-    /* The later component merges into the earlier one. */
+    /* The later component merges into the earlier one. Every component a join touches is the root of a pair
+     * already reached here, so clearing marks pair by pair leaves none in a box that is read. */
     for (size_t e = 0; e < ne; e += 2) {
+        B[E[e]].minx &= ~PIECE_SEEN;
+        B[E[e + 1]].minx &= ~PIECE_SEEN;
         int32_t ra = joined_root(B, E[e]), rb = joined_root(B, E[e + 1]);
         if (ra == rb) continue;
         int32_t root = ra < rb ? ra : rb, child = ra < rb ? rb : ra;
@@ -1713,8 +1716,9 @@ static int split_pieces(napa_detector *det, int lo, int hi, int dense, int *fine
     return join_pairs(det, det->diag, &det->diag_n, n, lo, hi, dense);
 }
 
-/* Whether a found tag touches dark shapes at its corners, as grid tags do: just outside at least two corners,
- * diagonally, the image is darker than halfway between the tag's border there and its quiet zone. Families with
+/* Whether a found tag touches dark shapes at its corners, as grid tags do: just outside at least three corners,
+ * diagonally, the image is darker than halfway between the tag's border there and its quiet zone. (A tag lying on
+ * grass or against an edge has dark beyond one or two corners.) Families with
  * data cells outside the border have them where these samples fall, so their boards may not be recognised. */
 static int corners_touch(const image_view *view, const napa_detection *d, double cells) {
     const double *c = d->corners;
@@ -1731,7 +1735,7 @@ static int corners_touch(const image_view *view, const napa_detection *d, double
         double qy = 0.5 * (c[2 * k + 1] + c[2 * b + 1]) + 0.6 * 0.5 * (vy + (c[2 * b + 1] - c[2 * n + 1]) / cells);
         dark += outside < 0.5 * (border + sample_bilinear(view, qx, qy));
     }
-    return dark >= 2;
+    return dark >= 3;
 }
 
 static int covered(const napa_detection *out, int n, double x, double y, double radius) {
