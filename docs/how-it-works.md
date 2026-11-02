@@ -52,7 +52,7 @@ code allows is dropped: every tag36h11 code has at least 10 white cells. Then NA
 Each side's line fit drops samples that disagree with the rest of the edge, so a short obstruction along a side
 doesn't pull the corners off.
 
-Three kinds of image fool a plain edge fit, so NAPA checks for each:
+Four kinds of image fool a plain edge fit, so NAPA checks for each:
 
 - **A grey quiet zone on a bright background** makes the margin look dark, so the first outline is the margin's. If
   the decode fails, NAPA tries the outline's inner 8/10, where the black square would be.
@@ -60,6 +60,11 @@ Three kinds of image fool a plain edge fit, so NAPA checks for each:
   that side in by a cell and refits it.
 - **Clipped exposure** shrinks every black region by the same amount. The black border must be exactly one cell wide,
   so NAPA measures the shrinkage on the tag itself and undoes it.
+- **A tag running off the frame**, as a close tag does, has no outer edge on that side: its white margin, and
+  sometimes part of its border, lie outside the image. NAPA takes the frame edge as that side to find the tag, then
+  measures the side from the border's inner edge, a cell in, where white cells meet it. It keeps the tag only if every
+  other side's inner edge lies a cell inside it too, so the corners outside the image are about as accurate as the
+  rest.
 
 ## 5. Look up the ID
 
