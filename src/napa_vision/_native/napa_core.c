@@ -9,8 +9,8 @@
  *      cell wide, so every border crossing contains a sample from its dark core. Coarser levels
  *      take every second sample of the level before.
  *   2. Threshold each sample against its 4x4-tile min/max over a 3x3 tile neighbourhood. Tiles
- *      without contrast are skipped outright: they cannot contain a tag edge. Rows of dark
- *      samples become runs (SIMD compare and bit masks), joined into blobs by union-find.
+ *      without contrast are skipped outright: they cannot contain a tag edge. Dark samples become
+ *      bit masks (SIMD compare); runs of each row pair's union are joined into blobs by union-find.
  *   3. Keep tag-sized, tag-shaped blobs; each one's extreme points give a rough quad.
  *   4. Fit each side to its full-resolution edge along the normal, decode once cheaply to reject
  *      non-tags, then refine coarse to fine and intersect the four lines for the corners.
@@ -81,9 +81,10 @@ static int napa_popcount64(uint64_t x) {
 #define NAPA_POPCOUNT(hw, x) napa_popcount64(x)
 #endif
 
-/* A horizontal run of dark samples in one level row, and a blob's sample count and bounding box. */
+/* A run of a row pair: samples x0..x1 where row y or row y + 1 is dark (the pair's union), with how many
+ * of them are dark in each row. And a blob's sample count and bounding box. */
 typedef struct {
-    uint16_t x0, x1, y, pad;
+    uint16_t x0, x1, y, ntop, nbot;
 } napa_run;
 
 typedef struct {
@@ -97,6 +98,8 @@ typedef struct {
     int32_t extv[16];  /* the extremes' projections onto the 16 directions of comp_dirs, in angular order */
     uint32_t extp[16]; /* the extreme points, packed as x | y << 16 */
     int row_y, row_x0, row_x1; /* the blob's current row: its leftmost and rightmost dark sample */
+    int pair_y, top_x0, top_x1, bot_x0, bot_x1; /* the current row pair's extents (x0 -1: none yet) */
+    int key_y, key_x; /* the blob's first dark sample in raster order: its top row and leftmost x there */
 } component;
 
 /* The fitted quad, in pixels, of a candidate that failed its early decode, and its level's stride. */
@@ -159,6 +162,10 @@ struct napa_detector {
     size_t cand_capacity;
     uint64_t *row_bits;
     uint16_t *edges; /* one row's run edges (extract_runs) */
+    uint64_t *bitrows; /* the level's dark bits, row by row, plus an empty row after the last */
+    size_t bitrow_capacity;
+    uint64_t *junction; /* where the rows either side of a pair boundary touch (threshold_level) */
+    int32_t *cand_order; /* candidates in raster order of their first dark sample */
     uint64_t *emask[2]; /* edge masks and per-word edge counts of the current and previous row */
     int32_t *epre[2];
     uint8_t *row_min;
@@ -452,6 +459,9 @@ void napa_destroy(napa_detector *det) {
     free(det->cands);
     free(det->row_bits);
     free(det->edges);
+    free(det->bitrows);
+    free(det->junction);
+    free(det->cand_order);
     for (int k = 0; k < 2; k++) free(det->emask[k]), free(det->epre[k]);
     free(det->floors);
     free(det->diffs);
@@ -505,6 +515,9 @@ static int ensure_buffers(napa_detector *det, size_t pixels, size_t tiles, size_
         uint16_t *edges = (uint16_t *)realloc(det->edges, (row + 80) * sizeof(uint16_t));
         if (edges == NULL) return -1;
         det->edges = edges;
+        uint64_t *jm = (uint64_t *)realloc(det->junction, (row / 64 + 2) * sizeof(uint64_t));
+        if (jm == NULL) return -1;
+        det->junction = jm;
         for (int k = 0; k < 2; k++) {
             uint64_t *m = (uint64_t *)realloc(det->emask[k], (row / 64 + 2) * sizeof(uint64_t));
             if (m == NULL) return -1;
@@ -640,12 +653,19 @@ NAPA_API int napa_profile_read(uint64_t *out, int max) {
 #define PROF_MARK(stage) ((void)0)
 #endif
 
+/* Trailing and leading zeros of a non-zero word. */
 #if defined(__GNUC__) || defined(__clang__)
 #define napa_ctz64(x) __builtin_ctzll(x)
+#define napa_clz64(x) __builtin_clzll(x)
 #else
 static int napa_ctz64(uint64_t x) {
     int n = 0;
     while (!(x & 1)) x >>= 1, n++;
+    return n;
+}
+static int napa_clz64(uint64_t x) {
+    int n = 0;
+    while (!(x >> 63)) x <<= 1, n++;
     return n;
 }
 #endif
@@ -748,6 +768,37 @@ static void box_rake(uint8_t *level, int lw, int lh, const uint8_t *img, int w, 
         int r0 = y * s - half, r1 = r0 + kernel;
         if (r0 < 0) r0 = 0;
         if (r1 > h) r1 = h;
+#ifdef NAPA_SSE2
+        /* acc: each column's sum over the band's rows, and hs[c] = acc[c] + ... + acc[c + kernel - 1] for
+         * every block start c that fits in the row, each in one pass with the sums kept in registers. */
+        const __m128i zero = _mm_setzero_si128();
+        int x = 0, c = 0, starts = w - kernel + 1;
+        for (; x + 16 <= w; x += 16) {
+            __m128i lo = zero, hi = zero;
+            for (int r = r0; r < r1; r++) {
+                __m128i v = _mm_loadu_si128((const __m128i *)(img + (size_t)r * stride + x));
+                lo = _mm_add_epi16(lo, _mm_unpacklo_epi8(v, zero));
+                hi = _mm_add_epi16(hi, _mm_unpackhi_epi8(v, zero));
+            }
+            _mm_storeu_si128((__m128i *)(acc + x), lo);
+            _mm_storeu_si128((__m128i *)(acc + x + 8), hi);
+        }
+        for (; x < w; x++) {
+            unsigned v = 0;
+            for (int r = r0; r < r1; r++) v += img[(size_t)r * stride + x];
+            acc[x] = (uint16_t)v;
+        }
+        for (; c + 8 <= starts; c += 8) {
+            __m128i v = _mm_loadu_si128((const __m128i *)(acc + c));
+            for (int k = 1; k < kernel; k++) v = _mm_add_epi16(v, _mm_loadu_si128((const __m128i *)(acc + c + k)));
+            _mm_storeu_si128((__m128i *)(hs + c), v);
+        }
+        for (; c < starts; c++) {
+            unsigned v = 0;
+            for (int k = 0; k < kernel; k++) v += acc[c + k];
+            hs[c] = (uint16_t)v;
+        }
+#else
         const uint8_t *row = img + (size_t)r0 * stride;
         for (int x = 0; x < w; x++) acc[x] = row[x];
         for (int r = r0 + 1; r < r1; r++) {
@@ -758,6 +809,7 @@ static void box_rake(uint8_t *level, int lw, int lh, const uint8_t *img, int w, 
         for (int c = 0; c + kernel <= w; c++) hs[c] = acc[c];
         for (int k = 1; k < kernel; k++)
             for (int c = 0; c + kernel <= w; c++) hs[c] = (uint16_t)(hs[c] + acc[c + k]);
+#endif
         uint8_t *dst = level + (size_t)y * lw;
         /* Whole blocks are x_lo <= x < x_hi; the rest are clipped by the image edge. */
         int x_lo = (half + s - 1) / s, x_hi = (w - kernel + half) / s + 1;
@@ -814,7 +866,8 @@ static void dark_bits(const uint8_t *row, const uint8_t *thr, int lw, uint64_t *
 }
 
 
-/* Append row y's runs of set bits as napa_runs, each its own union-find root (P[i] = i). Run edges
+/* Append the runs of set bits in `bits` (row pair y's union) as napa_runs, each its own union-find root
+ * (P[i] = i); the caller fills their per-row counts. Run edges
  * are the set bits of bits ^ (bits << 1), the previous word's top bit carried in; they alternate a
  * run's start and the sample after its end. Each word's edges are decoded eight at a time, with no
  * branch per edge, into `edge` (row + 80 entries), then paired into runs, so the cost is per run,
@@ -858,6 +911,42 @@ NAPA_INLINE int extract_runs(const uint64_t *bits, int lw, int y, napa_run *R, i
  * end before q - 1, and rounded up, the runs that start before q. */
 NAPA_INLINE int edges_before(const uint64_t *emask, const int32_t *epre, int q, const int hw) {
     return epre[q >> 6] + NAPA_POPCOUNT(hw, emask[q >> 6] & (((uint64_t)1 << (q & 63)) - 1));
+}
+
+/* Whether any bit lo..hi (inclusive) of a bit row is set. */
+static inline int bits_any(const uint64_t *b, int lo, int hi) {
+    int wl = lo >> 6, wh = hi >> 6;
+    uint64_t first = ~(uint64_t)0 << (lo & 63), last = ~(uint64_t)0 >> (63 - (hi & 63));
+    if (wl == wh) return (b[wl] & first & last) != 0;
+    if (b[wl] & first) return 1;
+    for (int w = wl + 1; w < wh; w++)
+        if (b[w]) return 1;
+    return (b[wh] & last) != 0;
+}
+
+/* Whether row a (above) and row t touch within one sample at some bit lo..hi (inclusive) of
+ * (a | a << 1) & (t | t << 1), one row up being bit-shifted toward higher x: a dark sample of a at x and
+ * one of t at x' with |x - x'| <= 1 set bit max(x, x'). Rows are `words` long; bit lw may be asked for. */
+static inline int rows_touch(const uint64_t *a, const uint64_t *t, int words, int lo, int hi) {
+    for (int w = lo >> 6; w <= hi >> 6; w++) {
+        uint64_t aw = w < words ? a[w] : 0, tw = w < words ? t[w] : 0;
+        uint64_t ac = w > 0 ? a[w - 1] >> 63 : 0, tc = w > 0 ? t[w - 1] >> 63 : 0;
+        uint64_t j = (aw | aw << 1 | ac) & (tw | tw << 1 | tc);
+        if (w == lo >> 6) j &= ~(uint64_t)0 << (lo & 63);
+        if (w == hi >> 6) j &= ~(uint64_t)0 >> (63 - (hi & 63));
+        if (j) return 1;
+    }
+    return 0;
+}
+
+/* How many bits lo..hi (inclusive) of a bit row are set. */
+NAPA_INLINE int bits_count(const uint64_t *b, int lo, int hi, const int hw) {
+    int wl = lo >> 6, wh = hi >> 6;
+    uint64_t first = ~(uint64_t)0 << (lo & 63), last = ~(uint64_t)0 >> (63 - (hi & 63));
+    if (wl == wh) return NAPA_POPCOUNT(hw, b[wl] & first & last);
+    int n = NAPA_POPCOUNT(hw, b[wl] & first) + NAPA_POPCOUNT(hw, b[wh] & last);
+    for (int w = wl + 1; w < wh; w++) n += NAPA_POPCOUNT(hw, b[w]);
+    return n;
 }
 
 /* dst[4i..4i+3] = src[i] for i < n: each tile's threshold for its four sample columns. */
@@ -966,9 +1055,9 @@ static void min3_max3(uint8_t *NAPA_RESTRICT lo, uint8_t *NAPA_RESTRICT hi, cons
     }
 }
 
-/* Threshold the level (lw x lh samples, rows lstride apart) and label its dark samples as runs joined by
- * union-find (8-connected: runs in adjacent rows touch if they overlap within one sample). Returns the
- * run count. Rows from safe_rows on can't be read in whole 64-sample words (the level is the caller's
+/* Threshold the level (lw x lh samples, rows lstride apart) into det->bitrows and label its dark samples
+ * (8-connected) as runs of row pairs joined by union-find. Returns the run count. Rows from safe_rows on
+ * can't be read in whole 64-sample words (the level is the caller's
  * frame, which ends with its last row), so they're thresholded from a padded copy.
  * Each band's tile row is computed just before the band above it is thresholded, so the samples a
  * band reads twice (for its tiles, then for its dark bits) are still in cache. */
@@ -1026,29 +1115,60 @@ NAPA_INLINE int threshold_level_impl(napa_detector *det, const uint8_t *L, size_
         if (!any) continue; /* no contrast anywhere in this band: no dark samples, no runs */
         expand4(trow, tt, tw);
         memset(trow + lw, 0, (size_t)(4 * tw + 64 - lw)); /* nothing past the row is dark */
-        uint64_t *bits = det->row_bits;
-        for (int y = y0; y < y1; y++) {
-            const uint8_t *row = L + (size_t)y * lstride;
-            if (y >= safe_rows) row = (const uint8_t *)memcpy(det->row_pad, row, (size_t)lw);
-            dark_bits(row, trow, lw, bits);
+        /* Rows go in pairs (both in this band; a lone last row pairs with the empty row after it). A run of the
+         * pair's union is a connected piece of the two rows, so it stands for both: about half as many runs
+         * to label as rows taken one at a time (Lee, Allegretti, Bolelli and Grana's Bit-Merge-Run Scan). */
+        const int words = (lw + 63) / 64;
+        uint64_t *merged = det->row_bits;
+        for (int y = y0; y < y1; y += 2) {
+            const int two = y + 1 < y1;
+            uint64_t *top = det->bitrows + (size_t)y * words, *bot = top + words;
+            for (int k = 0; k <= two; k++) {
+                const uint8_t *row = L + (size_t)(y + k) * lstride;
+                if (y + k >= safe_rows) row = (const uint8_t *)memcpy(det->row_pad, row, (size_t)lw);
+                dark_bits(row, trow, lw, k ? bot : top);
+            }
+            for (int w = 0; w < words; w++) merged[w] = top[w] | bot[w];
             int start = n;
-            uint64_t *emask = det->emask[y & 1], *pmask = det->emask[~y & 1];
-            int32_t *epre = det->epre[y & 1], *ppre = det->epre[~y & 1];
-            n = extract_runs(bits, lw, y, R, P, n, det->edges, emask, epre, hw);
+            const int side = (y >> 1) & 1;
+            uint64_t *emask = det->emask[side], *pmask = det->emask[side ^ 1];
+            int32_t *epre = det->epre[side], *ppre = det->epre[side ^ 1];
+            n = extract_runs(merged, lw, y, R, P, n, det->edges, emask, epre, hw);
+            for (int i = start; i < n; i++) {
+                R[i].ntop = (uint16_t)bits_count(top, R[i].x0, R[i].x1, hw);
+                R[i].nbot = (uint16_t)(two ? bits_count(bot, R[i].x0, R[i].x1, hw) : 0);
+            }
             if (prev_y == y - 1) {
-                /* Runs of either row are sorted and disjoint, so the runs above that touch run b (within
-                 * one sample) are a contiguous range [f, g): those ending at or after b.x0 - 1 and
-                 * starting at or before b.x1 + 1, counted from the row above's edges. Every b finds its
-                 * range independently, with no walk whose next step waits on a compare. A run of this
-                 * row touches nothing before its own range (runs of one row join only through the row
-                 * above), so hang it under f's parent, which precedes it; join any further runs it
-                 * touches unless their parents already match. */
+                /* Runs of either pair are sorted and disjoint, so the runs above that could touch run b
+                 * (within one sample) are a contiguous range [f, g): those ending at or after b.x0 - 1 and
+                 * starting at or before b.x1 + 1, counted from the pair above's edges. Two such runs touch
+                 * only through the rows either side of the boundary: where junction (the row above, widened
+                 * one sample right, meeting this pair's top row, widened the same way) has a bit from
+                 * max(a.x0, b.x0) to min(a.x1, b.x1) + 1. Those rows hold no other run's samples there. A run
+                 * touches nothing before its own range (runs of one pair join only through the pair above),
+                 * so hang it under the first touching run's parent, which precedes it; join any further
+                 * touching runs unless their parents already match. */
+                const uint64_t *above = det->bitrows + (size_t)(y - 1) * words;
+                /* With a run or more per word, mark where the rows touch across the whole row once; with fewer,
+                 * test each pair of runs where it overlaps. */
+                const int dense = n - start >= words;
+                uint64_t *junction = det->junction, ca = 0, ct = 0;
+                for (int w = 0; dense && w <= words; w++) {
+                    uint64_t a = w < words ? above[w] : 0, t = w < words ? top[w] : 0;
+                    junction[w] = (a | a << 1 | ca) & (t | t << 1 | ct);
+                    ca = a >> 63, ct = t >> 63;
+                }
                 for (int b = start; b < n; b++) {
                     int f = prev_start + (edges_before(pmask, ppre, R[b].x0, hw) >> 1);
                     int g = prev_start + ((edges_before(pmask, ppre, R[b].x1 + 2, hw) + 1) >> 1);
-                    P[b] = g > f ? P[f] : b; /* f is at most start <= b: always a run */
-                    for (int a = f + 1; a < g; a++) {
-                        if (P[b] != P[a]) {
+                    int hung = 0;
+                    for (int a = f; a < g; a++) {
+                        int lo = R[a].x0 > R[b].x0 ? R[a].x0 : R[b].x0;
+                        int hi = (R[a].x1 < R[b].x1 ? R[a].x1 : R[b].x1) + 1;
+                        if (!(dense ? bits_any(junction, lo, hi) : rows_touch(above, top, words, lo, hi))) continue;
+                        if (!hung) {
+                            P[b] = P[a], hung = 1;
+                        } else if (P[b] != P[a]) {
                             int32_t ra = find_root(P, a), rb = find_root(P, b);
                             if (ra < rb) P[rb] = ra;
                             else if (rb < ra) P[ra] = rb;
@@ -1056,7 +1176,7 @@ NAPA_INLINE int threshold_level_impl(napa_detector *det, const uint8_t *L, size_
                     }
                 }
             }
-            prev_y = y, prev_start = start;
+            prev_y = y + two, prev_start = start;
         }
     }
     return n;
@@ -1820,14 +1940,49 @@ static void comp_flush_row(component *c) {
 #endif
 }
 
-/* Runs arrive in raster order. extv starts at INT32_MIN and row_y at -1. */
-static void comp_add_run(component *c, const napa_run *r) {
-    if (r->y != c->row_y) {
-        if (c->row_y >= 0) comp_flush_row(c);
-        c->row_y = r->y, c->row_x0 = r->x0;
+/* The first and last set bit of a bit row within x0..x1, which holds at least one. */
+static int first_bit(const uint64_t *b, int x0) {
+    int w = x0 >> 6;
+    uint64_t v = b[w] & (~(uint64_t)0 << (x0 & 63));
+    while (!v) v = b[++w];
+    return 64 * w + napa_ctz64(v);
+}
+static int last_bit(const uint64_t *b, int x1) {
+    int w = x1 >> 6;
+    uint64_t v = b[w] & (~(uint64_t)0 >> (63 - (x1 & 63)));
+    while (!v) v = b[--w];
+    return 64 * w + 63 - napa_clz64(v);
+}
+
+/* Fold the pending row pair's two rows into the extremes, top row first. The blob's first folded row is
+ * its top row, and its leftmost sample there its first dark sample in raster order. */
+static void comp_flush_pair(component *c) {
+    if (c->pair_y < 0) return;
+    for (int k = 0; k < 2; k++) {
+        int x0 = k ? c->bot_x0 : c->top_x0, x1 = k ? c->bot_x1 : c->top_x1;
+        if (x0 < 0) continue;
+        c->row_y = c->pair_y + k, c->row_x0 = x0, c->row_x1 = x1;
+        if (c->key_y < 0) c->key_y = c->row_y, c->key_x = x0;
+        comp_flush_row(c);
     }
-    c->row_x1 = r->x1;
-    c->count += r->x1 - r->x0 + 1;
+}
+
+/* Runs arrive in raster order of their pairs; within a pair, left to right. top and bot are the pair's
+ * dark bits. A row's extremes lie at its leftmost and rightmost dark sample. extv starts at INT32_MIN,
+ * and pair_y and key_y at -1. */
+static void comp_add_run(component *c, const napa_run *r, const uint64_t *top, const uint64_t *bot) {
+    if (r->y != c->pair_y) {
+        comp_flush_pair(c);
+        c->pair_y = r->y, c->top_x0 = c->bot_x0 = -1;
+    }
+    if (r->ntop) {
+        if (c->top_x0 < 0) c->top_x0 = first_bit(top, r->x0);
+        c->top_x1 = last_bit(top, r->x1);
+    }
+    if (r->nbot) {
+        if (c->bot_x0 < 0) c->bot_x0 = first_bit(bot, r->x0);
+        c->bot_x1 = last_bit(bot, r->x1);
+    }
 }
 
 static double quad_area_pts(int p[4][2]) {
@@ -2163,6 +2318,14 @@ int napa_detect(napa_detector *det, const uint8_t *img, int width, int height, i
             }
             if (contrast < 0) return -2;
         }
+        size_t bitrow_words = (size_t)(lh + 1) * (size_t)((lw + 63) / 64);
+        if (bitrow_words > det->bitrow_capacity) {
+            uint64_t *p = (uint64_t *)realloc(det->bitrows, bitrow_words * sizeof(uint64_t));
+            if (p == NULL) return -2;
+            det->bitrows = p;
+            det->bitrow_capacity = bitrow_words;
+        }
+        memset(det->bitrows + (size_t)lh * ((lw + 63) / 64), 0, sizeof(uint64_t) * (size_t)((lw + 63) / 64));
         int nruns = threshold_level(det, lvl, lstride, lw, lh, safe_rows, s / floor_stride);
         PROF_MARK(PROF_THRESHOLD);
 
@@ -2173,23 +2336,26 @@ int napa_detect(napa_detector *det, const uint8_t *img, int width, int height, i
         int32_t nroots = 0;
         for (int i = 0; i < nruns; i++) {
             int32_t r;
+            const uint16_t miny = (uint16_t)(R[i].ntop ? R[i].y : R[i].y + 1);
+            const uint16_t maxy = (uint16_t)(R[i].nbot ? R[i].y + 1 : R[i].y);
             if (P[i] == i) {
                 r = nroots++;
-                B[r].count = R[i].x1 - R[i].x0 + 1;
+                B[r].count = R[i].ntop + R[i].nbot;
                 B[r].minx = R[i].x0, B[r].maxx = R[i].x1;
-                B[r].miny = B[r].maxy = R[i].y;
+                B[r].miny = miny, B[r].maxy = maxy;
             } else {
                 /* Union always points to an earlier run. That run already carries its dense
                  * component index, encoded negatively to distinguish it from a run index. */
                 r = -P[P[i]] - 1;
-                B[r].count += R[i].x1 - R[i].x0 + 1;
+                B[r].count += R[i].ntop + R[i].nbot;
                 B[r].minx = R[i].x0 < B[r].minx ? R[i].x0 : B[r].minx;
                 B[r].maxx = R[i].x1 > B[r].maxx ? R[i].x1 : B[r].maxx;
-                B[r].maxy = R[i].y;
+                B[r].miny = miny < B[r].miny ? miny : B[r].miny;
+                B[r].maxy = maxy > B[r].maxy ? maxy : B[r].maxy;
             }
             P[i] = -r - 1;
         }
-        /* Keep tag-sized, tag-shaped blobs as candidates, in raster order of their first sample. A tag
+        /* Keep tag-sized, tag-shaped blobs as candidates (then put in raster order of their first sample). A tag
          * tilted by t looks about 1 / cos(t) times longer than it is wide, more with perspective: an 8:1
          * box admits tilts to about 80 degrees. Clean tags stay readable past 75 degrees whenever their
          * narrow side is still min_tag_px or more, and decoding rejects thin blobs that aren't tags. */
@@ -2217,12 +2383,15 @@ int napa_detect(napa_detector *det, const uint8_t *img, int width, int height, i
                 component *c = (component *)realloc(det->cands, cap * sizeof(component));
                 if (c == NULL) return -2;
                 det->cands = c;
+                int32_t *o = (int32_t *)realloc(det->cand_order, cap * sizeof(int32_t));
+                if (o == NULL) return -2;
+                det->cand_order = o;
                 det->cand_capacity = cap;
             }
             component *c = &det->cands[ncand];
-            c->count = 0;
+            c->count = B[i].count;
             for (int k = 0; k < 16; k++) c->extv[k] = INT32_MIN;
-            c->row_y = -1;
+            c->pair_y = -1, c->key_y = -1;
             c->minx = t_minx, c->maxx = t_maxx, c->miny = t_miny, c->maxy = t_maxy;
             det->slot[i] = ncand++;
         }
@@ -2234,15 +2403,31 @@ int napa_detect(napa_detector *det, const uint8_t *img, int width, int height, i
             mine[nmine] = i;
             nmine += det->slot[-P[i] - 1] >= 0;
         }
+        const int words = (lw + 63) / 64;
         for (int k = 0; k < nmine; k++) {
             int i = mine[k];
-            comp_add_run(&det->cands[det->slot[-P[i] - 1]], &R[i]);
+            const uint64_t *top = det->bitrows + (size_t)R[i].y * words;
+            comp_add_run(&det->cands[det->slot[-P[i] - 1]], &R[i], top, top + words);
         }
-        for (int ci = 0; ci < ncand; ci++) comp_flush_row(&det->cands[ci]);
+        /* Labels follow runs of row pairs, so blobs were numbered by their first pair. Number candidates as
+         * rows taken one at a time would: by their first dark sample in raster order (insertion sort: the
+         * pair order is nearly that already). */
+        int32_t *order = det->cand_order;
+        for (int ci = 0; ci < ncand; ci++) {
+            component *c = &det->cands[ci];
+            comp_flush_pair(c);
+            int k = ci;
+            for (; k > 0; k--) {
+                const component *p = &det->cands[order[k - 1]];
+                if (p->key_y < c->key_y || (p->key_y == c->key_y && p->key_x < c->key_x)) break;
+                order[k] = order[k - 1];
+            }
+            order[k] = ci;
+        }
         PROF_MARK(PROF_BLOBS);
 
         for (int ci = 0; ci < ncand; ci++) {
-            component comp = det->cands[ci];
+            component comp = det->cands[order[ci]];
             int t_minx = comp.minx, t_maxx = comp.maxx, t_miny = comp.miny, t_maxy = comp.maxy;
             int bw = t_maxx - t_minx + 1, bh = t_maxy - t_miny + 1;
             int big = bw > bh ? bw : bh;

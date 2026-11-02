@@ -30,11 +30,13 @@ low-contrast tags.
 ## 3. Group dark samples into blobs
 
 Every pass over the grid works on whole rows with vector instructions. One SSE2 or NEON instruction compares 16
-samples with their thresholds and packs the results into a bitmask. Runs of dark samples come out of the masks with
-one count-trailing-zeros instruction per run, and union-find joins runs that touch into blobs. Each run finds the
-runs it touches in the row above by counting that row's run edges before its two ends, so runs don't wait on each
-other. The cost follows the number of runs, not the number of dark pixels. Gathering every third pixel uses a byte
-shuffle (SSSE3, chosen at run time) or NEON's de-interleaving load.
+samples with their thresholds and packs the results into a bitmask. Rows are labeled in pairs: a run of dark samples
+in two rows' combined mask is already one connected piece, so there are about half as many runs to join, as in Lee
+and others' Bit-Merge-Run Scan. Runs come out of the masks with one count-trailing-zeros instruction per run, and
+union-find joins runs that touch into blobs. Each run finds the runs it might touch in the pair above by counting
+that pair's run edges before its two ends, so runs don't wait on each other. The cost follows the number of runs,
+not the number of dark pixels. Gathering every third pixel uses a byte shuffle (SSSE3, chosen at run time) or NEON's
+de-interleaving load.
 
 ## 4. Reject non-tags before measuring them
 
