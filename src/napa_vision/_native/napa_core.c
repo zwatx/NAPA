@@ -511,6 +511,12 @@ static inline double sample_bilinear(const image_view *im, double x, double y) {
     return im->invert ? 255.0 - v : v;
 }
 
+#if defined(_MSC_VER)
+#define NAPA_NOINLINE __declspec(noinline)
+#else
+#define NAPA_NOINLINE __attribute__((noinline))
+#endif
+
 /* ---------------------------------------------------------------- threshold */
 
 #define TILE 4
@@ -915,14 +921,40 @@ static int threshold_level(napa_detector *det, int lw, int lh, int factor) {
 
 /* ---------------------------------------------------------------- geometry */
 
-/* Fit each side to the outer border edge searched from r_out outside to r_in inside the given quad. */
+/* No edge along side a-b: if it lies on the frame edge, the black border runs to the edge of
+ * the image (the camera cut off the white margin, or part of the border), so the dark region ends at the image
+ * boundary. Take that boundary as the side for now (its line in *lx, *ly, *dx, *dy); napa_detect measures where
+ * the cut-off corners really are (extend_cut_sides). A tilted side can show part of its edge to a later,
+ * narrower pass, so fit_sides keeps the mark for the whole fit. Returns 0 if the side isn't on the frame edge.
+ * Rare, so kept out of fit_sides' loop. */
+static NAPA_NOINLINE int frame_side(const image_view *im, vec2 a, vec2 b, double r_out, double *lx, double *ly,
+                                    double *dx, double *dy) {
+    double tol = r_out + 1.0, right = im->w - 0.5, bottom = im->h - 0.5;
+    if (fabs(b.x - a.x) < fabs(b.y - a.y)) { /* a vertical side: the left or right edge */
+        if (fabs(a.x + 0.5) <= tol && fabs(b.x + 0.5) <= tol) *lx = -0.5;
+        else if (fabs(a.x - right) <= tol && fabs(b.x - right) <= tol) *lx = right;
+        else return 0;
+        *ly = a.y, *dx = 0, *dy = 1;
+    } else {
+        if (fabs(a.y + 0.5) <= tol && fabs(b.y + 0.5) <= tol) *ly = -0.5;
+        else if (fabs(a.y - bottom) <= tol && fabs(b.y - bottom) <= tol) *ly = bottom;
+        else return 0;
+        *lx = a.x, *dx = 1, *dy = 0;
+    }
+    return 1;
+}
+
+/* Fit each side to the outer border edge searched from r_out outside to r_in inside the given quad. Sides taken
+ * from the frame edge instead are added to *frame_sides (bit k: side k, from in[k] to in[k + 1]); with frame_sides
+ * NULL, a side with no edge fails the fit, as before. */
 /* Edge levels for the midpoint-crossing estimator; black >= white disables it. */
 typedef struct {
     double black, white;
 } edge_levels;
 
 static int fit_sides(const image_view *im, const vec2 in[4], vec2 out[4], double r_out, double r_in, int min_edge,
-                     int outermost, int max_points, double *edge_width, const edge_levels *levels, double cells) {
+                     int outermost, int max_points, double *edge_width, const edge_levels *levels, double cells,
+                     int *frame_sides) {
     const uint8_t *img = im->p;
     const int w = im->w, h = im->h, stride = im->stride;
     double width_sum = 0;
@@ -957,6 +989,8 @@ static int fit_sides(const image_view *im, const vec2 in[4], vec2 out[4], double
         if (np > MAXP) np = MAXP;
         double px[MAXP], py[MAXP], wt[MAXP];
         int good = 0;
+        double side_width_sum = width_sum;
+        int side_width_n = width_n;
         double step = (r_out + r_in) / (K - 1);
         double dt = 0.76 / np, min_g = min_edge * 0.5 * step * 16777216.0; /* best / (2 step) >= min_edge / 4 */
         /* The profile step in 16.16 fixed point, rounded to nearest. */
@@ -1071,7 +1105,13 @@ static int fit_sides(const image_view *im, const vec2 in[4], vec2 out[4], double
             wt[good] = (double)best * (1.0 / (1 << 24));
             good++;
         }
-        if (good < 3) return 0;
+        if (good < 3) {
+            width_sum = side_width_sum, width_n = side_width_n; /* this side's few edge points aren't its edge */
+            /* Only a caller that tracks the mark (and so measures the side later) may use the frame edge. */
+            if (frame_sides == NULL || !frame_side(im, a, b, r_out, &lx[k], &ly[k], &dx[k], &dy[k])) return 0;
+            if (frame_sides != NULL) *frame_sides |= 1 << k;
+            continue;
+        }
         /* Weighted total-least-squares line, then one pass dropping outliers. */
         for (int pass = 0; pass < 2; pass++) {
             double sw = 0, mx = 0, my = 0;
@@ -1371,10 +1411,11 @@ static int border_plausible(const family_layout *L, const image_view *im, const 
 
 /* Decode the tag inside quad q (reordered in place to a consistent winding). `slack` loosens the
  * border and Hamming limits, for a cheap early decode on unrefined corners. Optionally reports each
- * side's border level (side_level) and the tag's black and white levels. */
+ * side's border level (side_level), the tag's black and white levels, and the matched code as observed in q's
+ * orientation (code_out). */
 static int decode_quad(napa_detector *det, const image_view *im, vec2 q[4],
                        const napa_params *params, int slack, napa_detection *out, double side_level[4],
-                       edge_levels *levels) {
+                       edge_levels *levels, uint64_t *code_out) {
     const family_layout *L = &det->fam;
     const int W = L->width, o = L->outer, G = L->grid;
     if (signed_area(q) < 0) {
@@ -1471,6 +1512,7 @@ static int decode_quad(napa_detector *det, const image_view *im, vec2 q[4],
      * fall within three bits of a code has its errors scattered: for tag36h11, only 420 of the 7,140
      * three-cell placements are connected, so this rejects ~94% of chance three-bit matches. */
     if (slack == 0 && best == 3 && !errors_connected(L, code ^ L->codes[bi])) return 0;
+    if (code_out != NULL) *code_out = L->codes[bi];
     int rot = L->rotations[bi];
     /* Observed grid == rot90(canonical, rot); the canonical top-left sits at corner index (4 - rot) % 4. */
     for (int k = 0; k < 4; k++) {
@@ -1491,6 +1533,148 @@ static int decode_quad(napa_detector *det, const image_view *im, vec2 q[4],
     }
     double wm = white_n ? white_sum / white_n : 0, bm = black_n ? black_sum / black_n : 0;
     out->decision_margin = (float)(wm < bm ? wm : bm);
+    return 1;
+}
+
+/* Points on the inner edge of the square's border along one side (0 top, v = 0, then clockwise), for the square
+ * mapped by H: where the decoded code (as observed) has a white cell just inside the border, the rising step from
+ * the border's black to that white, searched t0..t1 cells in from the outer edge. Each profile must start dark
+ * and end light, so a window that starts inside the cell (the frame cut off the edge there too) is skipped. Writes
+ * up to max points and their depths in cells (depth, if not NULL); returns the count, and in *cells how many
+ * white cells gave one. */
+static int inner_edge(const family_layout *L, const image_view *im, const double H[9], int side, uint64_t code,
+                      double black, double white, double t0, double t1, double *px, double *py, double *depth,
+                      int max, int *cells) {
+    enum { N = 25, PER_CELL = 3 };
+    const int W = L->width, o = L->outer, G = L->grid;
+    int n = 0;
+    *cells = 0;
+    for (int c = 1; c < W - 1 && n + PER_CELL <= max; c++) {
+        int row = side == 0 ? 1 : side == 2 ? W - 2 : c, col = side == 3 ? 1 : side == 1 ? W - 2 : c;
+        int g = (row + o) * G + col + o, white_cell = 0;
+        for (int k = 0; k < L->nbits; k++)
+            if (L->cell[k] == g) white_cell = (int)(code >> (L->nbits - 1 - k) & 1);
+        if (!white_cell) continue;
+        int got = 0;
+        for (int i = 0; i < PER_CELL; i++) {
+            double a = (c + (i + 1.0) / (PER_CELL + 1)) / L->cells, prof[N];
+            vec2 pts[N];
+            for (int j = 0; j < N; j++) {
+                double t = (t0 + (t1 - t0) * j / (N - 1)) / L->cells;
+                double u = side == 0 || side == 2 ? a : side == 1 ? 1 - t : t;
+                double v = side == 1 || side == 3 ? a : side == 2 ? 1 - t : t;
+                pts[j] = project(H, u, v);
+                prof[j] = sample_bilinear(im, pts[j].x, pts[j].y);
+            }
+            if (prof[0] > black + 0.3 * (white - black) || prof[N - 1] < black + 0.6 * (white - black)) continue;
+            double jc = lobe_centroid(prof, 1, N - 2, 0);
+            if (jc < 0) continue;
+            int j0 = (int)jc;
+            double f = jc - j0;
+            px[n] = pts[j0].x + (pts[j0 + 1].x - pts[j0].x) * f;
+            py[n] = pts[j0].y + (pts[j0 + 1].y - pts[j0].y) * f;
+            if (depth != NULL) depth[n] = t0 + (t1 - t0) * jc / (N - 1);
+            n++, got = 1;
+        }
+        *cells += got;
+    }
+    return n;
+}
+
+/* A side taken from the frame edge leaves its two corners short of the true ones by however much of the border
+ * the frame cuts off. The border's inner edge still shows against the white cells next to it, one cell in from
+ * the true side: fit a line to it there, and extrapolate the square from that line and the other three sides.
+ * Twice: the second pass samples at the cells' corrected positions. Then check the result against what it didn't
+ * use: every other side's inner edge must lie a cell in from its outer edge, and the side opposite each cut one
+ * must show it. A tilted side that also runs off the frame was fitted to the wrong edge, and a cut of more than a
+ * cell, with a row of dark cells inside it that passed for the border, puts the square a cell off: both fail.
+ * Returns 0 if a cut side shows its inner edge at fewer than four points or two white cells, the check fails, or a
+ * corner would move by more than a cell and a quarter. */
+static int extend_cut_sides(const family_layout *L, const image_view *im, const vec2 q[4], int cut, uint64_t code,
+                            double black, double white, vec2 out[4]) {
+    enum { MAXPTS = 48 };
+    double lx[4], ly[4], dx[4], dy[4], inset[4], cell_px = 0, px[MAXPTS], py[MAXPTS], depth[MAXPTS];
+    for (int k = 0; k < 4; k++) {
+        vec2 a = q[k], b = q[(k + 1) & 3];
+        double len = hypot(b.x - a.x, b.y - a.y);
+        lx[k] = a.x, ly[k] = a.y, dx[k] = (b.x - a.x) / len, dy[k] = (b.y - a.y) / len, inset[k] = 0;
+        cell_px += len / (4.0 * L->width);
+    }
+    vec2 cur[4];
+    memcpy(cur, q, sizeof cur);
+    double H[9];
+    for (int pass = 0; pass < 2; pass++) {
+        square_to_quad(cur, H);
+        /* Depth inward from the outer edge, in cells. The first pass's quad is squeezed toward the frame edge by
+         * the cut (up to 0.9 cell): its window holds the inner edge, but not the next cell's rising edge. */
+        double t0 = pass ? 0.55 : 0.1, t1 = pass ? 1.45 : 1.35;
+        for (int side = 0; side < 4; side++) {
+            if (!(cut >> side & 1)) continue;
+            int cells, n = inner_edge(L, im, H, side, code, black, white, t0, t1, px, py, NULL, MAXPTS, &cells);
+            if (cells < 2 || n < 4) return 0;
+            /* Total-least-squares line, then once more without points off it (blur from a dark neighbour). The
+             * corrected pass must agree: most of its points on one line. */
+            const int measured = n;
+            for (int fit = 0; fit < 2; fit++) {
+                double mx = 0, my = 0, sxx = 0, syy = 0, sxy = 0;
+                for (int i = 0; i < n; i++) mx += px[i] / n, my += py[i] / n;
+                for (int i = 0; i < n; i++) {
+                    double ex = px[i] - mx, ey = py[i] - my;
+                    sxx += ex * ex, syy += ey * ey, sxy += ex * ey;
+                }
+                double th = 0.5 * atan2(2 * sxy, sxx - syy);
+                lx[side] = mx, ly[side] = my, dx[side] = cos(th), dy[side] = sin(th);
+                int kept = 0;
+                double limit = 0.1 * cell_px > 0.5 ? 0.1 * cell_px : 0.5;
+                for (int i = 0; i < n; i++)
+                    if (fabs((px[i] - mx) * dy[side] - (py[i] - my) * dx[side]) <= limit) px[kept] = px[i], py[kept++] = py[i];
+                if (pass && 4 * kept < 3 * measured) return 0;
+                if (kept == n || kept < 4) break;
+                n = kept;
+            }
+            inset[side] = 1.0 / L->cells;
+        }
+        /* The four lines bound the square inset by a cell on each cut side; map the whole square through it. */
+        vec2 in[4];
+        for (int k = 0; k < 4; k++) {
+            int p = (k + 3) & 3;
+            double cross = dx[p] * dy[k] - dy[p] * dx[k];
+            if (fabs(cross) < 0.2) return 0;
+            double t = ((lx[k] - lx[p]) * dy[k] - (ly[k] - ly[p]) * dx[k]) / cross;
+            in[k].x = lx[p] + t * dx[p], in[k].y = ly[p] + t * dy[p];
+        }
+        double u0 = inset[3], u1 = 1 - inset[1], v0 = inset[0], v1 = 1 - inset[2], Hi[9];
+        square_to_quad(in, Hi);
+        for (int k = 0; k < 4; k++) {
+            double u = (k == 1 || k == 2) ? 1 : 0, v = k >= 2 ? 1 : 0;
+            cur[k] = project(Hi, (u - u0) / (u1 - u0), (v - v0) / (v1 - v0));
+        }
+    }
+    square_to_quad(cur, H);
+    for (int side = 0; side < 4; side++) {
+        if (cut >> side & 1) continue;
+        int cells, n = inner_edge(L, im, H, side, code, black, white, 0.55, 1.45, px, py, depth, MAXPTS, &cells);
+        if (cells < 2) {
+            if (cut >> ((side + 2) & 3) & 1) return 0; /* the one side that tests the extrapolation */
+            /* Unchecked, and within a cell of the frame edge: it may run off the frame too. */
+            for (int e = 0; e < 2; e++) {
+                vec2 c = cur[(side + e) & 3];
+                if (c.x < cell_px - 0.5 || c.y < cell_px - 0.5 || c.x > im->w - 0.5 - cell_px || c.y > im->h - 0.5 - cell_px)
+                    return 0;
+            }
+            continue;
+        }
+        for (int i = 1; i < n; i++) /* median depth: a point blurred by a dark neighbour can't sink it */
+            for (int j = i; j > 0 && depth[j - 1] > depth[j]; j--) {
+                double t = depth[j];
+                depth[j] = depth[j - 1], depth[j - 1] = t;
+            }
+        double mid = n & 1 ? depth[n / 2] : 0.5 * (depth[n / 2 - 1] + depth[n / 2]);
+        if (fabs(mid - 1.0) > 0.1) return 0;
+    }
+    for (int k = 0; k < 4; k++)
+        if (!(hypot(cur[k].x - q[k].x, cur[k].y - q[k].y) <= 1.25 * cell_px)) return 0;
+    memcpy(out, cur, sizeof cur);
     return 1;
 }
 
@@ -1936,7 +2120,9 @@ int napa_detect(napa_detector *det, const uint8_t *img, int width, int height, i
             }
             double reach = 0.5 * ((1.5 * s + 1.0) + (0.5 * s + 1.0));
             double edge_w = 0;
-            if (!fit_sides(&view, rough, fine, 1.5 * s + 1.0, 0.5 * s + 1.0, params->min_contrast, 1, 6, &edge_w, NULL, cells)) {
+            int frame_sides = 0; /* sides taken from the frame edge, in fine's order */
+            if (!fit_sides(&view, rough, fine, 1.5 * s + 1.0, 0.5 * s + 1.0, params->min_contrast, 1, 6, &edge_w, NULL, cells,
+                           &frame_sides)) {
                 PROF_MARK(PROF_FIT1);
                 TRACE(7);
                 continue;
@@ -1957,11 +2143,11 @@ int napa_detect(napa_detector *det, const uint8_t *img, int width, int height, i
             napa_detection early;
             edge_levels lv = {255, 0};
             memcpy(probe, fine, sizeof probe);
-            if (!decode_quad(det, &view, probe, params, 2, &early, NULL, &lv)) {
+            if (!decode_quad(det, &view, probe, params, 2, &early, NULL, &lv, NULL)) {
                 /* The blob can include the white quiet zone when that margin is darker than the
                  * background around it (a grey card on a bright wall): then this quad is the margin's
                  * outline and the black square is its inner 8/10. Refit there and try once more. */
-                int rescued = 0;
+                int rescued = 0, rescue_sides = 0;
                 double Hq[9], perim = 0;
                 square_to_quad(fine, Hq);
                 double m0 = 1.0 / (W + 2), m1 = (W + 1.0) / (W + 2);
@@ -1974,12 +2160,13 @@ int napa_detect(napa_detector *det, const uint8_t *img, int width, int height, i
                 if (r >= 1.5 &&
                     border_plausible(&det->fam, &view, inner, params->min_contrast / 2,
                                      min_border(&det->fam, params->min_border_cells) - 6) &&
-                    fit_sides(&view, inner, finer, r, r, params->min_contrast, 0, 8, &edge_w, NULL, cells)) {
+                    fit_sides(&view, inner, finer, r, r, params->min_contrast, 0, 8, &edge_w, NULL, cells, &rescue_sides)) {
                     memcpy(probe, finer, sizeof probe);
-                    if (decode_quad(det, &view, probe, params, 2, &early, NULL, &lv)) {
+                    if (decode_quad(det, &view, probe, params, 2, &early, NULL, &lv, NULL)) {
                         memcpy(fine, finer, sizeof fine);
                         reach = r;
                         rescued = 1;
+                        frame_sides = rescue_sides;
                     }
                 }
                 if (!rescued) {
@@ -2007,13 +2194,14 @@ int napa_detect(napa_detector *det, const uint8_t *img, int width, int height, i
                 if (next > 0.45 * cell && 0.45 * cell >= 1.0) next = 0.45 * cell;
                 if (pass > 0 && (next >= 0.9 * reach || step <= 0.35)) break;
                 reach = next;
-                ok = fit_sides(&view, fine, finer, reach, reach, params->min_contrast, 0, 8, &edge_w, &lv, cells);
+                ok = fit_sides(&view, fine, finer, reach, reach, params->min_contrast, 0, 8, &edge_w, &lv, cells, &frame_sides);
                 if (!ok) break;
                 memcpy(fine, finer, sizeof fine);
             }
             /* One more pass at the converged window, re-centred on the last estimate, with every
              * edge sample. */
-            if (ok) ok = fit_sides(&view, fine, finer, reach, reach, params->min_contrast, 0, NAPA_FINAL_POINTS, &edge_w, &lv, cells);
+            if (ok) ok = fit_sides(&view, fine, finer, reach, reach, params->min_contrast, 0, NAPA_FINAL_POINTS, &edge_w, &lv, cells,
+                                   &frame_sides);
             if (!ok) {
                 PROF_MARK(PROF_REFINE);
                 TRACE(9);
@@ -2023,11 +2211,29 @@ int napa_detect(napa_detector *det, const uint8_t *img, int width, int height, i
             napa_detection d;
             double side_level[4];
             edge_levels final_lv = {255, 0};
-            int decoded_ = decode_quad(det, &view, finer, params, 0, &d, side_level, &final_lv);
+            uint64_t code = 0;
+            vec2 second = finer[1];
+            int decoded_ = decode_quad(det, &view, finer, params, 0, &d, side_level, &final_lv, &code);
             PROF_MARK(PROF_DECODE2);
             if (!decoded_) {
                 TRACE(10);
                 continue;
+            }
+            /* A side on the frame edge stands in for a cut-off one: measure where its corners really are. Decoding
+             * may have reversed the winding (swapped corners 1 and 3), which reverses the side order. */
+            int cut = frame_sides;
+            if (cut && (finer[1].x != second.x || finer[1].y != second.y))
+                cut = (cut & 1) << 3 | (cut & 2) << 1 | (cut & 4) >> 1 | (cut & 8) >> 3;
+            if (cut) {
+                vec2 extended[4];
+                napa_detection d1;
+                if (!extend_cut_sides(&det->fam, &view, finer, cut, code, final_lv.black, final_lv.white, extended) ||
+                    !decode_quad(det, &view, extended, params, 0, &d1, NULL, NULL, NULL) || d1.id != d.id) {
+                    TRACE(10);
+                    continue;
+                }
+                d = d1;
+                memcpy(finer, extended, sizeof finer);
             }
             /* A side whose border cells read white was fitted one cell out, on the quiet zone's outer
              * edge (the payload still decodes through error correction). Move it in by a cell, refit,
@@ -2038,7 +2244,7 @@ int napa_detect(napa_detector *det, const uint8_t *img, int width, int height, i
                 bad |= (side_level[k] > 0.3) << k;
                 level_before += side_level[k];
             }
-            if (bad && bad != 15) {
+            if (bad && bad != 15 && !cut) {
                 double Hs[9], perim = 0;
                 square_to_quad(finer, Hs);
                 double one = 1.0 / W, rest = (W - 1.0) / W;
@@ -2054,10 +2260,10 @@ int napa_detect(napa_detector *det, const uint8_t *img, int width, int height, i
                  * in a window just wide enough for the edge, as the main refinement converges. */
                 double r2 = 1.25 * edge_w > 1.5 ? 1.25 * edge_w : 1.5;
                 vec2 first[4];
-                int refit = r >= 1.0 && fit_sides(&view, moved, first, r, r, params->min_contrast, 0, NAPA_FINAL_POINTS, &edge_w, &lv, cells);
-                if (refit && r2 < r) refit = fit_sides(&view, first, fixed, r2, r2, params->min_contrast, 0, NAPA_FINAL_POINTS, &edge_w, &lv, cells);
+                int refit = r >= 1.0 && fit_sides(&view, moved, first, r, r, params->min_contrast, 0, NAPA_FINAL_POINTS, &edge_w, &lv, cells, NULL);
+                if (refit && r2 < r) refit = fit_sides(&view, first, fixed, r2, r2, params->min_contrast, 0, NAPA_FINAL_POINTS, &edge_w, &lv, cells, NULL);
                 else if (refit) memcpy(fixed, first, sizeof fixed);
-                if (refit && decode_quad(det, &view, fixed, params, 0, &d2, side2, NULL) && d2.id == d.id) {
+                if (refit && decode_quad(det, &view, fixed, params, 0, &d2, side2, NULL, NULL) && d2.id == d.id) {
                     for (int k = 0; k < 4; k++) level_after += side2[k];
                     if (level_after < level_before - 0.2) {
                         d = d2;
@@ -2067,14 +2273,14 @@ int napa_detect(napa_detector *det, const uint8_t *img, int width, int height, i
             }
             /* A clipped white (or black) level biases every edge toward the clipped side; measure the
              * bias from the border's own width and undo it. Only when clipping is visible. */
-            if (final_lv.white >= 250 || final_lv.black <= 4) {
+            if (!cut && (final_lv.white >= 250 || final_lv.black <= 4)) {
                 double delta = 0;
                 if (border_bias(&det->fam, &view, finer, final_lv.black, final_lv.white, &delta) >= 4 &&
                     fabs(delta) > 0.02 && fabs(delta) < 1.5) {
                     vec2 grown[4];
                     napa_detection d3;
                     grow_quad(finer, delta, grown);
-                    if (decode_quad(det, &view, grown, params, 0, &d3, NULL, NULL) && d3.id == d.id) d = d3;
+                    if (decode_quad(det, &view, grown, params, 0, &d3, NULL, NULL, NULL) && d3.id == d.id) d = d3;
                 }
             }
             if (already_found(out, found < max_out ? found : max_out, &d)) {
