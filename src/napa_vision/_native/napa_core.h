@@ -29,9 +29,12 @@ typedef struct {
                            * AprilGrid boards and checkerboards; slower. 0 (the default): off */
 } napa_params;
 
+/* napa_detection.hamming of a tag read as a whole picture (napa_detect_soft): no bits were counted. */
+#define NAPA_SOFT_DECODED (-1)
+
 typedef struct {
     int id;              /* the tag's ID in the detector's family */
-    int hamming;         /* payload bits corrected */
+    int hamming;         /* payload bits corrected, or NAPA_SOFT_DECODED from napa_detect_soft */
     float decision_margin; /* min of white and black payload bits' mean distance from the threshold */
     double corners[8]; /* x0, y0, ... in OpenCV corner order, pixel-centre coordinates */
 } napa_detection;
@@ -67,6 +70,52 @@ NAPA_API void napa_destroy(napa_detector *det);
  * allocation fails. A detector handle is not thread-safe; use one per thread or camera stream. */
 NAPA_API int napa_detect(napa_detector *det, const uint8_t *img, int width, int height, int stride,
                          const napa_params *params, napa_detection *out, int max_out);
+/* Experimental shadow recovery: ordinary napa_detect results first, then exact-code detections
+ * from a lower proposal threshold, up to max_out. Original corners are unchanged. Same errors as
+ * napa_detect; on -2 the output is incomplete and must not be used. No extra search for families
+ * whose exact-code chance-match rate exceeds the split recovery budget. Shadow recovery adds no
+ * further napa_params changes; callers built before split_touching was added must rebuild against
+ * this header. This new symbol requires an updated library. */
+NAPA_API int napa_detect_shadows(napa_detector *det, const uint8_t *img, int width, int height, int stride,
+                                 const napa_params *params, napa_detection *out, int max_out);
+/* Recovery sampling minimum: 0 preserves full sensitivity; otherwise params->min_tag_px through
+ * 30000 inclusive. Larger values trade sensitivity for speed. Ordinary outputs are unchanged.
+ * Invalid settings return -1, including at zero capacity. */
+NAPA_API int napa_detect_shadows_configured(napa_detector *det, const uint8_t *img, int width, int height,
+                                           int stride, const napa_params *params, napa_detection *out,
+                                           int max_out, int shadow_min_tag_px);
+/* Options for napa_detect_options. */
+#define NAPA_OPTION_SOFT_DECODE 1u
+#define NAPA_OPTION_ALIGN_CORNERS 2u
+
+/* Experimental, tag36h11 only (-1 otherwise). The ordinary results of napa_detect, or of
+ * napa_detect_shadows_configured when recover_shadows is 1, then tiny tags (sides of about 8-19 pixels) recognised
+ * by comparing the whole tag with every code, and tags with a flat patch over part of the payload. Those carry hamming
+ * NAPA_SOFT_DECODED; they are not exact matches and structured non-tags can pass. The first call on a detector builds about 700 KB of tables. */
+NAPA_API int napa_detect_soft(napa_detector *det, const uint8_t *img, int width, int height, int stride,
+                              const napa_params *params, napa_detection *out, int max_out, int recover_shadows,
+                              int shadow_min_tag_px);
+/* As napa_detect_soft with any of the NAPA_OPTION flags. NAPA_OPTION_ALIGN_CORNERS re-aligns blurred tags' corners after
+ * decoding, at some cost per tag. Experimental, tag36h11 only (-1 otherwise); -1 for unknown flags. */
+NAPA_API int napa_detect_options(napa_detector *det, const uint8_t *img, int width, int height, int stride,
+                                 const napa_params *params, napa_detection *out, int max_out, int recover_shadows,
+                                 int shadow_min_tag_px, unsigned options);
+/* The camera's tone curve, as a gamma from 1 (linear, the default: no change) to 4. Experimental, tag36h11 only (-1 otherwise).
+ * Corners are then refined on a linearized copy of each tag. Applies to every later call on this detector. A wrong value is
+ * worse than none on a linear camera. */
+NAPA_API int napa_set_camera_gamma(napa_detector *det, double gamma);
+/* How tags look in the frame, for the ordinary pass's sampling: 0 (the default) samples alike both ways. TALL samples
+ * half as many rows, for tags turned about the vertical axis, which look narrow and tall; WIDE half as many columns,
+ * for a camera on its side. The sampling across the narrow side is unchanged; fitting and decoding read the frame at
+ * full resolution. Applies to every later call on this detector. 0, or -1 for an unknown shape. */
+#define NAPA_TAG_SHAPE_TALL 1
+#define NAPA_TAG_SHAPE_WIDE 2
+NAPA_API int napa_set_tag_shape(napa_detector *det, int shape);
+/* A tag's mean border-width bias, in cells, at the given corners: positive when the black border reads narrow. If edge_cells is
+ * not NULL it receives the width of the blurred outer edges in cells, or NaN if they could not be fitted. 0 on success, 1 if
+ * nothing could be measured, -1 on invalid input. */
+NAPA_API int napa_border_bias_cells(napa_detector *det, const uint8_t *img, int width, int height, int stride, const napa_params *params,
+                                    const double corners[8], double *bias_cells, double *edge_cells);
 /* The payload of tag36h11 tag `id` (0-586): the 6x6 cells inside the black border, row-major, most
  * significant of the 36 bits first, a set bit for a white cell. The grid is in OpenCV's orientation, which
  * is the official artwork turned 180 degrees: its first bit is the official tag's bottom-right payload
