@@ -237,7 +237,7 @@ A frozen dataclass. `readout_s` is the time from reading the first line to the l
 Reads a rolling shutter's readout time and direction from `(timestamp, image)` pairs of a moving camera. Without a
 layout, only tags 60 px or more across count. With `tag_layout` (tag ID to field-to-tag transform), it fits one
 camera pose per frame across the layout's tags instead of each tag on its own, which works for small tags. A sighting
-is then a frame. See [Reading the readout from a recording](poses.md#reading-the-readout-from-a-recording).
+is then a frame. See [Reading the readout from a recording](poses.md#measuring-the-readout).
 
 `RollingShutterEstimate` is a frozen dataclass:
 
@@ -275,7 +275,7 @@ images about the line of sight. Solution 0 fits better, but when the two errors 
 | `error_0` | `float` | Solution 0's RMS corner reprojection error, px |
 | `pose_1_rvec`, `pose_1_tvec`, `error_1` | As above, or `None` | Solution 1, when OpenCV returns a valid second solution in front of the camera |
 | `distance` | `float` | Solution 0's camera-to-tag distance, m |
-| `covariance_0`, `covariance_1` | `ndarray (6, 6)` or `None` | Each solution's covariance in the OpenCV camera frame, including the [ambiguity term](#ambiguity). Computed when first read (see [Cost](#cost)). Read-only, but you can assign a replacement. |
+| `covariance_0`, `covariance_1` | `ndarray (6, 6)` or `None` | Each solution's covariance in the OpenCV camera frame, including the [ambiguity term](#how-covariances-are-computed). Computed when first read (see [How covariances are computed](#how-covariances-are-computed)). Read-only, but you can assign a replacement. |
 
 | Member | Returns |
 | --- | --- |
@@ -295,7 +295,7 @@ The camera's pose in the field, from every accepted tag.
 | `average_tag_distance` | `float` | Mean camera-to-tag distance, m |
 | `confidence` | `float` | Heuristic `1 / (1 + error + 0.1 * distance)`, kept for compatibility. Prefer the covariance. |
 | `diagnostics` | `PoseSolveDiagnostics` or `None` | The solve that produced this pose |
-| `covariance_0`, `covariance_1` | `ndarray (6, 6)` or `None` | Each solution's covariance in the field frame, including the [ambiguity term](#ambiguity) for one tag or for tags that all lie in one plane. Computed when first read. Read-only, but you can assign a replacement. |
+| `covariance_0`, `covariance_1` | `ndarray (6, 6)` or `None` | Each solution's covariance in the field frame, including the [ambiguity term](#how-covariances-are-computed) for one tag or for tags that all lie in one plane. Computed when first read. Read-only, but you can assign a replacement. |
 
 | Member | Returns |
 | --- | --- |
@@ -384,12 +384,10 @@ and validated. Bad shapes or non-finite values raise `ValueError`.
 
 Transforms passed to `transform_by` and `relative_to` are treated as exact. Measure your camera mount well.
 
-A pose you construct yourself is propagated to first order. A pose from NAPA's solvers for a planar target (one tag, or
-several on one wall) also carries the weighted set of solutions its covariance summarizes (see [Ambiguity](#ambiguity)).
-Every operation then moves each solution exactly and recomputes the spread between them in the new frame. That matters
-because the spread can cover tens of degrees, which first-order propagation distorts badly. In tests, inverting a lone
-tag's pose the first-order way left it 10x overconfident. Copies and unpickled poses keep the solution set.
-`dataclasses.replace()` drops it, so a replaced covariance is used as given.
+Poses from NAPA's solvers for planar targets carry their solution set (see [Ambiguity](#how-covariances-are-computed)), so transforms move
+each solution exactly instead of propagating to first order. That matters: first-order inversion of a lone tag's pose was
+10x overconfident in tests. Poses you construct propagate to first order. Copies keep the set; `dataclasses.replace()`
+drops it.
 
 ### `Pose2dWithCovariance`
 
@@ -407,11 +405,9 @@ camera_pose_covariance(field_to_camera, field_points, camera_matrix, distortion_
                        corner_noise_px=1.0) -> PoseWithCovariance | None
 ```
 
-The covariance of a camera pose you solved yourself, from the `(K, 3)` field points whose image corners it was solved
-from. `geometry.tag_field_corners` gives a tag's four. Returns `None` when the points do not constrain all six degrees
-of freedom. It gives the linearized covariance with the [correlation cap](#curved-error-surfaces). It cannot know about
-a second solution, so it leaves out the [ambiguity widening](#ambiguity). For one tag, or tags on one wall seen nearly
-head-on, prefer the covariances NAPA's solvers attach.
+Covariance for a pose you solved yourself, from the `(K, 3)` field points it was solved from
+(`geometry.tag_field_corners` gives a tag's four). `None` if under-constrained. Linearized only, with the correlation cap
+but no [ambiguity widening](#how-covariances-are-computed). For single tags or walls seen head-on, prefer solver covariances.
 
 ### `pose_difference`
 
@@ -424,78 +420,27 @@ it as the innovation in a 6D filter, so residuals and covariances agree.
 
 ### How covariances are computed
 
-Each corner coordinate is modelled as independent Gaussian noise with standard deviation `corner_noise_px`. The pose
-covariance starts from the Gauss-Newton approximation `sigma^2 * (J^T J)^-1`, where J is the Jacobian of the projected
-corners, lens distortion included, with respect to the pose, evaluated at the reported pose. That is the linearized
-Cramer-Rao bound: the scatter an efficient solver reaches when the noise model is right. Tag angles use the same noise,
-propagated through undistortion and `atan` to each corner's angle, then averaged.
+Corners are modelled as independent Gaussian noise, std dev `corner_noise_px` (default 1.0, deliberately conservative).
+The base covariance is the Gauss-Newton `sigma^2 * (J^T J)^-1` at the solved pose, distortion included. Two fixes keep
+it honest on planar targets:
 
-A linearization alone is not safe to hand a filter. Planar targets seen from far away or nearly head-on have error
-distributions that no single Gaussian at the estimate describes. NAPA makes the two adjustments below.
+- **Ambiguity.** A flat target has two mirror pose solutions. Head-on or far away they can swap under noise, and a
+  single Gaussian then understates error by 20-30x in tests. So planar poses report the spread of a fit-weighted set of
+  solutions (both IPPE solutions for one tag; stepped mirror candidates for a wall). Unambiguous poses are unaffected.
+  Ambiguous ones get covariances wide enough to cover both branches.
+- **Curved error surfaces.** Distant flat targets can look falsely certain along combined axes. Every reported
+  covariance gets 10% of each variance added to its diagonal (`CORRELATION_SLACK`), capping correlations at 0.91.
 
-Monte Carlo tests checked the result on single tags at 1 to 4 m and 5 to 40 degrees, and on 144 random walls of 1 to 4
-tags, 2 to 10 m away, seen head-on to 60 degrees, with 0.3 to 1 px of noise, with and without lens distortion. A
-correct covariance leaves 5% of errors outside its 95% ellipse. In the median geometry, 1% fell outside. In the worst, a
-pair of tags 10 m away at 54 degrees and only about 15 px across (smaller than the default detector reliably finds), 9 to
-12% did. In typical geometry each axis's reported standard deviation is about 5% wider than the actual scatter. Where a
-mirror solution is plausible, frames on which it fits well get deliberately wide covariances.
+Monte Carlo checks (single tags 1-4 m, walls to 10 m, 0.3-1 px noise): a correct 95% ellipse excludes 5% of errors.
+NAPA excluded 1% in median geometry, 9-12% in the worst (tiny distant tags). Typical std devs run ~5% wide.
 
-#### Ambiguity
+Covariances are lazy: computed on first read, batched per frame, free if never read. Results stay picklable and are
+safe to read from several threads. Rough cost on one Apple-silicon core: solving 0.03-0.3 ms for 1-8 tags, plus
+0.1-0.4 ms if you read the covariances.
 
-A planar target, whether one tag or several on one wall, has two pose solutions that fit its corners, mirror images
-about the line of sight. Seen nearly head-on or from far away, its tilt is barely observable, and the two can trade
-places under noise. A linearized covariance about one of them then understates the error badly. In NAPA's tests, a lone
-tag 2 to 4 m away within a few degrees of head-on had normalized errors 20 to 30 times what the covariance allowed.
-
-So NAPA describes such a pose as a weighted set of solutions and reports the set's spread about the solved pose. Each
-solution is weighted by how well it fits the corners, through a tempered likelihood `exp(-SSR / (2 * T * sigma^2))`,
-where SSR is its sum of squared corner residuals. An unambiguous target is unaffected. A truly ambiguous one's
-covariance grows to cover both solutions, so a filter is not misled by the wrong one.
-
-- **One tag.** The set is its two IPPE solutions, tempered by T = 2. The error surface between them is not quadratic,
-  and untempered weights left ambiguous tags overconfident.
-- **Several tags in (nearly) one plane.** NAPA finds the plane's mirror solution, then steps along the rotation from
-  the solved pose to it and beyond, at -1/4, 1/4, 1/2, 3/4, 1, and 5/4 of the way. At each step it re-solves the other
-  five degrees of freedom against the true corners, so every step's fit is honest. The steps, untempered, cover both a
-  separate mirror solution and the long flat valley a wall has when seen head-on, which a single mirror candidate
-  misjudges in either direction. Tags at clearly different depths break the ambiguity and get no set. NAPA skips the
-  steps when the mirror is both more than 30 standard deviations away and fits far worse (by 100 sigma squared). Over
-  4,080 frames of random walls, that skipped 61% of them, and none of the skipped steps would have changed a standard
-  deviation.
-
-#### Curved error surfaces
-
-Even with one clear solution, the error surface of a distant or nearly flat target is curved. The linearization can then
-report some combination of axes, typically a rotation and the translation it mimics, as far more certain than it is, even
-when every individual axis is right. In tests that left mean NEES at 50 to 90 for 6 dimensions, against 6 expected. NAPA
-therefore adds 10% of each variance back to the diagonal of every reported pose covariance
-(`covariance.CORRELATION_SLACK`). That caps every correlation at 0.91 and widens each axis's standard deviation by 5%. A
-2% cap still left up to 21% of errors outside the 95% ellipse on wide walls of tags.
-
-#### Cost
-
-NAPA computes covariances lazily. `process()` returns poses without them, and a covariance is computed the first time you
-read it, through the field or through `field_to_camera()` and `camera_to_tag()`. Reading one tag's covariance computes
-every tag's from that frame in one batch. Results that are never read cost nothing, and results stay picklable with their
-deferred work. The deferred work keeps its own copies of what it needs, so changing the camera or the corners afterwards
-does not affect it. Results may be read from several threads. Two first reads at once may both compute, but neither sees
-a partial result. If you edit a pose or assign a covariance, the pose methods use your values as a plain pose.
-
-On one Apple-silicon core, solving poses took about 0.03 to 0.06 ms with one tag, 0.15 ms with three, and 0.3 ms with
-eight. Reading the camera pose's covariance, as a Kalman filter does, added about 0.1 to 0.2 ms. Reading every tag's
-covariance and angle covariance as well added another 0.1 to 0.2 ms. A wall of tags whose mirror solution is plausible
-costs more, about 0.6 ms extra with three tags, for its mirror steps.
-
-#### Choosing `corner_noise_px`
-
-The default of 1 px is deliberately conservative. NAPA's corners are far more accurate than that on clean synthetic
-frames, but a real camera adds motion blur, rolling shutter, calibration error, and an imperfectly flat or mismeasured
-tag. All of these look like corner noise to the solver. Calibration error is also correlated from frame to frame, which no
-per-frame covariance can capture.
-
-To tune it, log poses of a stationary robot and compare the scatter with the reported standard deviations. Scaling
-`corner_noise_px` by k scales tag-angle covariances, and pose covariances without ambiguity widening, by k squared.
-Widened ones change differently, because their weights depend on it. Set it on the processor rather than rescaling results.
+Tune `corner_noise_px` on the processor, not by rescaling output. Scaling it by k scales unwidened covariances by k².
+Measure it from a stationary robot's pose scatter, and remember calibration error repeats every frame, which no
+per-frame covariance captures.
 
 ## Solvers
 
