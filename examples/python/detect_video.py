@@ -22,7 +22,7 @@ def main() -> None:
     )
     parser.add_argument("--max-frames", type=int, help="stop after this many frames")
     parser.add_argument("--family", default="tag36h11")
-    parser.add_argument("--min-tag-px", type=int, default=32)
+    parser.add_argument("--min-tag-px", type=int, default=22)
     args = parser.parse_args()
     if args.max_frames is not None and args.max_frames < 1:
         parser.error("--max-frames must be positive")

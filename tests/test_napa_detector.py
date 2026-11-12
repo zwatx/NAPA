@@ -397,10 +397,14 @@ def _aprilgrid(ids, *, columns: int, tag_px: int, angle_deg: float, size=(1280, 
 def test_split_touching_finds_aprilgrid_tags(tag_px: int, angle: float, min_tag_px: int, at_least: int) -> None:
     ids = list(range(100, 136))
     image, corners = _aprilgrid(ids, columns=6, tag_px=tag_px, angle_deg=angle)
-    ordinary = NapaDetector(min_tag_px=min_tag_px, max_detections=128).detect(image)
-    found = NapaDetector(min_tag_px=min_tag_px, max_detections=128, split_touching=True).detect(image)
-    # Corner squares join every tag to its neighbours: without splitting, the board is a few large blobs.
-    assert len(ordinary) < len(ids) // 4
+    ordinary = NapaDetector(min_tag_px=min_tag_px, max_detections=128, recover_shadows=False).detect(image)
+    found = NapaDetector(
+        min_tag_px=min_tag_px, max_detections=128, split_touching=True, recover_shadows=False
+    ).detect(image)
+    # Filled corner contacts are separated in the ordinary pass. Rotated/antialiased
+    # necks may still need the optional recovery, which must preserve its prefix.
+    if angle == 0.0:
+        assert {o.tag_id for o in ordinary} == set(ids)
     assert len(found) >= at_least
     assert len({observation.tag_id for observation in found}) == len(found)
     for observation in found:

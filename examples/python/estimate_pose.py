@@ -20,7 +20,7 @@ def main() -> None:
         help="measured edge of the tag-size square (the black square on tag36h11), in metres",
     )
     parser.add_argument("--family", default="tag36h11")
-    parser.add_argument("--min-tag-px", type=int, default=32)
+    parser.add_argument("--min-tag-px", type=int, default=22)
     args = parser.parse_args()
 
     calibration = load_calibration_data(args.calibration)

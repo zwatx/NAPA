@@ -178,15 +178,19 @@ def test_split_touching_finds_grids_of_classic_families(family: str) -> None:
     ids = list(range(1, 13))
     for angle in (0.0, 10.0):
         image = _grid(family, ids, angle_deg=angle)
-        assert len(NapaDetector(family=family, min_tag_px=16, max_detections=64).detect(image)) <= 3
+        ordinary = NapaDetector(family=family, min_tag_px=16, max_detections=64).detect(image)
+        if angle == 0.0:
+            assert {o.tag_id for o in ordinary} == set(ids)
         found = NapaDetector(family=family, min_tag_px=16, max_detections=64, split_touching=True).detect(image)
+        assert [(o.tag_id, o.corners.tolist()) for o in found[: len(ordinary)]] == [
+            (o.tag_id, o.corners.tolist()) for o in ordinary
+        ]
         assert {observation.tag_id for observation in found} <= set(ids)
         assert len(found) >= (12 if angle == 0.0 else 9)
 
 
 def test_split_touching_skips_tag16h5_whose_short_codes_match_pieces() -> None:
-    """Exact chance matches of tag16h5's 16-bit codes are too likely among the many extra pieces, so its touching
-    tags stay hidden (tagCircle21h7 is skipped the same way)."""
+    """Automatic supported contacts work for short codes, but optional piece searches remain disabled."""
 
     image = _grid("tag16h5", list(range(1, 13)))
     rng = np.random.default_rng(5)
@@ -194,7 +198,9 @@ def test_split_touching_skips_tag16h5_whose_short_codes_match_pieces() -> None:
     for frame in (image, noisy):
         ordinary = NapaDetector(family="tag16h5", min_tag_px=16).detect(frame)
         split = NapaDetector(family="tag16h5", min_tag_px=16, split_touching=True).detect(frame)
-        assert len(ordinary) <= 3  # the corner squares hide the board, as in the classic families above
+        assert {o.tag_id for o in ordinary} <= set(range(1, 13))
+        if frame is image:
+            assert len(ordinary) == 12
         assert [(o.tag_id, o.corners.tolist()) for o in split] == [(o.tag_id, o.corners.tolist()) for o in ordinary]
 
 

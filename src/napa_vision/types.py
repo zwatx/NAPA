@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import math
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from numbers import Real
 from typing import Any, Protocol
 
 import numpy as np
@@ -21,6 +23,9 @@ class FiducialImageObservation:
 
     ``family`` is the tag family, such as ``"tag36h11"``. ``homography`` and ``center`` are computed from
     the corners on each access.
+
+    ``soft_decoded`` is ``True`` for a tag recognised by ``NapaDetector(soft_decode=True)`` from its whole picture
+    rather than bit by bit. Its ``hamming`` is ``None``: no bits were counted, so it isn't a perfect read.
     """
 
     tag_id: int
@@ -28,6 +33,7 @@ class FiducialImageObservation:
     hamming: int | None = None
     decision_margin: float | None = None
     family: str = "tag36h11"
+    soft_decoded: bool = False
 
     @property
     def homography(self) -> np.ndarray:
@@ -150,7 +156,8 @@ class SingleTagPoseObservation(_DeferredCovariances):
     """Two planar IPPE solutions for a tag, expressed in OpenCV coordinates.
 
     Each ``rvec``/``tvec`` maps tag-local points into the OpenCV camera frame (+X right, +Y down, +Z forward).
-    ``error_*`` is the solution's RMS corner reprojection error in pixels; solution 0 has the lower error.
+    ``error_*`` is the RMS Euclidean corner reprojection distance in pixels; solution 0 has the lower error.
+    The squared x/y residuals are summed per corner before averaging over corners.
     ``covariance_0``/``covariance_1`` is the 6x6 covariance of that camera-to-tag pose in the OpenCV camera frame
     (see ``napa_vision.covariance``), or ``None`` when there is none. It is computed the first time it is read.
     """
@@ -189,6 +196,31 @@ class SingleTagPoseObservation(_DeferredCovariances):
             raise ValueError(f"solution {solution} is unavailable")
         pose = self._distribution(rvec_tvec_to_transform(rvec, tvec), (rvec, tvec), solution)
         return pose.rebased(OPENCV_TO_WPILIB_ROTATION)
+
+
+_SHUTTER_DIRECTIONS = ("top_to_bottom", "bottom_to_top", "left_to_right", "right_to_left")
+
+
+@dataclass(frozen=True, slots=True)
+class RollingShutter:
+    """How a rolling-shutter camera reads each frame, for ``VisionProcessor(rolling_shutter=...)``.
+
+    ``readout_s`` is the time from reading the first line to reading the last, for the frame as delivered.
+    ``direction`` is the order lines are read in the delivered image: ``"top_to_bottom"``, ``"bottom_to_top"``, or
+    ``"left_to_right"`` and ``"right_to_left"`` for a sensor mounted a quarter turn. ``max_frame_gap_s`` is the longest
+    time between sightings of a tag that still gives a usable velocity.
+    """
+
+    readout_s: float
+    direction: str = "top_to_bottom"
+    max_frame_gap_s: float = 0.1
+
+    def __post_init__(self) -> None:
+        for name, value in (("readout_s", self.readout_s), ("max_frame_gap_s", self.max_frame_gap_s)):
+            if isinstance(value, bool) or not isinstance(value, Real) or not math.isfinite(value) or value <= 0.0:
+                raise ValueError(f"{name} must be finite and greater than zero")
+        if self.direction not in _SHUTTER_DIRECTIONS:
+            raise ValueError(f"direction must be one of {', '.join(_SHUTTER_DIRECTIONS)}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -338,3 +370,4 @@ class FrameResult:
     pose_diagnostics: PoseSolveDiagnostics | None = None
     tag_angles: list[TagAngleObservation] = field(default_factory=list)
     health: dict[str, Any] = field(default_factory=dict)
+    uncorrected_tag_ids: tuple[int, ...] = ()
