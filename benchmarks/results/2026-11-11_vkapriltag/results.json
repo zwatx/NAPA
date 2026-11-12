@@ -1,0 +1,1660 @@
+{
+ "source_commit": "956d502943306b1d408ab90104ba0a64f23dfe19",
+ "corpus": {
+  "scenarios": 26,
+  "frames": 4313,
+  "tag36h11_tags": 9991,
+  "tag16h5_tags": 385,
+  "gt_json_sha256_prefix": "3f1115a0cb90abd7"
+ },
+ "napa_core_source_sha256_prefix": "87788b0fadcf",
+ "vkapriltag": "v1.10.1 release package, refine_edges on, other defaults",
+ "protocol": "same ID and worst corner < 0.25 * tag side; unmatched detections are false; worst-corner error in [i, i+1) pixels",
+ "settings": {
+  "napa": {},
+  "napa16": {
+   "min_tag_px": 16
+  },
+  "napa-recall": {
+   "min_tag_px": 16,
+   "split_touching": true,
+   "recover_shadows": true
+  },
+  "vkapriltag-d1": "decimation 1",
+  "vkapriltag-d2": "decimation 2",
+  "apriltag3-d1": "cpu_backends.py",
+  "apriltag3-d2": "cpu_backends.py",
+  "aruco-nano": "cpu_backends.py",
+  "locus": "cpu_backends.py"
+ },
+ "results": {
+  "napa": {
+   "blur": {
+    "tags": 304,
+    "found": 304,
+    "false": 0,
+    "worst_corner_median_px": 0.019797697387949967,
+    "worst_corner_p95_px": 0.05593630984872991
+   },
+   "border-occlusion": {
+    "tags": 230,
+    "found": 132,
+    "false": 0,
+    "worst_corner_median_px": 0.01309635010738106,
+    "worst_corner_p95_px": 0.05054340801923353
+   },
+   "busy-background": {
+    "tags": 290,
+    "found": 290,
+    "false": 0,
+    "worst_corner_median_px": 0.013917315342563671,
+    "worst_corner_p95_px": 0.04910060224295801
+   },
+   "clutter-only": {
+    "tags": 0,
+    "found": 0,
+    "false": 0,
+    "worst_corner_median_px": null,
+    "worst_corner_p95_px": null
+   },
+   "dark-background": {
+    "tags": 297,
+    "found": 297,
+    "false": 0,
+    "worst_corner_median_px": 0.013527761154817112,
+    "worst_corner_p95_px": 0.05525383914095711
+   },
+   "decoys": {
+    "tags": 0,
+    "found": 0,
+    "false": 0,
+    "worst_corner_median_px": null,
+    "worst_corner_p95_px": null
+   },
+   "dense-tags": {
+    "tags": 4213,
+    "found": 4212,
+    "false": 0,
+    "worst_corner_median_px": 0.024446384778698857,
+    "worst_corner_p95_px": 0.070837550105567
+   },
+   "empty": {
+    "tags": 0,
+    "found": 0,
+    "false": 0,
+    "worst_corner_median_px": null,
+    "worst_corner_p95_px": null
+   },
+   "family16h5": {
+    "tags": 385,
+    "found": 385,
+    "false": 0,
+    "worst_corner_median_px": 0.015030870114850122,
+    "worst_corner_p95_px": 0.04468892624839859
+   },
+   "frame-edge": {
+    "tags": 150,
+    "found": 150,
+    "false": 0,
+    "worst_corner_median_px": 0.013378769775977132,
+    "worst_corner_p95_px": 0.040388402053773684
+   },
+   "grey-margin": {
+    "tags": 315,
+    "found": 314,
+    "false": 0,
+    "worst_corner_median_px": 0.017762866060916843,
+    "worst_corner_p95_px": 0.04933857355618951
+   },
+   "jpeg": {
+    "tags": 290,
+    "found": 290,
+    "false": 0,
+    "worst_corner_median_px": 0.03616856814304356,
+    "worst_corner_p95_px": 0.08173003110471207
+   },
+   "large-tags": {
+    "tags": 101,
+    "found": 101,
+    "false": 0,
+    "worst_corner_median_px": 0.011974320897244078,
+    "worst_corner_p95_px": 0.054503795734691385
+   },
+   "low-contrast": {
+    "tags": 291,
+    "found": 289,
+    "false": 0,
+    "worst_corner_median_px": 0.02294019182911725,
+    "worst_corner_p95_px": 0.061759076901589355
+   },
+   "many-tags": {
+    "tags": 216,
+    "found": 216,
+    "false": 0,
+    "worst_corner_median_px": 0.012691864353865177,
+    "worst_corner_p95_px": 0.04806926267668718
+   },
+   "motion-blur": {
+    "tags": 307,
+    "found": 307,
+    "false": 0,
+    "worst_corner_median_px": 0.01814434106847384,
+    "worst_corner_p95_px": 0.0831702364559222
+   },
+   "noise": {
+    "tags": 304,
+    "found": 304,
+    "false": 0,
+    "worst_corner_median_px": 0.04279433779722752,
+    "worst_corner_p95_px": 0.09772244864251385
+   },
+   "noise-free": {
+    "tags": 299,
+    "found": 299,
+    "false": 0,
+    "worst_corner_median_px": 0.012775176706713617,
+    "worst_corner_p95_px": 0.04801965370017706
+   },
+   "obstruction": {
+    "tags": 281,
+    "found": 240,
+    "false": 0,
+    "worst_corner_median_px": 0.010659093251549887,
+    "worst_corner_p95_px": 0.049569589320241546
+   },
+   "one-tag": {
+    "tags": 150,
+    "found": 150,
+    "false": 0,
+    "worst_corner_median_px": 0.013006255215794765,
+    "worst_corner_p95_px": 0.03412447598090418
+   },
+   "overexposed": {
+    "tags": 295,
+    "found": 295,
+    "false": 0,
+    "worst_corner_median_px": 0.06903741248812567,
+    "worst_corner_p95_px": 0.2752343407095014
+   },
+   "range": {
+    "tags": 375,
+    "found": 342,
+    "false": 0,
+    "worst_corner_median_px": 0.020627488026441435,
+    "worst_corner_p95_px": 0.08725798343437143
+   },
+   "small-tags": {
+    "tags": 380,
+    "found": 378,
+    "false": 0,
+    "worst_corner_median_px": 0.024616808474095295,
+    "worst_corner_p95_px": 0.07313399788192103
+   },
+   "steep-angle": {
+    "tags": 302,
+    "found": 302,
+    "false": 0,
+    "worst_corner_median_px": 0.01768198062197794,
+    "worst_corner_p95_px": 0.04925280944337795
+   },
+   "underexposed": {
+    "tags": 292,
+    "found": 292,
+    "false": 0,
+    "worst_corner_median_px": 0.08761575726919155,
+    "worst_corner_p95_px": 0.18150690511764356
+   },
+   "uneven-light": {
+    "tags": 309,
+    "found": 309,
+    "false": 0,
+    "worst_corner_median_px": 0.015628797211032632,
+    "worst_corner_p95_px": 0.05113197043315041
+   }
+  },
+  "napa16": {
+   "blur": {
+    "tags": 304,
+    "found": 304,
+    "false": 0,
+    "worst_corner_median_px": 0.02052346798295939,
+    "worst_corner_p95_px": 0.05862667471871092
+   },
+   "border-occlusion": {
+    "tags": 230,
+    "found": 115,
+    "false": 0,
+    "worst_corner_median_px": 0.014431144294924788,
+    "worst_corner_p95_px": 0.04134313263574651
+   },
+   "busy-background": {
+    "tags": 290,
+    "found": 290,
+    "false": 0,
+    "worst_corner_median_px": 0.013654985583416861,
+    "worst_corner_p95_px": 0.0495453132432229
+   },
+   "clutter-only": {
+    "tags": 0,
+    "found": 0,
+    "false": 0,
+    "worst_corner_median_px": null,
+    "worst_corner_p95_px": null
+   },
+   "dark-background": {
+    "tags": 297,
+    "found": 297,
+    "false": 0,
+    "worst_corner_median_px": 0.013726785730823914,
+    "worst_corner_p95_px": 0.05482697389003244
+   },
+   "decoys": {
+    "tags": 0,
+    "found": 0,
+    "false": 0,
+    "worst_corner_median_px": null,
+    "worst_corner_p95_px": null
+   },
+   "dense-tags": {
+    "tags": 4213,
+    "found": 4213,
+    "false": 0,
+    "worst_corner_median_px": 0.02437843448025349,
+    "worst_corner_p95_px": 0.07066095763504908
+   },
+   "empty": {
+    "tags": 0,
+    "found": 0,
+    "false": 0,
+    "worst_corner_median_px": null,
+    "worst_corner_p95_px": null
+   },
+   "family16h5": {
+    "tags": 385,
+    "found": 385,
+    "false": 0,
+    "worst_corner_median_px": 0.015241455443045065,
+    "worst_corner_p95_px": 0.046679550497314745
+   },
+   "frame-edge": {
+    "tags": 150,
+    "found": 150,
+    "false": 0,
+    "worst_corner_median_px": 0.013988307760172857,
+    "worst_corner_p95_px": 0.04149606426397273
+   },
+   "grey-margin": {
+    "tags": 315,
+    "found": 315,
+    "false": 0,
+    "worst_corner_median_px": 0.018172700866364036,
+    "worst_corner_p95_px": 0.051908946631101904
+   },
+   "jpeg": {
+    "tags": 290,
+    "found": 290,
+    "false": 0,
+    "worst_corner_median_px": 0.03612717716328186,
+    "worst_corner_p95_px": 0.08293926256393812
+   },
+   "large-tags": {
+    "tags": 101,
+    "found": 101,
+    "false": 0,
+    "worst_corner_median_px": 0.012058379956536355,
+    "worst_corner_p95_px": 0.055131168692409575
+   },
+   "low-contrast": {
+    "tags": 291,
+    "found": 291,
+    "false": 0,
+    "worst_corner_median_px": 0.023299745610355117,
+    "worst_corner_p95_px": 0.05706744864122929
+   },
+   "many-tags": {
+    "tags": 216,
+    "found": 216,
+    "false": 0,
+    "worst_corner_median_px": 0.012515236074725815,
+    "worst_corner_p95_px": 0.05256936543004013
+   },
+   "motion-blur": {
+    "tags": 307,
+    "found": 307,
+    "false": 0,
+    "worst_corner_median_px": 0.019837832160492643,
+    "worst_corner_p95_px": 0.08063149357440057
+   },
+   "noise": {
+    "tags": 304,
+    "found": 304,
+    "false": 0,
+    "worst_corner_median_px": 0.044412645522435554,
+    "worst_corner_p95_px": 0.08964083451641483
+   },
+   "noise-free": {
+    "tags": 299,
+    "found": 299,
+    "false": 0,
+    "worst_corner_median_px": 0.013062503551518013,
+    "worst_corner_p95_px": 0.0489194592283309
+   },
+   "obstruction": {
+    "tags": 281,
+    "found": 240,
+    "false": 0,
+    "worst_corner_median_px": 0.01087188141744272,
+    "worst_corner_p95_px": 0.04806437433897784
+   },
+   "one-tag": {
+    "tags": 150,
+    "found": 150,
+    "false": 0,
+    "worst_corner_median_px": 0.013299776097231368,
+    "worst_corner_p95_px": 0.029404080175413506
+   },
+   "overexposed": {
+    "tags": 295,
+    "found": 295,
+    "false": 0,
+    "worst_corner_median_px": 0.06919364371966659,
+    "worst_corner_p95_px": 0.2691535608226247
+   },
+   "range": {
+    "tags": 375,
+    "found": 375,
+    "false": 0,
+    "worst_corner_median_px": 0.022141266292977697,
+    "worst_corner_p95_px": 0.11194648224836232
+   },
+   "small-tags": {
+    "tags": 380,
+    "found": 380,
+    "false": 0,
+    "worst_corner_median_px": 0.025545860287354703,
+    "worst_corner_p95_px": 0.07275981332337558
+   },
+   "steep-angle": {
+    "tags": 302,
+    "found": 302,
+    "false": 0,
+    "worst_corner_median_px": 0.017128401753851278,
+    "worst_corner_p95_px": 0.04987542853013965
+   },
+   "underexposed": {
+    "tags": 292,
+    "found": 292,
+    "false": 0,
+    "worst_corner_median_px": 0.08500168613067016,
+    "worst_corner_p95_px": 0.17547378820331244
+   },
+   "uneven-light": {
+    "tags": 309,
+    "found": 309,
+    "false": 0,
+    "worst_corner_median_px": 0.015401682632558115,
+    "worst_corner_p95_px": 0.05130847847136039
+   }
+  },
+  "napa-recall": {
+   "blur": {
+    "tags": 304,
+    "found": 304,
+    "false": 0,
+    "worst_corner_median_px": 0.02052346798295939,
+    "worst_corner_p95_px": 0.05862667471871092
+   },
+   "border-occlusion": {
+    "tags": 230,
+    "found": 119,
+    "false": 0,
+    "worst_corner_median_px": 0.014431144294924788,
+    "worst_corner_p95_px": 0.04228951819271398
+   },
+   "busy-background": {
+    "tags": 290,
+    "found": 290,
+    "false": 0,
+    "worst_corner_median_px": 0.013654985583416861,
+    "worst_corner_p95_px": 0.0495453132432229
+   },
+   "clutter-only": {
+    "tags": 0,
+    "found": 0,
+    "false": 0,
+    "worst_corner_median_px": null,
+    "worst_corner_p95_px": null
+   },
+   "dark-background": {
+    "tags": 297,
+    "found": 297,
+    "false": 0,
+    "worst_corner_median_px": 0.013726785730823914,
+    "worst_corner_p95_px": 0.05482697389003244
+   },
+   "decoys": {
+    "tags": 0,
+    "found": 0,
+    "false": 0,
+    "worst_corner_median_px": null,
+    "worst_corner_p95_px": null
+   },
+   "dense-tags": {
+    "tags": 4213,
+    "found": 4213,
+    "false": 0,
+    "worst_corner_median_px": 0.02437843448025349,
+    "worst_corner_p95_px": 0.07066095763504908
+   },
+   "empty": {
+    "tags": 0,
+    "found": 0,
+    "false": 0,
+    "worst_corner_median_px": null,
+    "worst_corner_p95_px": null
+   },
+   "family16h5": {
+    "tags": 385,
+    "found": 385,
+    "false": 0,
+    "worst_corner_median_px": 0.015241455443045065,
+    "worst_corner_p95_px": 0.046679550497314745
+   },
+   "frame-edge": {
+    "tags": 150,
+    "found": 150,
+    "false": 0,
+    "worst_corner_median_px": 0.013988307760172857,
+    "worst_corner_p95_px": 0.04149606426397273
+   },
+   "grey-margin": {
+    "tags": 315,
+    "found": 315,
+    "false": 0,
+    "worst_corner_median_px": 0.018397742891468623,
+    "worst_corner_p95_px": 0.051908946631101904
+   },
+   "jpeg": {
+    "tags": 290,
+    "found": 290,
+    "false": 0,
+    "worst_corner_median_px": 0.03612717716328186,
+    "worst_corner_p95_px": 0.08293926256393812
+   },
+   "large-tags": {
+    "tags": 101,
+    "found": 101,
+    "false": 0,
+    "worst_corner_median_px": 0.012058379956536355,
+    "worst_corner_p95_px": 0.055131168692409575
+   },
+   "low-contrast": {
+    "tags": 291,
+    "found": 291,
+    "false": 0,
+    "worst_corner_median_px": 0.023299745610355117,
+    "worst_corner_p95_px": 0.05706744864122929
+   },
+   "many-tags": {
+    "tags": 216,
+    "found": 216,
+    "false": 0,
+    "worst_corner_median_px": 0.012515236074725815,
+    "worst_corner_p95_px": 0.05256936543004013
+   },
+   "motion-blur": {
+    "tags": 307,
+    "found": 307,
+    "false": 0,
+    "worst_corner_median_px": 0.019837832160492643,
+    "worst_corner_p95_px": 0.08063149357440057
+   },
+   "noise": {
+    "tags": 304,
+    "found": 304,
+    "false": 0,
+    "worst_corner_median_px": 0.044412645522435554,
+    "worst_corner_p95_px": 0.08964083451641483
+   },
+   "noise-free": {
+    "tags": 299,
+    "found": 299,
+    "false": 0,
+    "worst_corner_median_px": 0.013062503551518013,
+    "worst_corner_p95_px": 0.0489194592283309
+   },
+   "obstruction": {
+    "tags": 281,
+    "found": 240,
+    "false": 0,
+    "worst_corner_median_px": 0.01087188141744272,
+    "worst_corner_p95_px": 0.04806437433897784
+   },
+   "one-tag": {
+    "tags": 150,
+    "found": 150,
+    "false": 0,
+    "worst_corner_median_px": 0.013299776097231368,
+    "worst_corner_p95_px": 0.029404080175413506
+   },
+   "overexposed": {
+    "tags": 295,
+    "found": 295,
+    "false": 0,
+    "worst_corner_median_px": 0.06919364371966659,
+    "worst_corner_p95_px": 0.2691535608226247
+   },
+   "range": {
+    "tags": 375,
+    "found": 375,
+    "false": 0,
+    "worst_corner_median_px": 0.022141266292977697,
+    "worst_corner_p95_px": 0.11194648224836232
+   },
+   "small-tags": {
+    "tags": 380,
+    "found": 380,
+    "false": 0,
+    "worst_corner_median_px": 0.025545860287354703,
+    "worst_corner_p95_px": 0.07275981332337558
+   },
+   "steep-angle": {
+    "tags": 302,
+    "found": 302,
+    "false": 0,
+    "worst_corner_median_px": 0.017128401753851278,
+    "worst_corner_p95_px": 0.04987542853013965
+   },
+   "underexposed": {
+    "tags": 292,
+    "found": 292,
+    "false": 0,
+    "worst_corner_median_px": 0.08500168613067016,
+    "worst_corner_p95_px": 0.17547378820331244
+   },
+   "uneven-light": {
+    "tags": 309,
+    "found": 309,
+    "false": 0,
+    "worst_corner_median_px": 0.015401682632558115,
+    "worst_corner_p95_px": 0.05130847847136039
+   }
+  },
+  "vkapriltag-d1": {
+   "blur": {
+    "tags": 304,
+    "found": 304,
+    "false": 0,
+    "worst_corner_median_px": 0.039283546403689626,
+    "worst_corner_p95_px": 0.13738860516120957
+   },
+   "border-occlusion": {
+    "tags": 230,
+    "found": 54,
+    "false": 0,
+    "worst_corner_median_px": 0.45329969980539264,
+    "worst_corner_p95_px": 1.6397132136074457
+   },
+   "busy-background": {
+    "tags": 290,
+    "found": 290,
+    "false": 0,
+    "worst_corner_median_px": 0.010068014579725088,
+    "worst_corner_p95_px": 0.05388593583854401
+   },
+   "clutter-only": {
+    "tags": 0,
+    "found": 0,
+    "false": 0,
+    "worst_corner_median_px": null,
+    "worst_corner_p95_px": null
+   },
+   "dark-background": {
+    "tags": 297,
+    "found": 297,
+    "false": 0,
+    "worst_corner_median_px": 0.010345334827038024,
+    "worst_corner_p95_px": 0.04752601582904029
+   },
+   "decoys": {
+    "tags": 0,
+    "found": 0,
+    "false": 0,
+    "worst_corner_median_px": null,
+    "worst_corner_p95_px": null
+   },
+   "dense-tags": {
+    "tags": 4213,
+    "found": 4213,
+    "false": 0,
+    "worst_corner_median_px": 0.017706843405741444,
+    "worst_corner_p95_px": 0.07370361898343177
+   },
+   "empty": {
+    "tags": 0,
+    "found": 0,
+    "false": 0,
+    "worst_corner_median_px": null,
+    "worst_corner_p95_px": null
+   },
+   "family16h5": {
+    "tags": 385,
+    "found": 385,
+    "false": 0,
+    "worst_corner_median_px": 0.011070652506049588,
+    "worst_corner_p95_px": 0.05001642220699059
+   },
+   "frame-edge": {
+    "tags": 150,
+    "found": 150,
+    "false": 0,
+    "worst_corner_median_px": 0.009790643874553926,
+    "worst_corner_p95_px": 0.05023202700347339
+   },
+   "grey-margin": {
+    "tags": 315,
+    "found": 312,
+    "false": 0,
+    "worst_corner_median_px": 0.013149281651067182,
+    "worst_corner_p95_px": 0.047014537757481725
+   },
+   "jpeg": {
+    "tags": 290,
+    "found": 290,
+    "false": 0,
+    "worst_corner_median_px": 0.02960846699223034,
+    "worst_corner_p95_px": 0.06690571306840368
+   },
+   "large-tags": {
+    "tags": 101,
+    "found": 101,
+    "false": 0,
+    "worst_corner_median_px": 0.009848038111716736,
+    "worst_corner_p95_px": 0.041518484789930796
+   },
+   "low-contrast": {
+    "tags": 291,
+    "found": 290,
+    "false": 0,
+    "worst_corner_median_px": 0.017332357102901222,
+    "worst_corner_p95_px": 0.053213207462391936
+   },
+   "many-tags": {
+    "tags": 216,
+    "found": 216,
+    "false": 0,
+    "worst_corner_median_px": 0.00955583373489949,
+    "worst_corner_p95_px": 0.04262565290852694
+   },
+   "motion-blur": {
+    "tags": 307,
+    "found": 307,
+    "false": 0,
+    "worst_corner_median_px": 0.06627306334110841,
+    "worst_corner_p95_px": 0.43139589548335755
+   },
+   "noise": {
+    "tags": 304,
+    "found": 304,
+    "false": 0,
+    "worst_corner_median_px": 0.03086580451986682,
+    "worst_corner_p95_px": 0.06895921778802269
+   },
+   "noise-free": {
+    "tags": 299,
+    "found": 299,
+    "false": 0,
+    "worst_corner_median_px": 0.008798157591255342,
+    "worst_corner_p95_px": 0.03984177425400807
+   },
+   "obstruction": {
+    "tags": 281,
+    "found": 242,
+    "false": 0,
+    "worst_corner_median_px": 0.009618268479185697,
+    "worst_corner_p95_px": 0.038933849128172764
+   },
+   "one-tag": {
+    "tags": 150,
+    "found": 150,
+    "false": 0,
+    "worst_corner_median_px": 0.01033578575583366,
+    "worst_corner_p95_px": 0.0437271043208402
+   },
+   "overexposed": {
+    "tags": 295,
+    "found": 295,
+    "false": 0,
+    "worst_corner_median_px": 0.06699585033672886,
+    "worst_corner_p95_px": 0.29443529638559046
+   },
+   "range": {
+    "tags": 375,
+    "found": 375,
+    "false": 0,
+    "worst_corner_median_px": 0.01749283210350105,
+    "worst_corner_p95_px": 0.12986186857734242
+   },
+   "small-tags": {
+    "tags": 380,
+    "found": 380,
+    "false": 0,
+    "worst_corner_median_px": 0.02035344243023659,
+    "worst_corner_p95_px": 0.07480870301458985
+   },
+   "steep-angle": {
+    "tags": 302,
+    "found": 302,
+    "false": 0,
+    "worst_corner_median_px": 0.012120626965145261,
+    "worst_corner_p95_px": 0.0512774516193049
+   },
+   "underexposed": {
+    "tags": 292,
+    "found": 292,
+    "false": 0,
+    "worst_corner_median_px": 0.060078931693803295,
+    "worst_corner_p95_px": 0.13916677175952208
+   },
+   "uneven-light": {
+    "tags": 309,
+    "found": 309,
+    "false": 0,
+    "worst_corner_median_px": 0.011480251117064888,
+    "worst_corner_p95_px": 0.051545407907373074
+   }
+  },
+  "vkapriltag-d2": {
+   "blur": {
+    "tags": 304,
+    "found": 304,
+    "false": 0,
+    "worst_corner_median_px": 0.044387707104558055,
+    "worst_corner_p95_px": 0.15957035994582186
+   },
+   "border-occlusion": {
+    "tags": 230,
+    "found": 99,
+    "false": 0,
+    "worst_corner_median_px": 0.2043086421536754,
+    "worst_corner_p95_px": 1.0903966777256704
+   },
+   "busy-background": {
+    "tags": 290,
+    "found": 290,
+    "false": 0,
+    "worst_corner_median_px": 0.010228039414643446,
+    "worst_corner_p95_px": 0.05391514301046074
+   },
+   "clutter-only": {
+    "tags": 0,
+    "found": 0,
+    "false": 0,
+    "worst_corner_median_px": null,
+    "worst_corner_p95_px": null
+   },
+   "dark-background": {
+    "tags": 297,
+    "found": 297,
+    "false": 0,
+    "worst_corner_median_px": 0.010240869017883323,
+    "worst_corner_p95_px": 0.05119753453362187
+   },
+   "decoys": {
+    "tags": 0,
+    "found": 0,
+    "false": 0,
+    "worst_corner_median_px": null,
+    "worst_corner_p95_px": null
+   },
+   "dense-tags": {
+    "tags": 4213,
+    "found": 4213,
+    "false": 0,
+    "worst_corner_median_px": 0.017661328328909636,
+    "worst_corner_p95_px": 0.07321013950620238
+   },
+   "empty": {
+    "tags": 0,
+    "found": 0,
+    "false": 0,
+    "worst_corner_median_px": null,
+    "worst_corner_p95_px": null
+   },
+   "family16h5": {
+    "tags": 385,
+    "found": 385,
+    "false": 3,
+    "worst_corner_median_px": 0.011418523486635693,
+    "worst_corner_p95_px": 0.053060416286966804
+   },
+   "frame-edge": {
+    "tags": 150,
+    "found": 150,
+    "false": 0,
+    "worst_corner_median_px": 0.009837815098660566,
+    "worst_corner_p95_px": 0.049484632594994325
+   },
+   "grey-margin": {
+    "tags": 315,
+    "found": 309,
+    "false": 0,
+    "worst_corner_median_px": 0.013514240045462728,
+    "worst_corner_p95_px": 0.04235391689877022
+   },
+   "jpeg": {
+    "tags": 290,
+    "found": 290,
+    "false": 0,
+    "worst_corner_median_px": 0.030958680189241514,
+    "worst_corner_p95_px": 0.06944219732227318
+   },
+   "large-tags": {
+    "tags": 101,
+    "found": 101,
+    "false": 0,
+    "worst_corner_median_px": 0.009472997780622458,
+    "worst_corner_p95_px": 0.042764895578073954
+   },
+   "low-contrast": {
+    "tags": 291,
+    "found": 289,
+    "false": 0,
+    "worst_corner_median_px": 0.01764750815198695,
+    "worst_corner_p95_px": 0.05104253527645536
+   },
+   "many-tags": {
+    "tags": 216,
+    "found": 216,
+    "false": 0,
+    "worst_corner_median_px": 0.009115856712468631,
+    "worst_corner_p95_px": 0.041950837292588014
+   },
+   "motion-blur": {
+    "tags": 307,
+    "found": 307,
+    "false": 0,
+    "worst_corner_median_px": 0.059028926735480804,
+    "worst_corner_p95_px": 0.45213817368632436
+   },
+   "noise": {
+    "tags": 304,
+    "found": 304,
+    "false": 0,
+    "worst_corner_median_px": 0.034114487805781385,
+    "worst_corner_p95_px": 0.07841201575342956
+   },
+   "noise-free": {
+    "tags": 299,
+    "found": 299,
+    "false": 0,
+    "worst_corner_median_px": 0.009074093838261937,
+    "worst_corner_p95_px": 0.04303189209846608
+   },
+   "obstruction": {
+    "tags": 281,
+    "found": 242,
+    "false": 0,
+    "worst_corner_median_px": 0.008997579497033111,
+    "worst_corner_p95_px": 0.04026588098123695
+   },
+   "one-tag": {
+    "tags": 150,
+    "found": 150,
+    "false": 0,
+    "worst_corner_median_px": 0.009501572706344642,
+    "worst_corner_p95_px": 0.03758668864828567
+   },
+   "overexposed": {
+    "tags": 295,
+    "found": 295,
+    "false": 0,
+    "worst_corner_median_px": 0.06881344197757558,
+    "worst_corner_p95_px": 0.2939658252971305
+   },
+   "range": {
+    "tags": 375,
+    "found": 351,
+    "false": 0,
+    "worst_corner_median_px": 0.01627612258770747,
+    "worst_corner_p95_px": 0.10085936517099066
+   },
+   "small-tags": {
+    "tags": 380,
+    "found": 380,
+    "false": 0,
+    "worst_corner_median_px": 0.020557649294798645,
+    "worst_corner_p95_px": 0.07994858137518304
+   },
+   "steep-angle": {
+    "tags": 302,
+    "found": 302,
+    "false": 0,
+    "worst_corner_median_px": 0.013565155655410584,
+    "worst_corner_p95_px": 0.05546536787981739
+   },
+   "underexposed": {
+    "tags": 292,
+    "found": 292,
+    "false": 0,
+    "worst_corner_median_px": 0.06480339214236777,
+    "worst_corner_p95_px": 0.14284572380975835
+   },
+   "uneven-light": {
+    "tags": 309,
+    "found": 309,
+    "false": 0,
+    "worst_corner_median_px": 0.011579812765481942,
+    "worst_corner_p95_px": 0.051358183409844424
+   }
+  },
+  "apriltag3-d1": {
+   "blur": {
+    "tags": 304,
+    "found": 304,
+    "false": 0,
+    "worst_corner_median_px": 0.029875479250436793,
+    "worst_corner_p95_px": 0.09531024746527476
+   },
+   "border-occlusion": {
+    "tags": 230,
+    "found": 35,
+    "false": 0,
+    "worst_corner_median_px": 1.6467562242412679,
+    "worst_corner_p95_px": 4.0886466703731195
+   },
+   "busy-background": {
+    "tags": 290,
+    "found": 290,
+    "false": 0,
+    "worst_corner_median_px": 0.034256722083611676,
+    "worst_corner_p95_px": 0.08441907179818338
+   },
+   "clutter-only": {
+    "tags": 0,
+    "found": 0,
+    "false": 0,
+    "worst_corner_median_px": null,
+    "worst_corner_p95_px": null
+   },
+   "dark-background": {
+    "tags": 297,
+    "found": 297,
+    "false": 0,
+    "worst_corner_median_px": 0.03390337447438556,
+    "worst_corner_p95_px": 0.08346491932152951
+   },
+   "decoys": {
+    "tags": 0,
+    "found": 0,
+    "false": 0,
+    "worst_corner_median_px": null,
+    "worst_corner_p95_px": null
+   },
+   "dense-tags": {
+    "tags": 4213,
+    "found": 4213,
+    "false": 0,
+    "worst_corner_median_px": 0.03476330010226433,
+    "worst_corner_p95_px": 0.10058988409143545
+   },
+   "empty": {
+    "tags": 0,
+    "found": 0,
+    "false": 0,
+    "worst_corner_median_px": null,
+    "worst_corner_p95_px": null
+   },
+   "frame-edge": {
+    "tags": 150,
+    "found": 150,
+    "false": 0,
+    "worst_corner_median_px": 0.03352733440823227,
+    "worst_corner_p95_px": 0.08725132984708539
+   },
+   "grey-margin": {
+    "tags": 315,
+    "found": 275,
+    "false": 0,
+    "worst_corner_median_px": 0.03834421368449166,
+    "worst_corner_p95_px": 0.09572440969124214
+   },
+   "jpeg": {
+    "tags": 290,
+    "found": 290,
+    "false": 0,
+    "worst_corner_median_px": 0.05201775298230836,
+    "worst_corner_p95_px": 0.10424327686339159
+   },
+   "large-tags": {
+    "tags": 101,
+    "found": 101,
+    "false": 0,
+    "worst_corner_median_px": 0.016414371991337235,
+    "worst_corner_p95_px": 0.07254147967980065
+   },
+   "low-contrast": {
+    "tags": 291,
+    "found": 286,
+    "false": 0,
+    "worst_corner_median_px": 0.04207947157348711,
+    "worst_corner_p95_px": 0.08929461975894175
+   },
+   "many-tags": {
+    "tags": 216,
+    "found": 216,
+    "false": 0,
+    "worst_corner_median_px": 0.018954944374328396,
+    "worst_corner_p95_px": 0.0802422384304295
+   },
+   "motion-blur": {
+    "tags": 307,
+    "found": 307,
+    "false": 0,
+    "worst_corner_median_px": 0.05344953250362157,
+    "worst_corner_p95_px": 0.27508824597842213
+   },
+   "noise": {
+    "tags": 304,
+    "found": 304,
+    "false": 0,
+    "worst_corner_median_px": 0.056570703821634406,
+    "worst_corner_p95_px": 0.1257673012411246
+   },
+   "noise-free": {
+    "tags": 299,
+    "found": 299,
+    "false": 0,
+    "worst_corner_median_px": 0.03482822994667129,
+    "worst_corner_p95_px": 0.08720508328387316
+   },
+   "obstruction": {
+    "tags": 281,
+    "found": 206,
+    "false": 0,
+    "worst_corner_median_px": 0.029907294672904247,
+    "worst_corner_p95_px": 0.08703559580780743
+   },
+   "one-tag": {
+    "tags": 150,
+    "found": 150,
+    "false": 0,
+    "worst_corner_median_px": 0.030140586004666618,
+    "worst_corner_p95_px": 0.07934002230608506
+   },
+   "overexposed": {
+    "tags": 295,
+    "found": 295,
+    "false": 0,
+    "worst_corner_median_px": 0.23749143102365916,
+    "worst_corner_p95_px": 0.36620390490756244
+   },
+   "range": {
+    "tags": 375,
+    "found": 375,
+    "false": 0,
+    "worst_corner_median_px": 0.0364718510253712,
+    "worst_corner_p95_px": 0.210032547672738
+   },
+   "small-tags": {
+    "tags": 380,
+    "found": 380,
+    "false": 0,
+    "worst_corner_median_px": 0.03416779152416724,
+    "worst_corner_p95_px": 0.10036815358072927
+   },
+   "steep-angle": {
+    "tags": 302,
+    "found": 302,
+    "false": 0,
+    "worst_corner_median_px": 0.03866292926197802,
+    "worst_corner_p95_px": 0.09868289055632597
+   },
+   "underexposed": {
+    "tags": 292,
+    "found": 292,
+    "false": 0,
+    "worst_corner_median_px": 0.10169036839186302,
+    "worst_corner_p95_px": 0.22817500518960623
+   },
+   "uneven-light": {
+    "tags": 309,
+    "found": 309,
+    "false": 0,
+    "worst_corner_median_px": 0.036460448692345125,
+    "worst_corner_p95_px": 0.08670612998046283
+   }
+  },
+  "apriltag3-d2": {
+   "blur": {
+    "tags": 304,
+    "found": 304,
+    "false": 0,
+    "worst_corner_median_px": 0.05174135124318274,
+    "worst_corner_p95_px": 0.14806590148664447
+   },
+   "border-occlusion": {
+    "tags": 230,
+    "found": 68,
+    "false": 0,
+    "worst_corner_median_px": 2.0770412520563424,
+    "worst_corner_p95_px": 7.313475833602679
+   },
+   "busy-background": {
+    "tags": 290,
+    "found": 290,
+    "false": 0,
+    "worst_corner_median_px": 0.032507109568303466,
+    "worst_corner_p95_px": 0.08530132465413355
+   },
+   "clutter-only": {
+    "tags": 0,
+    "found": 0,
+    "false": 0,
+    "worst_corner_median_px": null,
+    "worst_corner_p95_px": null
+   },
+   "dark-background": {
+    "tags": 297,
+    "found": 297,
+    "false": 0,
+    "worst_corner_median_px": 0.036770874705141954,
+    "worst_corner_p95_px": 0.08778848767505278
+   },
+   "decoys": {
+    "tags": 0,
+    "found": 0,
+    "false": 0,
+    "worst_corner_median_px": null,
+    "worst_corner_p95_px": null
+   },
+   "dense-tags": {
+    "tags": 4213,
+    "found": 4213,
+    "false": 0,
+    "worst_corner_median_px": 0.03453688619116288,
+    "worst_corner_p95_px": 0.0995589539642384
+   },
+   "empty": {
+    "tags": 0,
+    "found": 0,
+    "false": 0,
+    "worst_corner_median_px": null,
+    "worst_corner_p95_px": null
+   },
+   "frame-edge": {
+    "tags": 150,
+    "found": 150,
+    "false": 0,
+    "worst_corner_median_px": 0.03233485072772178,
+    "worst_corner_p95_px": 0.0819481483903374
+   },
+   "grey-margin": {
+    "tags": 315,
+    "found": 152,
+    "false": 0,
+    "worst_corner_median_px": 0.03466371983799062,
+    "worst_corner_p95_px": 0.09224614057953776
+   },
+   "jpeg": {
+    "tags": 290,
+    "found": 290,
+    "false": 0,
+    "worst_corner_median_px": 0.05222174865762667,
+    "worst_corner_p95_px": 0.10161342305732622
+   },
+   "large-tags": {
+    "tags": 101,
+    "found": 101,
+    "false": 0,
+    "worst_corner_median_px": 0.01668693282863244,
+    "worst_corner_p95_px": 0.07095400904390815
+   },
+   "low-contrast": {
+    "tags": 291,
+    "found": 272,
+    "false": 0,
+    "worst_corner_median_px": 0.040353709419044786,
+    "worst_corner_p95_px": 0.096654144842711
+   },
+   "many-tags": {
+    "tags": 216,
+    "found": 216,
+    "false": 0,
+    "worst_corner_median_px": 0.019896173446988834,
+    "worst_corner_p95_px": 0.0844155694164492
+   },
+   "motion-blur": {
+    "tags": 307,
+    "found": 307,
+    "false": 1,
+    "worst_corner_median_px": 0.11323917545196553,
+    "worst_corner_p95_px": 0.738923097542443
+   },
+   "noise": {
+    "tags": 304,
+    "found": 304,
+    "false": 0,
+    "worst_corner_median_px": 0.059751404665784755,
+    "worst_corner_p95_px": 0.11525961697287461
+   },
+   "noise-free": {
+    "tags": 299,
+    "found": 299,
+    "false": 0,
+    "worst_corner_median_px": 0.03242010335043036,
+    "worst_corner_p95_px": 0.08559614246725165
+   },
+   "obstruction": {
+    "tags": 281,
+    "found": 205,
+    "false": 0,
+    "worst_corner_median_px": 0.03096252769975316,
+    "worst_corner_p95_px": 0.08631275631845535
+   },
+   "one-tag": {
+    "tags": 150,
+    "found": 150,
+    "false": 0,
+    "worst_corner_median_px": 0.028118763568820624,
+    "worst_corner_p95_px": 0.0886261148917574
+   },
+   "overexposed": {
+    "tags": 295,
+    "found": 295,
+    "false": 0,
+    "worst_corner_median_px": 0.2392291975441456,
+    "worst_corner_p95_px": 0.37879496969759
+   },
+   "range": {
+    "tags": 375,
+    "found": 337,
+    "false": 0,
+    "worst_corner_median_px": 0.033823991950908065,
+    "worst_corner_p95_px": 0.11699104513003399
+   },
+   "small-tags": {
+    "tags": 380,
+    "found": 380,
+    "false": 0,
+    "worst_corner_median_px": 0.03408229897145708,
+    "worst_corner_p95_px": 0.1002746367464164
+   },
+   "steep-angle": {
+    "tags": 302,
+    "found": 302,
+    "false": 0,
+    "worst_corner_median_px": 0.039445760530634075,
+    "worst_corner_p95_px": 0.09717002286486139
+   },
+   "underexposed": {
+    "tags": 292,
+    "found": 292,
+    "false": 0,
+    "worst_corner_median_px": 0.10065430049333049,
+    "worst_corner_p95_px": 0.226984110801449
+   },
+   "uneven-light": {
+    "tags": 309,
+    "found": 309,
+    "false": 1,
+    "worst_corner_median_px": 0.037037688957616166,
+    "worst_corner_p95_px": 0.08785095464625227
+   }
+  },
+  "aruco-nano": {
+   "blur": {
+    "tags": 304,
+    "found": 304,
+    "false": 0,
+    "worst_corner_median_px": 0.036175204960447266,
+    "worst_corner_p95_px": 0.09864132003186743
+   },
+   "border-occlusion": {
+    "tags": 230,
+    "found": 5,
+    "false": 0,
+    "worst_corner_median_px": 8.533777479235201,
+    "worst_corner_p95_px": 10.504303369789659
+   },
+   "busy-background": {
+    "tags": 290,
+    "found": 290,
+    "false": 0,
+    "worst_corner_median_px": 0.03517424645681519,
+    "worst_corner_p95_px": 0.0861949903675857
+   },
+   "clutter-only": {
+    "tags": 0,
+    "found": 0,
+    "false": 0,
+    "worst_corner_median_px": null,
+    "worst_corner_p95_px": null
+   },
+   "dark-background": {
+    "tags": 297,
+    "found": 297,
+    "false": 0,
+    "worst_corner_median_px": 0.033522171396447774,
+    "worst_corner_p95_px": 0.08809476759691967
+   },
+   "decoys": {
+    "tags": 0,
+    "found": 0,
+    "false": 0,
+    "worst_corner_median_px": null,
+    "worst_corner_p95_px": null
+   },
+   "dense-tags": {
+    "tags": 4213,
+    "found": 4213,
+    "false": 0,
+    "worst_corner_median_px": 0.034473204351759615,
+    "worst_corner_p95_px": 0.10098474432603219
+   },
+   "empty": {
+    "tags": 0,
+    "found": 0,
+    "false": 0,
+    "worst_corner_median_px": null,
+    "worst_corner_p95_px": null
+   },
+   "frame-edge": {
+    "tags": 150,
+    "found": 150,
+    "false": 0,
+    "worst_corner_median_px": 0.03414045155452185,
+    "worst_corner_p95_px": 0.0795197806191057
+   },
+   "grey-margin": {
+    "tags": 315,
+    "found": 301,
+    "false": 0,
+    "worst_corner_median_px": 0.062337535605047255,
+    "worst_corner_p95_px": 14.018353956855767
+   },
+   "jpeg": {
+    "tags": 290,
+    "found": 290,
+    "false": 0,
+    "worst_corner_median_px": 0.05322449452123876,
+    "worst_corner_p95_px": 0.1030534170685008
+   },
+   "large-tags": {
+    "tags": 101,
+    "found": 101,
+    "false": 0,
+    "worst_corner_median_px": 0.016423096855930335,
+    "worst_corner_p95_px": 0.07585822791536517
+   },
+   "low-contrast": {
+    "tags": 291,
+    "found": 291,
+    "false": 0,
+    "worst_corner_median_px": 0.04356106721406935,
+    "worst_corner_p95_px": 9.719898655570077
+   },
+   "many-tags": {
+    "tags": 216,
+    "found": 216,
+    "false": 0,
+    "worst_corner_median_px": 0.018848014902621134,
+    "worst_corner_p95_px": 0.0793399057825189
+   },
+   "motion-blur": {
+    "tags": 307,
+    "found": 307,
+    "false": 0,
+    "worst_corner_median_px": 0.1230504364038982,
+    "worst_corner_p95_px": 0.8780082749060887
+   },
+   "noise": {
+    "tags": 304,
+    "found": 304,
+    "false": 0,
+    "worst_corner_median_px": 0.0556084234010233,
+    "worst_corner_p95_px": 0.12282069881826882
+   },
+   "noise-free": {
+    "tags": 299,
+    "found": 299,
+    "false": 0,
+    "worst_corner_median_px": 0.03498247361166038,
+    "worst_corner_p95_px": 0.08475855107408603
+   },
+   "obstruction": {
+    "tags": 281,
+    "found": 84,
+    "false": 0,
+    "worst_corner_median_px": 0.0320571545539796,
+    "worst_corner_p95_px": 0.10835125210121535
+   },
+   "one-tag": {
+    "tags": 150,
+    "found": 150,
+    "false": 0,
+    "worst_corner_median_px": 0.02978755213773475,
+    "worst_corner_p95_px": 0.08293614027600613
+   },
+   "overexposed": {
+    "tags": 295,
+    "found": 295,
+    "false": 0,
+    "worst_corner_median_px": 0.2388023168122304,
+    "worst_corner_p95_px": 0.3753575657962464
+   },
+   "range": {
+    "tags": 375,
+    "found": 365,
+    "false": 0,
+    "worst_corner_median_px": 0.03504019415375198,
+    "worst_corner_p95_px": 0.1533964243849072
+   },
+   "small-tags": {
+    "tags": 380,
+    "found": 380,
+    "false": 0,
+    "worst_corner_median_px": 0.03292634324284449,
+    "worst_corner_p95_px": 0.10084225817657272
+   },
+   "steep-angle": {
+    "tags": 302,
+    "found": 302,
+    "false": 0,
+    "worst_corner_median_px": 0.039050900567972516,
+    "worst_corner_p95_px": 0.09868797398875317
+   },
+   "underexposed": {
+    "tags": 292,
+    "found": 292,
+    "false": 0,
+    "worst_corner_median_px": 0.09969652427509099,
+    "worst_corner_p95_px": 0.20665531786314642
+   },
+   "uneven-light": {
+    "tags": 309,
+    "found": 309,
+    "false": 0,
+    "worst_corner_median_px": 0.03630542122909204,
+    "worst_corner_p95_px": 0.08742432641309977
+   }
+  },
+  "locus": {
+   "blur": {
+    "tags": 304,
+    "found": 304,
+    "false": 0,
+    "worst_corner_median_px": 0.028855403638969705,
+    "worst_corner_p95_px": 0.08179259313418805
+   },
+   "border-occlusion": {
+    "tags": 230,
+    "found": 52,
+    "false": 0,
+    "worst_corner_median_px": 7.996914747766449,
+    "worst_corner_p95_px": 17.409395844720397
+   },
+   "busy-background": {
+    "tags": 290,
+    "found": 290,
+    "false": 0,
+    "worst_corner_median_px": 0.03367933757467714,
+    "worst_corner_p95_px": 0.07991552028402535
+   },
+   "clutter-only": {
+    "tags": 0,
+    "found": 0,
+    "false": 0,
+    "worst_corner_median_px": null,
+    "worst_corner_p95_px": null
+   },
+   "dark-background": {
+    "tags": 297,
+    "found": 297,
+    "false": 0,
+    "worst_corner_median_px": 0.03166680955273881,
+    "worst_corner_p95_px": 0.07300495800324837
+   },
+   "decoys": {
+    "tags": 0,
+    "found": 0,
+    "false": 0,
+    "worst_corner_median_px": null,
+    "worst_corner_p95_px": null
+   },
+   "dense-tags": {
+    "tags": 4213,
+    "found": 4212,
+    "false": 0,
+    "worst_corner_median_px": 0.04240492927774732,
+    "worst_corner_p95_px": 0.10349753980630547
+   },
+   "empty": {
+    "tags": 0,
+    "found": 0,
+    "false": 0,
+    "worst_corner_median_px": null,
+    "worst_corner_p95_px": null
+   },
+   "frame-edge": {
+    "tags": 150,
+    "found": 150,
+    "false": 0,
+    "worst_corner_median_px": 0.03411764756725762,
+    "worst_corner_p95_px": 0.06749985058753193
+   },
+   "grey-margin": {
+    "tags": 315,
+    "found": 303,
+    "false": 0,
+    "worst_corner_median_px": 0.04937201125387884,
+    "worst_corner_p95_px": 0.0931583163974867
+   },
+   "jpeg": {
+    "tags": 290,
+    "found": 290,
+    "false": 0,
+    "worst_corner_median_px": 0.13242858807062902,
+    "worst_corner_p95_px": 0.2889642447547238
+   },
+   "large-tags": {
+    "tags": 101,
+    "found": 101,
+    "false": 0,
+    "worst_corner_median_px": 0.024557057290440786,
+    "worst_corner_p95_px": 0.06789415400473675
+   },
+   "low-contrast": {
+    "tags": 291,
+    "found": 202,
+    "false": 0,
+    "worst_corner_median_px": 0.06686684506228978,
+    "worst_corner_p95_px": 0.14709044327797297
+   },
+   "many-tags": {
+    "tags": 216,
+    "found": 216,
+    "false": 0,
+    "worst_corner_median_px": 0.026684264438760395,
+    "worst_corner_p95_px": 0.07071076528655772
+   },
+   "motion-blur": {
+    "tags": 307,
+    "found": 306,
+    "false": 0,
+    "worst_corner_median_px": 0.5464848156259164,
+    "worst_corner_p95_px": 3.267689805680139
+   },
+   "noise": {
+    "tags": 304,
+    "found": 304,
+    "false": 0,
+    "worst_corner_median_px": 0.1114013913172184,
+    "worst_corner_p95_px": 0.22748577900261502
+   },
+   "noise-free": {
+    "tags": 299,
+    "found": 299,
+    "false": 0,
+    "worst_corner_median_px": 0.022011648309366392,
+    "worst_corner_p95_px": 0.08498468260724357
+   },
+   "obstruction": {
+    "tags": 281,
+    "found": 201,
+    "false": 0,
+    "worst_corner_median_px": 0.028828646101571525,
+    "worst_corner_p95_px": 0.06503075988676477
+   },
+   "one-tag": {
+    "tags": 150,
+    "found": 150,
+    "false": 0,
+    "worst_corner_median_px": 0.030751857572504745,
+    "worst_corner_p95_px": 0.06949440103062732
+   },
+   "overexposed": {
+    "tags": 295,
+    "found": 295,
+    "false": 0,
+    "worst_corner_median_px": 0.05408917402124554,
+    "worst_corner_p95_px": 0.3133615372192378
+   },
+   "range": {
+    "tags": 375,
+    "found": 371,
+    "false": 0,
+    "worst_corner_median_px": 0.04603920883918237,
+    "worst_corner_p95_px": 0.8227700058048326
+   },
+   "small-tags": {
+    "tags": 380,
+    "found": 380,
+    "false": 0,
+    "worst_corner_median_px": 0.04490593000045266,
+    "worst_corner_p95_px": 0.12000169638260814
+   },
+   "steep-angle": {
+    "tags": 302,
+    "found": 302,
+    "false": 0,
+    "worst_corner_median_px": 0.04015031388088774,
+    "worst_corner_p95_px": 0.12200292990404767
+   },
+   "underexposed": {
+    "tags": 292,
+    "found": 21,
+    "false": 0,
+    "worst_corner_median_px": 0.18660473848792525,
+    "worst_corner_p95_px": 17.97667256355388
+   },
+   "uneven-light": {
+    "tags": 309,
+    "found": 309,
+    "false": 0,
+    "worst_corner_median_px": 0.0417698591456289,
+    "worst_corner_p95_px": 0.07718819502532967
+   }
+  }
+ }
+}

@@ -1,0 +1,2306 @@
+{
+ "groups": {
+  "gopro": {
+   "napa-m32-none": {
+    "sightings": 15066,
+    "chances": 12072,
+    "dropouts": 1027,
+    "off_wall": 0,
+    "rate": 0.08507289595758781
+   },
+   "napa-m32-coarse": {
+    "sightings": 16227,
+    "chances": 13164,
+    "dropouts": 1075,
+    "off_wall": 0,
+    "rate": 0.08166210878152537
+   },
+   "napa-m22-none": {
+    "sightings": 21595,
+    "chances": 18502,
+    "dropouts": 949,
+    "off_wall": 0,
+    "rate": 0.051291752243000754
+   },
+   "napa-m22-coarse": {
+    "sightings": 22216,
+    "chances": 19069,
+    "dropouts": 976,
+    "off_wall": 0,
+    "rate": 0.051182547590329856
+   },
+   "napa-tall22": {
+    "sightings": 18517,
+    "chances": 15594,
+    "dropouts": 1049,
+    "off_wall": 0,
+    "rate": 0.06726946261382583
+   },
+   "napa-m16-none": {
+    "sightings": 27443,
+    "chances": 24725,
+    "dropouts": 520,
+    "off_wall": 0,
+    "rate": 0.021031344792719918
+   },
+   "napa-preset": {
+    "sightings": 29325,
+    "chances": 26486,
+    "dropouts": 624,
+    "off_wall": 0,
+    "rate": 0.02355961640111757
+   },
+   "apriltag3-d1": {
+    "sightings": 24751,
+    "chances": 22289,
+    "dropouts": 424,
+    "off_wall": 1,
+    "rate": 0.019022836376688054
+   },
+   "apriltag3-d2": {
+    "sightings": 15490,
+    "chances": 12794,
+    "dropouts": 764,
+    "off_wall": 1,
+    "rate": 0.059715491636704705
+   },
+   "wpilib-d2": {
+    "sightings": 1831,
+    "chances": 1413,
+    "dropouts": 22,
+    "off_wall": 0,
+    "rate": 0.01556970983722576
+   },
+   "locus": {
+    "sightings": 24164,
+    "chances": 20695,
+    "dropouts": 1023,
+    "off_wall": 0,
+    "rate": 0.049432230007248126
+   },
+   "opencv-subpix": {
+    "sightings": 21731,
+    "chances": 18795,
+    "dropouts": 881,
+    "off_wall": 0,
+    "rate": 0.04687416866187816
+   },
+   "aruco-nano": {
+    "sightings": 19375,
+    "chances": 16848,
+    "dropouts": 671,
+    "off_wall": 0,
+    "rate": 0.03982668566001899
+   },
+   "rapidtag-subpix": {
+    "sightings": 10696,
+    "chances": 9416,
+    "dropouts": 195,
+    "off_wall": 4,
+    "rate": 0.02070943075615973
+   }
+  },
+  "tango1080": {
+   "napa-m32-none": {
+    "sightings": 11545,
+    "chances": 9016,
+    "dropouts": 850,
+    "off_wall": 0,
+    "rate": 0.09427684117125111
+   },
+   "napa-m32-coarse": {
+    "sightings": 12503,
+    "chances": 9871,
+    "dropouts": 928,
+    "off_wall": 0,
+    "rate": 0.09401276466416776
+   },
+   "napa-m22-none": {
+    "sightings": 16255,
+    "chances": 13706,
+    "dropouts": 824,
+    "off_wall": 0,
+    "rate": 0.060119655625273605
+   },
+   "napa-m22-coarse": {
+    "sightings": 16777,
+    "chances": 14164,
+    "dropouts": 845,
+    "off_wall": 0,
+    "rate": 0.05965828861903417
+   },
+   "napa-tall22": {
+    "sightings": 14997,
+    "chances": 12605,
+    "dropouts": 838,
+    "off_wall": 0,
+    "rate": 0.06648155493851646
+   },
+   "napa-m16-none": {
+    "sightings": 18621,
+    "chances": 16112,
+    "dropouts": 729,
+    "off_wall": 0,
+    "rate": 0.04524577954319762
+   },
+   "napa-preset": {
+    "sightings": 19301,
+    "chances": 16872,
+    "dropouts": 656,
+    "off_wall": 0,
+    "rate": 0.0388809862494073
+   },
+   "apriltag3-d1": {
+    "sightings": 17253,
+    "chances": 14940,
+    "dropouts": 653,
+    "off_wall": 0,
+    "rate": 0.04370816599732262
+   },
+   "apriltag3-d2": {
+    "sightings": 13169,
+    "chances": 10291,
+    "dropouts": 1092,
+    "off_wall": 0,
+    "rate": 0.10611213681857934
+   },
+   "wpilib-d2": {
+    "sightings": 2249,
+    "chances": 1770,
+    "dropouts": 68,
+    "off_wall": 1,
+    "rate": 0.0384180790960452
+   },
+   "locus": {
+    "sightings": 12390,
+    "chances": 9445,
+    "dropouts": 1096,
+    "off_wall": 0,
+    "rate": 0.11604023292747485
+   },
+   "opencv-subpix": {
+    "sightings": 14280,
+    "chances": 12110,
+    "dropouts": 669,
+    "off_wall": 0,
+    "rate": 0.05524360033030553
+   },
+   "aruco-nano": {
+    "sightings": 13789,
+    "chances": 11562,
+    "dropouts": 785,
+    "off_wall": 0,
+    "rate": 0.06789482788444906
+   },
+   "rapidtag-subpix": {
+    "sightings": 13312,
+    "chances": 11283,
+    "dropouts": 638,
+    "off_wall": 1,
+    "rate": 0.05654524505893822
+   }
+  },
+  "basler": {
+   "napa-m32-none": {
+    "sightings": 608,
+    "chances": 159,
+    "dropouts": 6,
+    "off_wall": 0,
+    "rate": 0.03773584905660377
+   },
+   "napa-m32-coarse": {
+    "sightings": 629,
+    "chances": 162,
+    "dropouts": 5,
+    "off_wall": 0,
+    "rate": 0.030864197530864196
+   },
+   "napa-m22-none": {
+    "sightings": 672,
+    "chances": 171,
+    "dropouts": 0,
+    "off_wall": 0,
+    "rate": 0.0
+   },
+   "napa-m22-coarse": {
+    "sightings": 675,
+    "chances": 171,
+    "dropouts": 0,
+    "off_wall": 0,
+    "rate": 0.0
+   },
+   "napa-tall22": {
+    "sightings": 616,
+    "chances": 154,
+    "dropouts": 2,
+    "off_wall": 0,
+    "rate": 0.012987012987012988
+   },
+   "napa-m16-none": {
+    "sightings": 688,
+    "chances": 176,
+    "dropouts": 2,
+    "off_wall": 0,
+    "rate": 0.011363636363636364
+   },
+   "napa-preset": {
+    "sightings": 698,
+    "chances": 180,
+    "dropouts": 3,
+    "off_wall": 0,
+    "rate": 0.016666666666666666
+   },
+   "apriltag3-d1": {
+    "sightings": 641,
+    "chances": 165,
+    "dropouts": 2,
+    "off_wall": 0,
+    "rate": 0.012121212121212121
+   },
+   "apriltag3-d2": {
+    "sightings": 626,
+    "chances": 162,
+    "dropouts": 7,
+    "off_wall": 0,
+    "rate": 0.043209876543209874
+   },
+   "wpilib-d2": {
+    "sightings": 73,
+    "chances": 7,
+    "dropouts": 0,
+    "off_wall": 0,
+    "rate": 0.0
+   },
+   "locus": {
+    "sightings": 0,
+    "chances": 0,
+    "dropouts": 0,
+    "off_wall": 0,
+    "rate": null
+   },
+   "opencv-subpix": {
+    "sightings": 507,
+    "chances": 118,
+    "dropouts": 5,
+    "off_wall": 0,
+    "rate": 0.0423728813559322
+   },
+   "aruco-nano": {
+    "sightings": 613,
+    "chances": 162,
+    "dropouts": 5,
+    "off_wall": 0,
+    "rate": 0.030864197530864196
+   },
+   "rapidtag-subpix": {
+    "sightings": 469,
+    "chances": 105,
+    "dropouts": 0,
+    "off_wall": 0,
+    "rate": 0.0
+   }
+  }
+ },
+ "segments": {
+  "gopro-af-1934": {
+   "napa-m32-none": {
+    "frames": 500,
+    "sightings": 1914,
+    "chances": 1574,
+    "dropouts": 117,
+    "off_wall": 0
+   },
+   "napa-m32-coarse": {
+    "frames": 500,
+    "sightings": 2106,
+    "chances": 1758,
+    "dropouts": 126,
+    "off_wall": 0
+   },
+   "napa-m22-none": {
+    "frames": 500,
+    "sightings": 2940,
+    "chances": 2530,
+    "dropouts": 141,
+    "off_wall": 0
+   },
+   "napa-m22-coarse": {
+    "frames": 500,
+    "sightings": 3040,
+    "chances": 2623,
+    "dropouts": 143,
+    "off_wall": 0
+   },
+   "napa-tall22": {
+    "frames": 500,
+    "sightings": 2427,
+    "chances": 2051,
+    "dropouts": 172,
+    "off_wall": 0
+   },
+   "napa-m16-none": {
+    "frames": 500,
+    "sightings": 3910,
+    "chances": 3587,
+    "dropouts": 97,
+    "off_wall": 0
+   },
+   "napa-preset": {
+    "frames": 500,
+    "sightings": 4283,
+    "chances": 3954,
+    "dropouts": 118,
+    "off_wall": 0
+   },
+   "apriltag3-d1": {
+    "frames": 500,
+    "sightings": 3516,
+    "chances": 3225,
+    "dropouts": 46,
+    "off_wall": 0
+   },
+   "apriltag3-d2": {
+    "frames": 500,
+    "sightings": 2097,
+    "chances": 1743,
+    "dropouts": 117,
+    "off_wall": 0
+   },
+   "wpilib-d2": {
+    "frames": 500,
+    "sightings": 208,
+    "chances": 167,
+    "dropouts": 3,
+    "off_wall": 0
+   },
+   "locus": {
+    "frames": 500,
+    "sightings": 3441,
+    "chances": 2989,
+    "dropouts": 175,
+    "off_wall": 0
+   },
+   "opencv-subpix": {
+    "frames": 500,
+    "sightings": 3306,
+    "chances": 2960,
+    "dropouts": 110,
+    "off_wall": 0
+   },
+   "aruco-nano": {
+    "frames": 500,
+    "sightings": 2661,
+    "chances": 2368,
+    "dropouts": 92,
+    "off_wall": 0
+   },
+   "rapidtag-subpix": {
+    "frames": 500,
+    "sightings": 1362,
+    "chances": 1243,
+    "dropouts": 11,
+    "off_wall": 2
+   }
+  },
+  "gopro-af-967": {
+   "napa-m32-none": {
+    "frames": 500,
+    "sightings": 1903,
+    "chances": 1538,
+    "dropouts": 105,
+    "off_wall": 0
+   },
+   "napa-m32-coarse": {
+    "frames": 500,
+    "sightings": 2037,
+    "chances": 1657,
+    "dropouts": 105,
+    "off_wall": 0
+   },
+   "napa-m22-none": {
+    "frames": 500,
+    "sightings": 2465,
+    "chances": 2133,
+    "dropouts": 92,
+    "off_wall": 0
+   },
+   "napa-m22-coarse": {
+    "frames": 500,
+    "sightings": 2539,
+    "chances": 2193,
+    "dropouts": 100,
+    "off_wall": 0
+   },
+   "napa-tall22": {
+    "frames": 500,
+    "sightings": 2366,
+    "chances": 2075,
+    "dropouts": 98,
+    "off_wall": 0
+   },
+   "napa-m16-none": {
+    "frames": 500,
+    "sightings": 2883,
+    "chances": 2575,
+    "dropouts": 53,
+    "off_wall": 0
+   },
+   "napa-preset": {
+    "frames": 500,
+    "sightings": 3068,
+    "chances": 2752,
+    "dropouts": 57,
+    "off_wall": 0
+   },
+   "apriltag3-d1": {
+    "frames": 500,
+    "sightings": 2602,
+    "chances": 2340,
+    "dropouts": 39,
+    "off_wall": 1
+   },
+   "apriltag3-d2": {
+    "frames": 500,
+    "sightings": 1838,
+    "chances": 1557,
+    "dropouts": 63,
+    "off_wall": 0
+   },
+   "wpilib-d2": {
+    "frames": 500,
+    "sightings": 365,
+    "chances": 271,
+    "dropouts": 3,
+    "off_wall": 0
+   },
+   "locus": {
+    "frames": 500,
+    "sightings": 2679,
+    "chances": 2330,
+    "dropouts": 67,
+    "off_wall": 0
+   },
+   "opencv-subpix": {
+    "frames": 500,
+    "sightings": 2345,
+    "chances": 2001,
+    "dropouts": 91,
+    "off_wall": 0
+   },
+   "aruco-nano": {
+    "frames": 500,
+    "sightings": 2235,
+    "chances": 1964,
+    "dropouts": 82,
+    "off_wall": 0
+   },
+   "rapidtag-subpix": {
+    "frames": 500,
+    "sightings": 1550,
+    "chances": 1311,
+    "dropouts": 45,
+    "off_wall": 0
+   }
+  },
+  "gopro-as-1557": {
+   "napa-m32-none": {
+    "frames": 500,
+    "sightings": 1707,
+    "chances": 1377,
+    "dropouts": 104,
+    "off_wall": 0
+   },
+   "napa-m32-coarse": {
+    "frames": 500,
+    "sightings": 1883,
+    "chances": 1541,
+    "dropouts": 119,
+    "off_wall": 0
+   },
+   "napa-m22-none": {
+    "frames": 500,
+    "sightings": 2219,
+    "chances": 1913,
+    "dropouts": 75,
+    "off_wall": 0
+   },
+   "napa-m22-coarse": {
+    "frames": 500,
+    "sightings": 2313,
+    "chances": 1995,
+    "dropouts": 85,
+    "off_wall": 0
+   },
+   "napa-tall22": {
+    "frames": 500,
+    "sightings": 2110,
+    "chances": 1784,
+    "dropouts": 83,
+    "off_wall": 0
+   },
+   "napa-m16-none": {
+    "frames": 500,
+    "sightings": 2524,
+    "chances": 2248,
+    "dropouts": 33,
+    "off_wall": 0
+   },
+   "napa-preset": {
+    "frames": 500,
+    "sightings": 2726,
+    "chances": 2427,
+    "dropouts": 49,
+    "off_wall": 0
+   },
+   "apriltag3-d1": {
+    "frames": 500,
+    "sightings": 2289,
+    "chances": 2040,
+    "dropouts": 25,
+    "off_wall": 0
+   },
+   "apriltag3-d2": {
+    "frames": 500,
+    "sightings": 1686,
+    "chances": 1443,
+    "dropouts": 49,
+    "off_wall": 0
+   },
+   "wpilib-d2": {
+    "frames": 500,
+    "sightings": 322,
+    "chances": 250,
+    "dropouts": 7,
+    "off_wall": 0
+   },
+   "locus": {
+    "frames": 500,
+    "sightings": 2354,
+    "chances": 2046,
+    "dropouts": 63,
+    "off_wall": 0
+   },
+   "opencv-subpix": {
+    "frames": 500,
+    "sightings": 1979,
+    "chances": 1687,
+    "dropouts": 63,
+    "off_wall": 0
+   },
+   "aruco-nano": {
+    "frames": 500,
+    "sightings": 1947,
+    "chances": 1708,
+    "dropouts": 45,
+    "off_wall": 0
+   },
+   "rapidtag-subpix": {
+    "frames": 500,
+    "sightings": 1439,
+    "chances": 1243,
+    "dropouts": 34,
+    "off_wall": 0
+   }
+  },
+  "gopro-as-3115": {
+   "napa-m32-none": {
+    "frames": 500,
+    "sightings": 2268,
+    "chances": 1837,
+    "dropouts": 187,
+    "off_wall": 0
+   },
+   "napa-m32-coarse": {
+    "frames": 500,
+    "sightings": 2398,
+    "chances": 1969,
+    "dropouts": 195,
+    "off_wall": 0
+   },
+   "napa-m22-none": {
+    "frames": 500,
+    "sightings": 3457,
+    "chances": 3036,
+    "dropouts": 154,
+    "off_wall": 0
+   },
+   "napa-m22-coarse": {
+    "frames": 500,
+    "sightings": 3520,
+    "chances": 3101,
+    "dropouts": 150,
+    "off_wall": 0
+   },
+   "napa-tall22": {
+    "frames": 500,
+    "sightings": 2734,
+    "chances": 2281,
+    "dropouts": 190,
+    "off_wall": 0
+   },
+   "napa-m16-none": {
+    "frames": 500,
+    "sightings": 4558,
+    "chances": 4201,
+    "dropouts": 84,
+    "off_wall": 0
+   },
+   "napa-preset": {
+    "frames": 500,
+    "sightings": 4909,
+    "chances": 4475,
+    "dropouts": 114,
+    "off_wall": 0
+   },
+   "apriltag3-d1": {
+    "frames": 500,
+    "sightings": 4174,
+    "chances": 3831,
+    "dropouts": 106,
+    "off_wall": 0
+   },
+   "apriltag3-d2": {
+    "frames": 500,
+    "sightings": 2470,
+    "chances": 2018,
+    "dropouts": 168,
+    "off_wall": 0
+   },
+   "wpilib-d2": {
+    "frames": 500,
+    "sightings": 50,
+    "chances": 40,
+    "dropouts": 0,
+    "off_wall": 0
+   },
+   "locus": {
+    "frames": 500,
+    "sightings": 3792,
+    "chances": 3243,
+    "dropouts": 173,
+    "off_wall": 0
+   },
+   "opencv-subpix": {
+    "frames": 500,
+    "sightings": 3689,
+    "chances": 3277,
+    "dropouts": 159,
+    "off_wall": 0
+   },
+   "aruco-nano": {
+    "frames": 500,
+    "sightings": 3034,
+    "chances": 2685,
+    "dropouts": 121,
+    "off_wall": 0
+   },
+   "rapidtag-subpix": {
+    "frames": 500,
+    "sightings": 1240,
+    "chances": 1168,
+    "dropouts": 12,
+    "off_wall": 0
+   }
+  },
+  "gopro-bf-1018": {
+   "napa-m32-none": {
+    "frames": 500,
+    "sightings": 1024,
+    "chances": 743,
+    "dropouts": 71,
+    "off_wall": 0
+   },
+   "napa-m32-coarse": {
+    "frames": 500,
+    "sightings": 1102,
+    "chances": 810,
+    "dropouts": 75,
+    "off_wall": 0
+   },
+   "napa-m22-none": {
+    "frames": 500,
+    "sightings": 1403,
+    "chances": 1101,
+    "dropouts": 61,
+    "off_wall": 0
+   },
+   "napa-m22-coarse": {
+    "frames": 500,
+    "sightings": 1458,
+    "chances": 1157,
+    "dropouts": 61,
+    "off_wall": 0
+   },
+   "napa-tall22": {
+    "frames": 500,
+    "sightings": 1341,
+    "chances": 1040,
+    "dropouts": 82,
+    "off_wall": 0
+   },
+   "napa-m16-none": {
+    "frames": 500,
+    "sightings": 1712,
+    "chances": 1405,
+    "dropouts": 32,
+    "off_wall": 0
+   },
+   "napa-preset": {
+    "frames": 500,
+    "sightings": 1831,
+    "chances": 1514,
+    "dropouts": 37,
+    "off_wall": 0
+   },
+   "apriltag3-d1": {
+    "frames": 500,
+    "sightings": 1477,
+    "chances": 1210,
+    "dropouts": 21,
+    "off_wall": 0
+   },
+   "apriltag3-d2": {
+    "frames": 500,
+    "sightings": 1015,
+    "chances": 787,
+    "dropouts": 49,
+    "off_wall": 0
+   },
+   "wpilib-d2": {
+    "frames": 500,
+    "sightings": 115,
+    "chances": 73,
+    "dropouts": 5,
+    "off_wall": 0
+   },
+   "locus": {
+    "frames": 500,
+    "sightings": 1542,
+    "chances": 1207,
+    "dropouts": 79,
+    "off_wall": 0
+   },
+   "opencv-subpix": {
+    "frames": 500,
+    "sightings": 1252,
+    "chances": 955,
+    "dropouts": 60,
+    "off_wall": 0
+   },
+   "aruco-nano": {
+    "frames": 500,
+    "sightings": 1228,
+    "chances": 985,
+    "dropouts": 39,
+    "off_wall": 0
+   },
+   "rapidtag-subpix": {
+    "frames": 500,
+    "sightings": 810,
+    "chances": 626,
+    "dropouts": 19,
+    "off_wall": 1
+   }
+  },
+  "gopro-bf-2036": {
+   "napa-m32-none": {
+    "frames": 500,
+    "sightings": 1752,
+    "chances": 1320,
+    "dropouts": 139,
+    "off_wall": 0
+   },
+   "napa-m32-coarse": {
+    "frames": 500,
+    "sightings": 1970,
+    "chances": 1519,
+    "dropouts": 154,
+    "off_wall": 0
+   },
+   "napa-m22-none": {
+    "frames": 500,
+    "sightings": 2665,
+    "chances": 2189,
+    "dropouts": 154,
+    "off_wall": 0
+   },
+   "napa-m22-coarse": {
+    "frames": 500,
+    "sightings": 2812,
+    "chances": 2325,
+    "dropouts": 162,
+    "off_wall": 0
+   },
+   "napa-tall22": {
+    "frames": 500,
+    "sightings": 2029,
+    "chances": 1597,
+    "dropouts": 151,
+    "off_wall": 0
+   },
+   "napa-m16-none": {
+    "frames": 500,
+    "sightings": 3705,
+    "chances": 3246,
+    "dropouts": 76,
+    "off_wall": 0
+   },
+   "napa-preset": {
+    "frames": 500,
+    "sightings": 3965,
+    "chances": 3534,
+    "dropouts": 80,
+    "off_wall": 0
+   },
+   "apriltag3-d1": {
+    "frames": 500,
+    "sightings": 3362,
+    "chances": 2937,
+    "dropouts": 66,
+    "off_wall": 0
+   },
+   "apriltag3-d2": {
+    "frames": 500,
+    "sightings": 1828,
+    "chances": 1414,
+    "dropouts": 103,
+    "off_wall": 0
+   },
+   "wpilib-d2": {
+    "frames": 500,
+    "sightings": 201,
+    "chances": 152,
+    "dropouts": 0,
+    "off_wall": 0
+   },
+   "locus": {
+    "frames": 500,
+    "sightings": 3149,
+    "chances": 2585,
+    "dropouts": 161,
+    "off_wall": 0
+   },
+   "opencv-subpix": {
+    "frames": 500,
+    "sightings": 2781,
+    "chances": 2309,
+    "dropouts": 149,
+    "off_wall": 0
+   },
+   "aruco-nano": {
+    "frames": 500,
+    "sightings": 2560,
+    "chances": 2119,
+    "dropouts": 107,
+    "off_wall": 0
+   },
+   "rapidtag-subpix": {
+    "frames": 500,
+    "sightings": 1246,
+    "chances": 1076,
+    "dropouts": 24,
+    "off_wall": 0
+   }
+  },
+  "gopro-bs-1676": {
+   "napa-m32-none": {
+    "frames": 500,
+    "sightings": 2018,
+    "chances": 1674,
+    "dropouts": 127,
+    "off_wall": 0
+   },
+   "napa-m32-coarse": {
+    "frames": 500,
+    "sightings": 2204,
+    "chances": 1860,
+    "dropouts": 128,
+    "off_wall": 0
+   },
+   "napa-m22-none": {
+    "frames": 500,
+    "sightings": 2762,
+    "chances": 2437,
+    "dropouts": 105,
+    "off_wall": 0
+   },
+   "napa-m22-coarse": {
+    "frames": 500,
+    "sightings": 2832,
+    "chances": 2494,
+    "dropouts": 104,
+    "off_wall": 0
+   },
+   "napa-tall22": {
+    "frames": 500,
+    "sightings": 2615,
+    "chances": 2307,
+    "dropouts": 123,
+    "off_wall": 0
+   },
+   "napa-m16-none": {
+    "frames": 500,
+    "sightings": 3266,
+    "chances": 3022,
+    "dropouts": 46,
+    "off_wall": 0
+   },
+   "napa-preset": {
+    "frames": 500,
+    "sightings": 3504,
+    "chances": 3246,
+    "dropouts": 64,
+    "off_wall": 0
+   },
+   "apriltag3-d1": {
+    "frames": 500,
+    "sightings": 2982,
+    "chances": 2765,
+    "dropouts": 36,
+    "off_wall": 0
+   },
+   "apriltag3-d2": {
+    "frames": 500,
+    "sightings": 2104,
+    "chances": 1822,
+    "dropouts": 79,
+    "off_wall": 1
+   },
+   "wpilib-d2": {
+    "frames": 500,
+    "sightings": 414,
+    "chances": 349,
+    "dropouts": 3,
+    "off_wall": 0
+   },
+   "locus": {
+    "frames": 500,
+    "sightings": 3004,
+    "chances": 2684,
+    "dropouts": 103,
+    "off_wall": 0
+   },
+   "opencv-subpix": {
+    "frames": 500,
+    "sightings": 2734,
+    "chances": 2437,
+    "dropouts": 84,
+    "off_wall": 0
+   },
+   "aruco-nano": {
+    "frames": 500,
+    "sightings": 2491,
+    "chances": 2234,
+    "dropouts": 67,
+    "off_wall": 0
+   },
+   "rapidtag-subpix": {
+    "frames": 500,
+    "sightings": 1793,
+    "chances": 1618,
+    "dropouts": 30,
+    "off_wall": 0
+   }
+  },
+  "gopro-bs-3353": {
+   "napa-m32-none": {
+    "frames": 500,
+    "sightings": 2480,
+    "chances": 2009,
+    "dropouts": 177,
+    "off_wall": 0
+   },
+   "napa-m32-coarse": {
+    "frames": 500,
+    "sightings": 2527,
+    "chances": 2050,
+    "dropouts": 173,
+    "off_wall": 0
+   },
+   "napa-m22-none": {
+    "frames": 500,
+    "sightings": 3684,
+    "chances": 3163,
+    "dropouts": 167,
+    "off_wall": 0
+   },
+   "napa-m22-coarse": {
+    "frames": 500,
+    "sightings": 3702,
+    "chances": 3181,
+    "dropouts": 171,
+    "off_wall": 0
+   },
+   "napa-tall22": {
+    "frames": 500,
+    "sightings": 2895,
+    "chances": 2459,
+    "dropouts": 150,
+    "off_wall": 0
+   },
+   "napa-m16-none": {
+    "frames": 500,
+    "sightings": 4885,
+    "chances": 4441,
+    "dropouts": 99,
+    "off_wall": 0
+   },
+   "napa-preset": {
+    "frames": 500,
+    "sightings": 5039,
+    "chances": 4584,
+    "dropouts": 105,
+    "off_wall": 0
+   },
+   "apriltag3-d1": {
+    "frames": 500,
+    "sightings": 4349,
+    "chances": 3941,
+    "dropouts": 85,
+    "off_wall": 0
+   },
+   "apriltag3-d2": {
+    "frames": 500,
+    "sightings": 2452,
+    "chances": 2010,
+    "dropouts": 136,
+    "off_wall": 0
+   },
+   "wpilib-d2": {
+    "frames": 500,
+    "sightings": 156,
+    "chances": 111,
+    "dropouts": 1,
+    "off_wall": 0
+   },
+   "locus": {
+    "frames": 500,
+    "sightings": 4203,
+    "chances": 3611,
+    "dropouts": 202,
+    "off_wall": 0
+   },
+   "opencv-subpix": {
+    "frames": 500,
+    "sightings": 3645,
+    "chances": 3169,
+    "dropouts": 165,
+    "off_wall": 0
+   },
+   "aruco-nano": {
+    "frames": 500,
+    "sightings": 3219,
+    "chances": 2785,
+    "dropouts": 118,
+    "off_wall": 0
+   },
+   "rapidtag-subpix": {
+    "frames": 500,
+    "sightings": 1256,
+    "chances": 1131,
+    "dropouts": 20,
+    "off_wall": 1
+   }
+  },
+  "tango1080-af-1932": {
+   "napa-m32-none": {
+    "frames": 500,
+    "sightings": 1444,
+    "chances": 1150,
+    "dropouts": 114,
+    "off_wall": 0
+   },
+   "napa-m32-coarse": {
+    "frames": 500,
+    "sightings": 1623,
+    "chances": 1280,
+    "dropouts": 135,
+    "off_wall": 0
+   },
+   "napa-m22-none": {
+    "frames": 500,
+    "sightings": 1939,
+    "chances": 1633,
+    "dropouts": 111,
+    "off_wall": 0
+   },
+   "napa-m22-coarse": {
+    "frames": 500,
+    "sightings": 2070,
+    "chances": 1730,
+    "dropouts": 119,
+    "off_wall": 0
+   },
+   "napa-tall22": {
+    "frames": 500,
+    "sightings": 1725,
+    "chances": 1455,
+    "dropouts": 98,
+    "off_wall": 0
+   },
+   "napa-m16-none": {
+    "frames": 500,
+    "sightings": 2334,
+    "chances": 1987,
+    "dropouts": 120,
+    "off_wall": 0
+   },
+   "napa-preset": {
+    "frames": 500,
+    "sightings": 2451,
+    "chances": 2133,
+    "dropouts": 110,
+    "off_wall": 0
+   },
+   "apriltag3-d1": {
+    "frames": 500,
+    "sightings": 2231,
+    "chances": 1906,
+    "dropouts": 94,
+    "off_wall": 0
+   },
+   "apriltag3-d2": {
+    "frames": 500,
+    "sightings": 1637,
+    "chances": 1301,
+    "dropouts": 132,
+    "off_wall": 0
+   },
+   "wpilib-d2": {
+    "frames": 500,
+    "sightings": 285,
+    "chances": 222,
+    "dropouts": 8,
+    "off_wall": 1
+   },
+   "locus": {
+    "frames": 500,
+    "sightings": 1556,
+    "chances": 1224,
+    "dropouts": 131,
+    "off_wall": 0
+   },
+   "opencv-subpix": {
+    "frames": 500,
+    "sightings": 1957,
+    "chances": 1714,
+    "dropouts": 81,
+    "off_wall": 0
+   },
+   "aruco-nano": {
+    "frames": 500,
+    "sightings": 1848,
+    "chances": 1583,
+    "dropouts": 104,
+    "off_wall": 0
+   },
+   "rapidtag-subpix": {
+    "frames": 500,
+    "sightings": 1723,
+    "chances": 1529,
+    "dropouts": 54,
+    "off_wall": 0
+   }
+  },
+  "tango1080-af-966": {
+   "napa-m32-none": {
+    "frames": 500,
+    "sightings": 1271,
+    "chances": 945,
+    "dropouts": 111,
+    "off_wall": 0
+   },
+   "napa-m32-coarse": {
+    "frames": 500,
+    "sightings": 1359,
+    "chances": 1033,
+    "dropouts": 106,
+    "off_wall": 0
+   },
+   "napa-m22-none": {
+    "frames": 500,
+    "sightings": 1851,
+    "chances": 1531,
+    "dropouts": 92,
+    "off_wall": 0
+   },
+   "napa-m22-coarse": {
+    "frames": 500,
+    "sightings": 1884,
+    "chances": 1563,
+    "dropouts": 85,
+    "off_wall": 0
+   },
+   "napa-tall22": {
+    "frames": 500,
+    "sightings": 1784,
+    "chances": 1471,
+    "dropouts": 87,
+    "off_wall": 0
+   },
+   "napa-m16-none": {
+    "frames": 500,
+    "sightings": 2108,
+    "chances": 1803,
+    "dropouts": 74,
+    "off_wall": 0
+   },
+   "napa-preset": {
+    "frames": 500,
+    "sightings": 2191,
+    "chances": 1893,
+    "dropouts": 59,
+    "off_wall": 0
+   },
+   "apriltag3-d1": {
+    "frames": 500,
+    "sightings": 1924,
+    "chances": 1641,
+    "dropouts": 59,
+    "off_wall": 0
+   },
+   "apriltag3-d2": {
+    "frames": 500,
+    "sightings": 1487,
+    "chances": 1120,
+    "dropouts": 152,
+    "off_wall": 0
+   },
+   "wpilib-d2": {
+    "frames": 500,
+    "sightings": 296,
+    "chances": 210,
+    "dropouts": 8,
+    "off_wall": 0
+   },
+   "locus": {
+    "frames": 500,
+    "sightings": 1519,
+    "chances": 1142,
+    "dropouts": 118,
+    "off_wall": 0
+   },
+   "opencv-subpix": {
+    "frames": 500,
+    "sightings": 1623,
+    "chances": 1326,
+    "dropouts": 85,
+    "off_wall": 0
+   },
+   "aruco-nano": {
+    "frames": 500,
+    "sightings": 1521,
+    "chances": 1225,
+    "dropouts": 84,
+    "off_wall": 0
+   },
+   "rapidtag-subpix": {
+    "frames": 500,
+    "sightings": 1688,
+    "chances": 1383,
+    "dropouts": 121,
+    "off_wall": 0
+   }
+  },
+  "tango1080-as-1563": {
+   "napa-m32-none": {
+    "frames": 500,
+    "sightings": 1200,
+    "chances": 913,
+    "dropouts": 95,
+    "off_wall": 0
+   },
+   "napa-m32-coarse": {
+    "frames": 500,
+    "sightings": 1268,
+    "chances": 974,
+    "dropouts": 97,
+    "off_wall": 0
+   },
+   "napa-m22-none": {
+    "frames": 500,
+    "sightings": 1633,
+    "chances": 1354,
+    "dropouts": 78,
+    "off_wall": 0
+   },
+   "napa-m22-coarse": {
+    "frames": 500,
+    "sightings": 1659,
+    "chances": 1375,
+    "dropouts": 79,
+    "off_wall": 0
+   },
+   "napa-tall22": {
+    "frames": 500,
+    "sightings": 1577,
+    "chances": 1320,
+    "dropouts": 71,
+    "off_wall": 0
+   },
+   "napa-m16-none": {
+    "frames": 500,
+    "sightings": 1811,
+    "chances": 1532,
+    "dropouts": 61,
+    "off_wall": 0
+   },
+   "napa-preset": {
+    "frames": 500,
+    "sightings": 1898,
+    "chances": 1603,
+    "dropouts": 64,
+    "off_wall": 0
+   },
+   "apriltag3-d1": {
+    "frames": 500,
+    "sightings": 1592,
+    "chances": 1320,
+    "dropouts": 60,
+    "off_wall": 0
+   },
+   "apriltag3-d2": {
+    "frames": 500,
+    "sightings": 1189,
+    "chances": 857,
+    "dropouts": 121,
+    "off_wall": 0
+   },
+   "wpilib-d2": {
+    "frames": 500,
+    "sightings": 229,
+    "chances": 174,
+    "dropouts": 8,
+    "off_wall": 0
+   },
+   "locus": {
+    "frames": 500,
+    "sightings": 1339,
+    "chances": 999,
+    "dropouts": 122,
+    "off_wall": 0
+   },
+   "opencv-subpix": {
+    "frames": 500,
+    "sightings": 1261,
+    "chances": 998,
+    "dropouts": 66,
+    "off_wall": 0
+   },
+   "aruco-nano": {
+    "frames": 500,
+    "sightings": 1264,
+    "chances": 1024,
+    "dropouts": 74,
+    "off_wall": 0
+   },
+   "rapidtag-subpix": {
+    "frames": 500,
+    "sightings": 1301,
+    "chances": 1035,
+    "dropouts": 72,
+    "off_wall": 0
+   }
+  },
+  "tango1080-as-3126": {
+   "napa-m32-none": {
+    "frames": 500,
+    "sightings": 2292,
+    "chances": 1860,
+    "dropouts": 157,
+    "off_wall": 0
+   },
+   "napa-m32-coarse": {
+    "frames": 500,
+    "sightings": 2490,
+    "chances": 2002,
+    "dropouts": 193,
+    "off_wall": 0
+   },
+   "napa-m22-none": {
+    "frames": 500,
+    "sightings": 3051,
+    "chances": 2666,
+    "dropouts": 165,
+    "off_wall": 0
+   },
+   "napa-m22-coarse": {
+    "frames": 500,
+    "sightings": 3188,
+    "chances": 2761,
+    "dropouts": 187,
+    "off_wall": 0
+   },
+   "napa-tall22": {
+    "frames": 500,
+    "sightings": 2754,
+    "chances": 2375,
+    "dropouts": 174,
+    "off_wall": 0
+   },
+   "napa-m16-none": {
+    "frames": 500,
+    "sightings": 3547,
+    "chances": 3151,
+    "dropouts": 147,
+    "off_wall": 0
+   },
+   "napa-preset": {
+    "frames": 500,
+    "sightings": 3700,
+    "chances": 3345,
+    "dropouts": 135,
+    "off_wall": 0
+   },
+   "apriltag3-d1": {
+    "frames": 500,
+    "sightings": 3450,
+    "chances": 3073,
+    "dropouts": 167,
+    "off_wall": 0
+   },
+   "apriltag3-d2": {
+    "frames": 500,
+    "sightings": 2647,
+    "chances": 2160,
+    "dropouts": 204,
+    "off_wall": 0
+   },
+   "wpilib-d2": {
+    "frames": 500,
+    "sightings": 422,
+    "chances": 363,
+    "dropouts": 10,
+    "off_wall": 0
+   },
+   "locus": {
+    "frames": 500,
+    "sightings": 2403,
+    "chances": 1965,
+    "dropouts": 220,
+    "off_wall": 0
+   },
+   "opencv-subpix": {
+    "frames": 500,
+    "sightings": 2922,
+    "chances": 2577,
+    "dropouts": 125,
+    "off_wall": 0
+   },
+   "aruco-nano": {
+    "frames": 500,
+    "sightings": 2851,
+    "chances": 2468,
+    "dropouts": 172,
+    "off_wall": 0
+   },
+   "rapidtag-subpix": {
+    "frames": 500,
+    "sightings": 2516,
+    "chances": 2292,
+    "dropouts": 81,
+    "off_wall": 0
+   }
+  },
+  "tango1080-bf-1016": {
+   "napa-m32-none": {
+    "frames": 500,
+    "sightings": 578,
+    "chances": 373,
+    "dropouts": 56,
+    "off_wall": 0
+   },
+   "napa-m32-coarse": {
+    "frames": 500,
+    "sightings": 615,
+    "chances": 410,
+    "dropouts": 61,
+    "off_wall": 0
+   },
+   "napa-m22-none": {
+    "frames": 500,
+    "sightings": 966,
+    "chances": 727,
+    "dropouts": 54,
+    "off_wall": 0
+   },
+   "napa-m22-coarse": {
+    "frames": 500,
+    "sightings": 986,
+    "chances": 748,
+    "dropouts": 51,
+    "off_wall": 0
+   },
+   "napa-tall22": {
+    "frames": 500,
+    "sightings": 917,
+    "chances": 689,
+    "dropouts": 43,
+    "off_wall": 0
+   },
+   "napa-m16-none": {
+    "frames": 500,
+    "sightings": 1088,
+    "chances": 858,
+    "dropouts": 54,
+    "off_wall": 0
+   },
+   "napa-preset": {
+    "frames": 500,
+    "sightings": 1128,
+    "chances": 895,
+    "dropouts": 47,
+    "off_wall": 0
+   },
+   "apriltag3-d1": {
+    "frames": 500,
+    "sightings": 864,
+    "chances": 653,
+    "dropouts": 37,
+    "off_wall": 0
+   },
+   "apriltag3-d2": {
+    "frames": 500,
+    "sightings": 622,
+    "chances": 397,
+    "dropouts": 72,
+    "off_wall": 0
+   },
+   "wpilib-d2": {
+    "frames": 500,
+    "sightings": 162,
+    "chances": 117,
+    "dropouts": 9,
+    "off_wall": 0
+   },
+   "locus": {
+    "frames": 500,
+    "sightings": 563,
+    "chances": 356,
+    "dropouts": 56,
+    "off_wall": 0
+   },
+   "opencv-subpix": {
+    "frames": 500,
+    "sightings": 605,
+    "chances": 439,
+    "dropouts": 36,
+    "off_wall": 0
+   },
+   "aruco-nano": {
+    "frames": 500,
+    "sightings": 635,
+    "chances": 458,
+    "dropouts": 46,
+    "off_wall": 0
+   },
+   "rapidtag-subpix": {
+    "frames": 500,
+    "sightings": 704,
+    "chances": 524,
+    "dropouts": 44,
+    "off_wall": 0
+   }
+  },
+  "tango1080-bf-2032": {
+   "napa-m32-none": {
+    "frames": 500,
+    "sightings": 1451,
+    "chances": 1161,
+    "dropouts": 79,
+    "off_wall": 0
+   },
+   "napa-m32-coarse": {
+    "frames": 500,
+    "sightings": 1667,
+    "chances": 1369,
+    "dropouts": 91,
+    "off_wall": 0
+   },
+   "napa-m22-none": {
+    "frames": 500,
+    "sightings": 2118,
+    "chances": 1750,
+    "dropouts": 107,
+    "off_wall": 0
+   },
+   "napa-m22-coarse": {
+    "frames": 500,
+    "sightings": 2247,
+    "chances": 1889,
+    "dropouts": 112,
+    "off_wall": 0
+   },
+   "napa-tall22": {
+    "frames": 500,
+    "sightings": 1901,
+    "chances": 1611,
+    "dropouts": 104,
+    "off_wall": 0
+   },
+   "napa-m16-none": {
+    "frames": 500,
+    "sightings": 2488,
+    "chances": 2151,
+    "dropouts": 83,
+    "off_wall": 0
+   },
+   "napa-preset": {
+    "frames": 500,
+    "sightings": 2543,
+    "chances": 2223,
+    "dropouts": 79,
+    "off_wall": 0
+   },
+   "apriltag3-d1": {
+    "frames": 500,
+    "sightings": 2305,
+    "chances": 2004,
+    "dropouts": 78,
+    "off_wall": 0
+   },
+   "apriltag3-d2": {
+    "frames": 500,
+    "sightings": 1719,
+    "chances": 1360,
+    "dropouts": 103,
+    "off_wall": 0
+   },
+   "wpilib-d2": {
+    "frames": 500,
+    "sightings": 315,
+    "chances": 243,
+    "dropouts": 13,
+    "off_wall": 0
+   },
+   "locus": {
+    "frames": 500,
+    "sightings": 1433,
+    "chances": 1025,
+    "dropouts": 147,
+    "off_wall": 0
+   },
+   "opencv-subpix": {
+    "frames": 500,
+    "sightings": 1859,
+    "chances": 1612,
+    "dropouts": 68,
+    "off_wall": 0
+   },
+   "aruco-nano": {
+    "frames": 500,
+    "sightings": 1811,
+    "chances": 1573,
+    "dropouts": 52,
+    "off_wall": 0
+   },
+   "rapidtag-subpix": {
+    "frames": 500,
+    "sightings": 1658,
+    "chances": 1404,
+    "dropouts": 57,
+    "off_wall": 1
+   }
+  },
+  "tango1080-bs-1670": {
+   "napa-m32-none": {
+    "frames": 500,
+    "sightings": 1431,
+    "chances": 1098,
+    "dropouts": 120,
+    "off_wall": 0
+   },
+   "napa-m32-coarse": {
+    "frames": 500,
+    "sightings": 1511,
+    "chances": 1183,
+    "dropouts": 127,
+    "off_wall": 0
+   },
+   "napa-m22-none": {
+    "frames": 500,
+    "sightings": 1993,
+    "chances": 1698,
+    "dropouts": 103,
+    "off_wall": 0
+   },
+   "napa-m22-coarse": {
+    "frames": 500,
+    "sightings": 2021,
+    "chances": 1727,
+    "dropouts": 104,
+    "off_wall": 0
+   },
+   "napa-tall22": {
+    "frames": 500,
+    "sightings": 1922,
+    "chances": 1622,
+    "dropouts": 117,
+    "off_wall": 0
+   },
+   "napa-m16-none": {
+    "frames": 500,
+    "sightings": 2248,
+    "chances": 1952,
+    "dropouts": 97,
+    "off_wall": 0
+   },
+   "napa-preset": {
+    "frames": 500,
+    "sightings": 2340,
+    "chances": 2018,
+    "dropouts": 94,
+    "off_wall": 0
+   },
+   "apriltag3-d1": {
+    "frames": 500,
+    "sightings": 2066,
+    "chances": 1785,
+    "dropouts": 85,
+    "off_wall": 0
+   },
+   "apriltag3-d2": {
+    "frames": 500,
+    "sightings": 1630,
+    "chances": 1274,
+    "dropouts": 134,
+    "off_wall": 0
+   },
+   "wpilib-d2": {
+    "frames": 500,
+    "sightings": 257,
+    "chances": 202,
+    "dropouts": 8,
+    "off_wall": 0
+   },
+   "locus": {
+    "frames": 500,
+    "sightings": 1682,
+    "chances": 1315,
+    "dropouts": 136,
+    "off_wall": 0
+   },
+   "opencv-subpix": {
+    "frames": 500,
+    "sightings": 1730,
+    "chances": 1436,
+    "dropouts": 97,
+    "off_wall": 0
+   },
+   "aruco-nano": {
+    "frames": 500,
+    "sightings": 1656,
+    "chances": 1351,
+    "dropouts": 120,
+    "off_wall": 0
+   },
+   "rapidtag-subpix": {
+    "frames": 500,
+    "sightings": 1772,
+    "chances": 1443,
+    "dropouts": 125,
+    "off_wall": 0
+   }
+  },
+  "tango1080-bs-3341": {
+   "napa-m32-none": {
+    "frames": 500,
+    "sightings": 1878,
+    "chances": 1516,
+    "dropouts": 118,
+    "off_wall": 0
+   },
+   "napa-m32-coarse": {
+    "frames": 500,
+    "sightings": 1970,
+    "chances": 1620,
+    "dropouts": 118,
+    "off_wall": 0
+   },
+   "napa-m22-none": {
+    "frames": 500,
+    "sightings": 2704,
+    "chances": 2347,
+    "dropouts": 114,
+    "off_wall": 0
+   },
+   "napa-m22-coarse": {
+    "frames": 500,
+    "sightings": 2722,
+    "chances": 2371,
+    "dropouts": 108,
+    "off_wall": 0
+   },
+   "napa-tall22": {
+    "frames": 500,
+    "sightings": 2417,
+    "chances": 2062,
+    "dropouts": 144,
+    "off_wall": 0
+   },
+   "napa-m16-none": {
+    "frames": 500,
+    "sightings": 2997,
+    "chances": 2678,
+    "dropouts": 93,
+    "off_wall": 0
+   },
+   "napa-preset": {
+    "frames": 500,
+    "sightings": 3050,
+    "chances": 2762,
+    "dropouts": 68,
+    "off_wall": 0
+   },
+   "apriltag3-d1": {
+    "frames": 500,
+    "sightings": 2821,
+    "chances": 2558,
+    "dropouts": 73,
+    "off_wall": 0
+   },
+   "apriltag3-d2": {
+    "frames": 500,
+    "sightings": 2238,
+    "chances": 1822,
+    "dropouts": 174,
+    "off_wall": 0
+   },
+   "wpilib-d2": {
+    "frames": 500,
+    "sightings": 283,
+    "chances": 239,
+    "dropouts": 4,
+    "off_wall": 0
+   },
+   "locus": {
+    "frames": 500,
+    "sightings": 1895,
+    "chances": 1419,
+    "dropouts": 166,
+    "off_wall": 0
+   },
+   "opencv-subpix": {
+    "frames": 500,
+    "sightings": 2323,
+    "chances": 2008,
+    "dropouts": 111,
+    "off_wall": 0
+   },
+   "aruco-nano": {
+    "frames": 500,
+    "sightings": 2203,
+    "chances": 1880,
+    "dropouts": 133,
+    "off_wall": 0
+   },
+   "rapidtag-subpix": {
+    "frames": 500,
+    "sightings": 1950,
+    "chances": 1673,
+    "dropouts": 84,
+    "off_wall": 0
+   }
+  },
+  "basler-2050": {
+   "napa-m32-none": {
+    "frames": 188,
+    "sightings": 127,
+    "chances": 32,
+    "dropouts": 3,
+    "off_wall": 0
+   },
+   "napa-m32-coarse": {
+    "frames": 188,
+    "sightings": 139,
+    "chances": 35,
+    "dropouts": 2,
+    "off_wall": 0
+   },
+   "napa-m22-none": {
+    "frames": 188,
+    "sightings": 149,
+    "chances": 36,
+    "dropouts": 0,
+    "off_wall": 0
+   },
+   "napa-m22-coarse": {
+    "frames": 188,
+    "sightings": 150,
+    "chances": 36,
+    "dropouts": 0,
+    "off_wall": 0
+   },
+   "napa-tall22": {
+    "frames": 188,
+    "sightings": 128,
+    "chances": 26,
+    "dropouts": 0,
+    "off_wall": 0
+   },
+   "napa-m16-none": {
+    "frames": 188,
+    "sightings": 152,
+    "chances": 37,
+    "dropouts": 0,
+    "off_wall": 0
+   },
+   "napa-preset": {
+    "frames": 188,
+    "sightings": 153,
+    "chances": 38,
+    "dropouts": 0,
+    "off_wall": 0
+   },
+   "apriltag3-d1": {
+    "frames": 188,
+    "sightings": 149,
+    "chances": 36,
+    "dropouts": 0,
+    "off_wall": 0
+   },
+   "apriltag3-d2": {
+    "frames": 188,
+    "sightings": 145,
+    "chances": 36,
+    "dropouts": 0,
+    "off_wall": 0
+   },
+   "wpilib-d2": {
+    "frames": 188,
+    "sightings": 4,
+    "chances": 0,
+    "dropouts": 0,
+    "off_wall": 0
+   },
+   "locus": {
+    "frames": 188,
+    "sightings": 0,
+    "chances": 0,
+    "dropouts": 0,
+    "off_wall": 0
+   },
+   "opencv-subpix": {
+    "frames": 188,
+    "sightings": 138,
+    "chances": 37,
+    "dropouts": 0,
+    "off_wall": 0
+   },
+   "aruco-nano": {
+    "frames": 188,
+    "sightings": 144,
+    "chances": 37,
+    "dropouts": 0,
+    "off_wall": 0
+   },
+   "rapidtag-subpix": {
+    "frames": 188,
+    "sightings": 142,
+    "chances": 37,
+    "dropouts": 0,
+    "off_wall": 0
+   }
+  },
+  "basler-4500": {
+   "napa-m32-none": {
+    "frames": 212,
+    "sightings": 96,
+    "chances": 36,
+    "dropouts": 0,
+    "off_wall": 0
+   },
+   "napa-m32-coarse": {
+    "frames": 212,
+    "sightings": 99,
+    "chances": 36,
+    "dropouts": 0,
+    "off_wall": 0
+   },
+   "napa-m22-none": {
+    "frames": 212,
+    "sightings": 100,
+    "chances": 36,
+    "dropouts": 0,
+    "off_wall": 0
+   },
+   "napa-m22-coarse": {
+    "frames": 212,
+    "sightings": 100,
+    "chances": 36,
+    "dropouts": 0,
+    "off_wall": 0
+   },
+   "napa-tall22": {
+    "frames": 212,
+    "sightings": 96,
+    "chances": 36,
+    "dropouts": 0,
+    "off_wall": 0
+   },
+   "napa-m16-none": {
+    "frames": 212,
+    "sightings": 100,
+    "chances": 36,
+    "dropouts": 0,
+    "off_wall": 0
+   },
+   "napa-preset": {
+    "frames": 212,
+    "sightings": 100,
+    "chances": 36,
+    "dropouts": 0,
+    "off_wall": 0
+   },
+   "apriltag3-d1": {
+    "frames": 212,
+    "sightings": 99,
+    "chances": 36,
+    "dropouts": 0,
+    "off_wall": 0
+   },
+   "apriltag3-d2": {
+    "frames": 212,
+    "sightings": 99,
+    "chances": 36,
+    "dropouts": 0,
+    "off_wall": 0
+   },
+   "wpilib-d2": {
+    "frames": 212,
+    "sightings": 3,
+    "chances": 0,
+    "dropouts": 0,
+    "off_wall": 0
+   },
+   "locus": {
+    "frames": 212,
+    "sightings": 0,
+    "chances": 0,
+    "dropouts": 0,
+    "off_wall": 0
+   },
+   "opencv-subpix": {
+    "frames": 212,
+    "sightings": 95,
+    "chances": 33,
+    "dropouts": 2,
+    "off_wall": 0
+   },
+   "aruco-nano": {
+    "frames": 212,
+    "sightings": 99,
+    "chances": 36,
+    "dropouts": 0,
+    "off_wall": 0
+   },
+   "rapidtag-subpix": {
+    "frames": 212,
+    "sightings": 99,
+    "chances": 36,
+    "dropouts": 0,
+    "off_wall": 0
+   }
+  },
+  "basler-5650": {
+   "napa-m32-none": {
+    "frames": 279,
+    "sightings": 278,
+    "chances": 48,
+    "dropouts": 1,
+    "off_wall": 0
+   },
+   "napa-m32-coarse": {
+    "frames": 279,
+    "sightings": 284,
+    "chances": 48,
+    "dropouts": 1,
+    "off_wall": 0
+   },
+   "napa-m22-none": {
+    "frames": 279,
+    "sightings": 320,
+    "chances": 57,
+    "dropouts": 0,
+    "off_wall": 0
+   },
+   "napa-m22-coarse": {
+    "frames": 279,
+    "sightings": 322,
+    "chances": 57,
+    "dropouts": 0,
+    "off_wall": 0
+   },
+   "napa-tall22": {
+    "frames": 279,
+    "sightings": 287,
+    "chances": 49,
+    "dropouts": 2,
+    "off_wall": 0
+   },
+   "napa-m16-none": {
+    "frames": 279,
+    "sightings": 332,
+    "chances": 60,
+    "dropouts": 1,
+    "off_wall": 0
+   },
+   "napa-preset": {
+    "frames": 279,
+    "sightings": 336,
+    "chances": 61,
+    "dropouts": 2,
+    "off_wall": 0
+   },
+   "apriltag3-d1": {
+    "frames": 279,
+    "sightings": 292,
+    "chances": 51,
+    "dropouts": 1,
+    "off_wall": 0
+   },
+   "apriltag3-d2": {
+    "frames": 279,
+    "sightings": 275,
+    "chances": 46,
+    "dropouts": 5,
+    "off_wall": 0
+   },
+   "wpilib-d2": {
+    "frames": 279,
+    "sightings": 66,
+    "chances": 7,
+    "dropouts": 0,
+    "off_wall": 0
+   },
+   "locus": {
+    "frames": 279,
+    "sightings": 0,
+    "chances": 0,
+    "dropouts": 0,
+    "off_wall": 0
+   },
+   "opencv-subpix": {
+    "frames": 279,
+    "sightings": 230,
+    "chances": 36,
+    "dropouts": 3,
+    "off_wall": 0
+   },
+   "aruco-nano": {
+    "frames": 279,
+    "sightings": 266,
+    "chances": 47,
+    "dropouts": 2,
+    "off_wall": 0
+   },
+   "rapidtag-subpix": {
+    "frames": 279,
+    "sightings": 228,
+    "chances": 32,
+    "dropouts": 0,
+    "off_wall": 0
+   }
+  },
+  "basler-8400": {
+   "napa-m32-none": {
+    "frames": 597,
+    "sightings": 107,
+    "chances": 43,
+    "dropouts": 2,
+    "off_wall": 0
+   },
+   "napa-m32-coarse": {
+    "frames": 597,
+    "sightings": 107,
+    "chances": 43,
+    "dropouts": 2,
+    "off_wall": 0
+   },
+   "napa-m22-none": {
+    "frames": 597,
+    "sightings": 103,
+    "chances": 42,
+    "dropouts": 0,
+    "off_wall": 0
+   },
+   "napa-m22-coarse": {
+    "frames": 597,
+    "sightings": 103,
+    "chances": 42,
+    "dropouts": 0,
+    "off_wall": 0
+   },
+   "napa-tall22": {
+    "frames": 597,
+    "sightings": 105,
+    "chances": 43,
+    "dropouts": 0,
+    "off_wall": 0
+   },
+   "napa-m16-none": {
+    "frames": 597,
+    "sightings": 104,
+    "chances": 43,
+    "dropouts": 1,
+    "off_wall": 0
+   },
+   "napa-preset": {
+    "frames": 597,
+    "sightings": 109,
+    "chances": 45,
+    "dropouts": 1,
+    "off_wall": 0
+   },
+   "apriltag3-d1": {
+    "frames": 597,
+    "sightings": 101,
+    "chances": 42,
+    "dropouts": 1,
+    "off_wall": 0
+   },
+   "apriltag3-d2": {
+    "frames": 597,
+    "sightings": 107,
+    "chances": 44,
+    "dropouts": 2,
+    "off_wall": 0
+   },
+   "wpilib-d2": {
+    "frames": 597,
+    "sightings": 0,
+    "chances": 0,
+    "dropouts": 0,
+    "off_wall": 0
+   },
+   "locus": {
+    "frames": 597,
+    "sightings": 0,
+    "chances": 0,
+    "dropouts": 0,
+    "off_wall": 0
+   },
+   "opencv-subpix": {
+    "frames": 597,
+    "sightings": 44,
+    "chances": 12,
+    "dropouts": 0,
+    "off_wall": 0
+   },
+   "aruco-nano": {
+    "frames": 597,
+    "sightings": 104,
+    "chances": 42,
+    "dropouts": 3,
+    "off_wall": 0
+   },
+   "rapidtag-subpix": {
+    "frames": 597,
+    "sightings": 0,
+    "chances": 0,
+    "dropouts": 0,
+    "off_wall": 0
+   }
+  }
+ }
+}

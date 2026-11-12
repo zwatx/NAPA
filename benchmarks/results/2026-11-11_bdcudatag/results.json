@@ -1,0 +1,2766 @@
+{
+ "source_commit": "4ff7a31a5a7ced787825a5e226580b3cbaef07f6",
+ "core_sha256_prefix": "ca98a38e84cc",
+ "results": {
+  "napa": {
+   "scenes": [
+    {
+     "group": "640x480",
+     "tags": 256,
+     "found": 255,
+     "wrong_ids": 0,
+     "corner_px_median": 0.09978462023606385,
+     "ms_median": 0.23982790298759937,
+     "ms_p95": 0.2662512939423322
+    },
+    {
+     "group": "1280x720",
+     "tags": 256,
+     "found": 256,
+     "wrong_ids": 0,
+     "corner_px_median": 0.15659419524593782,
+     "ms_median": 0.36671548150479794,
+     "ms_p95": 0.42340798536315555
+    },
+    {
+     "group": "1280x800",
+     "tags": 256,
+     "found": 256,
+     "wrong_ids": 0,
+     "corner_px_median": 0.16500392233301847,
+     "ms_median": 0.37543894723057747,
+     "ms_p95": 0.4486508434638381
+    },
+    {
+     "group": "1920x1080",
+     "tags": 256,
+     "found": 256,
+     "wrong_ids": 0,
+     "corner_px_median": 0.22849781985425274,
+     "ms_median": 0.5018020747229457,
+     "ms_p95": 0.5939060123637319
+    }
+   ],
+   "hard": [
+    {
+     "group": "blur 640x480",
+     "tags": 57,
+     "found": 46,
+     "wrong_ids": 0,
+     "corner_px_median": 0.29024699723834363,
+     "ms_median": 0.15004293527454138,
+     "ms_p95": 0.3096897038631141
+    },
+    {
+     "group": "dark-noisy 640x480",
+     "tags": 56,
+     "found": 56,
+     "wrong_ids": 0,
+     "corner_px_median": 0.258144163320682,
+     "ms_median": 0.15719258226454258,
+     "ms_p95": 0.24266920518130064
+    },
+    {
+     "group": "dense 640x480",
+     "tags": 475,
+     "found": 474,
+     "wrong_ids": 0,
+     "corner_px_median": 0.26079553034404224,
+     "ms_median": 0.7037220057100058,
+     "ms_p95": 0.8760777069255707
+    },
+    {
+     "group": "edge 640x480",
+     "tags": 66,
+     "found": 66,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2680237046712498,
+     "ms_median": 0.11503149289637804,
+     "ms_p95": 0.13260687701404092
+    },
+    {
+     "group": "glare 640x480",
+     "tags": 52,
+     "found": 52,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2610153680217767,
+     "ms_median": 0.1520519144833088,
+     "ms_p95": 0.2095588599331677
+    },
+    {
+     "group": "jpeg 640x480",
+     "tags": 61,
+     "found": 61,
+     "wrong_ids": 0,
+     "corner_px_median": 0.27944652482713295,
+     "ms_median": 0.1499535283073783,
+     "ms_p95": 0.2007163711823523
+    },
+    {
+     "group": "lowcontrast 640x480",
+     "tags": 60,
+     "found": 58,
+     "wrong_ids": 0,
+     "corner_px_median": 0.28309076266991995,
+     "ms_median": 0.11935096699744463,
+     "ms_p95": 0.19086787942796932
+    },
+    {
+     "group": "mixed 640x480",
+     "tags": 92,
+     "found": 84,
+     "wrong_ids": 0,
+     "corner_px_median": 0.29434081222283537,
+     "ms_median": 0.3640134818851948,
+     "ms_p95": 0.4703175043687224
+    },
+    {
+     "group": "motion 640x480",
+     "tags": 61,
+     "found": 45,
+     "wrong_ids": 0,
+     "corner_px_median": 0.46693857665335403,
+     "ms_median": 0.23949053138494492,
+     "ms_p95": 0.39292398141697044
+    },
+    {
+     "group": "noise 640x480",
+     "tags": 50,
+     "found": 50,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2664278524948498,
+     "ms_median": 0.32285554334521294,
+     "ms_p95": 0.37760442355647683
+    },
+    {
+     "group": "shadow 640x480",
+     "tags": 50,
+     "found": 50,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2589395588611295,
+     "ms_median": 0.14486454892903566,
+     "ms_p95": 0.20599853014573452
+    },
+    {
+     "group": "tiny 640x480",
+     "tags": 91,
+     "found": 60,
+     "wrong_ids": 0,
+     "corner_px_median": 0.23768474875799933,
+     "ms_median": 0.1515989424660802,
+     "ms_p95": 0.24537027347832913
+    },
+    {
+     "group": "underexposed 640x480",
+     "tags": 37,
+     "found": 37,
+     "wrong_ids": 0,
+     "corner_px_median": 0.18666828230466342,
+     "ms_median": 0.12835650704801083,
+     "ms_p95": 0.16917277825996277
+    },
+    {
+     "group": "blur 1280x720",
+     "tags": 56,
+     "found": 56,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2563189407294496,
+     "ms_median": 0.2460764953866601,
+     "ms_p95": 0.36429539322853083
+    },
+    {
+     "group": "dark-noisy 1280x720",
+     "tags": 41,
+     "found": 41,
+     "wrong_ids": 0,
+     "corner_px_median": 0.29571307879289016,
+     "ms_median": 0.26643252931535244,
+     "ms_p95": 0.330372154712677
+    },
+    {
+     "group": "dense 1280x720",
+     "tags": 497,
+     "found": 497,
+     "wrong_ids": 0,
+     "corner_px_median": 0.27115640489052995,
+     "ms_median": 0.7296899566426873,
+     "ms_p95": 0.7904191268607974
+    },
+    {
+     "group": "edge 1280x720",
+     "tags": 55,
+     "found": 55,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2507880169057618,
+     "ms_median": 0.13328506611287594,
+     "ms_p95": 0.19976554904133081
+    },
+    {
+     "group": "glare 1280x720",
+     "tags": 41,
+     "found": 41,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2218905739124247,
+     "ms_median": 0.2596609992906451,
+     "ms_p95": 0.309737806674093
+    },
+    {
+     "group": "jpeg 1280x720",
+     "tags": 67,
+     "found": 66,
+     "wrong_ids": 0,
+     "corner_px_median": 0.3012381078890096,
+     "ms_median": 0.2460025716573,
+     "ms_p95": 0.2902441774494946
+    },
+    {
+     "group": "lowcontrast 1280x720",
+     "tags": 51,
+     "found": 51,
+     "wrong_ids": 0,
+     "corner_px_median": 0.31696471695616885,
+     "ms_median": 0.1600184477865696,
+     "ms_p95": 0.2256531734019518
+    },
+    {
+     "group": "mixed 1280x720",
+     "tags": 90,
+     "found": 90,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2663454313189586,
+     "ms_median": 0.6417965050786734,
+     "ms_p95": 0.9307781932875513
+    },
+    {
+     "group": "motion 1280x720",
+     "tags": 57,
+     "found": 56,
+     "wrong_ids": 0,
+     "corner_px_median": 0.46842374948686333,
+     "ms_median": 0.5307479295879602,
+     "ms_p95": 0.6809391314163804
+    },
+    {
+     "group": "noise 1280x720",
+     "tags": 44,
+     "found": 44,
+     "wrong_ids": 0,
+     "corner_px_median": 0.24451345719770007,
+     "ms_median": 0.9838126134127378,
+     "ms_p95": 1.268191507551819
+    },
+    {
+     "group": "shadow 1280x720",
+     "tags": 49,
+     "found": 49,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2390984364171594,
+     "ms_median": 0.3506905632093549,
+     "ms_p95": 0.43843114981427783
+    },
+    {
+     "group": "tiny 1280x720",
+     "tags": 93,
+     "found": 93,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2501227918964769,
+     "ms_median": 0.2476100344210863,
+     "ms_p95": 0.34303399734199047
+    },
+    {
+     "group": "underexposed 1280x720",
+     "tags": 40,
+     "found": 40,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2594488242903989,
+     "ms_median": 0.2653575502336025,
+     "ms_p95": 0.37639194633811707
+    }
+   ]
+  },
+  "napa16": {
+   "scenes": [
+    {
+     "group": "640x480",
+     "tags": 256,
+     "found": 256,
+     "wrong_ids": 0,
+     "corner_px_median": 0.10149327087196476,
+     "ms_median": 0.3607715480029583,
+     "ms_p95": 0.45431029284372915
+    },
+    {
+     "group": "1280x720",
+     "tags": 256,
+     "found": 256,
+     "wrong_ids": 0,
+     "corner_px_median": 0.1563455679997645,
+     "ms_median": 0.6508254446089268,
+     "ms_p95": 0.7455709506757557
+    },
+    {
+     "group": "1280x800",
+     "tags": 256,
+     "found": 256,
+     "wrong_ids": 0,
+     "corner_px_median": 0.16446349376352393,
+     "ms_median": 0.628514913842082,
+     "ms_p95": 0.7211787509731946
+    },
+    {
+     "group": "1920x1080",
+     "tags": 256,
+     "found": 256,
+     "wrong_ids": 0,
+     "corner_px_median": 0.22831274656847406,
+     "ms_median": 0.9893814567476511,
+     "ms_p95": 1.1463530594483018
+    }
+   ],
+   "hard": [
+    {
+     "group": "blur 640x480",
+     "tags": 57,
+     "found": 49,
+     "wrong_ids": 0,
+     "corner_px_median": 0.29398287097380427,
+     "ms_median": 0.21604332141578197,
+     "ms_p95": 0.3469413029961288
+    },
+    {
+     "group": "dark-noisy 640x480",
+     "tags": 56,
+     "found": 56,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2569462934402943,
+     "ms_median": 0.3627095138654113,
+     "ms_p95": 0.47451123828068376
+    },
+    {
+     "group": "dense 640x480",
+     "tags": 475,
+     "found": 475,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2610543995856889,
+     "ms_median": 0.9910435182973742,
+     "ms_p95": 1.260466920211911
+    },
+    {
+     "group": "edge 640x480",
+     "tags": 66,
+     "found": 66,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2678230080043646,
+     "ms_median": 0.15007983893156052,
+     "ms_p95": 0.18735320772975683
+    },
+    {
+     "group": "glare 640x480",
+     "tags": 52,
+     "found": 52,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2615561288507139,
+     "ms_median": 0.3899099538102746,
+     "ms_p95": 0.46859644353389734
+    },
+    {
+     "group": "jpeg 640x480",
+     "tags": 61,
+     "found": 61,
+     "wrong_ids": 0,
+     "corner_px_median": 0.27811457559275377,
+     "ms_median": 0.24887395557016134,
+     "ms_p95": 0.3199257771484554
+    },
+    {
+     "group": "lowcontrast 640x480",
+     "tags": 60,
+     "found": 60,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2729875468531462,
+     "ms_median": 0.16975007019937038,
+     "ms_p95": 0.23572427453473208
+    },
+    {
+     "group": "mixed 640x480",
+     "tags": 92,
+     "found": 90,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2953203519983236,
+     "ms_median": 0.7120210211724043,
+     "ms_p95": 0.8015106315724552
+    },
+    {
+     "group": "motion 640x480",
+     "tags": 61,
+     "found": 45,
+     "wrong_ids": 0,
+     "corner_px_median": 0.45361918896555664,
+     "ms_median": 0.5369363352656364,
+     "ms_p95": 0.6584972026757896
+    },
+    {
+     "group": "noise 640x480",
+     "tags": 50,
+     "found": 50,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2666004479396788,
+     "ms_median": 0.6167285609990358,
+     "ms_p95": 0.7035566377453506
+    },
+    {
+     "group": "shadow 640x480",
+     "tags": 50,
+     "found": 50,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2577407671755932,
+     "ms_median": 0.4285419126972556,
+     "ms_p95": 0.4717914271168411
+    },
+    {
+     "group": "tiny 640x480",
+     "tags": 91,
+     "found": 91,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2375940187968198,
+     "ms_median": 0.20565895829349756,
+     "ms_p95": 0.33033099025487883
+    },
+    {
+     "group": "underexposed 640x480",
+     "tags": 37,
+     "found": 37,
+     "wrong_ids": 0,
+     "corner_px_median": 0.1863297346043277,
+     "ms_median": 0.2677389420568943,
+     "ms_p95": 0.41249775094911445
+    },
+    {
+     "group": "blur 1280x720",
+     "tags": 56,
+     "found": 56,
+     "wrong_ids": 0,
+     "corner_px_median": 0.25727053363481145,
+     "ms_median": 0.3469754010438919,
+     "ms_p95": 0.5026176804676652
+    },
+    {
+     "group": "dark-noisy 1280x720",
+     "tags": 41,
+     "found": 41,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2947739678784504,
+     "ms_median": 0.7015934679657221,
+     "ms_p95": 1.1655743001028895
+    },
+    {
+     "group": "dense 1280x720",
+     "tags": 497,
+     "found": 497,
+     "wrong_ids": 0,
+     "corner_px_median": 0.27259410107052423,
+     "ms_median": 1.5156939625740051,
+     "ms_p95": 1.6036178334616125
+    },
+    {
+     "group": "edge 1280x720",
+     "tags": 55,
+     "found": 55,
+     "wrong_ids": 0,
+     "corner_px_median": 0.24909553379020646,
+     "ms_median": 0.262586516328156,
+     "ms_p95": 0.370689493138343
+    },
+    {
+     "group": "glare 1280x720",
+     "tags": 41,
+     "found": 41,
+     "wrong_ids": 0,
+     "corner_px_median": 0.22291056295768275,
+     "ms_median": 0.9450183715671301,
+     "ms_p95": 1.1033531627617776
+    },
+    {
+     "group": "jpeg 1280x720",
+     "tags": 67,
+     "found": 67,
+     "wrong_ids": 0,
+     "corner_px_median": 0.3020355510942945,
+     "ms_median": 0.5626550409942865,
+     "ms_p95": 0.645442446693778
+    },
+    {
+     "group": "lowcontrast 1280x720",
+     "tags": 51,
+     "found": 51,
+     "wrong_ids": 0,
+     "corner_px_median": 0.3164325196293562,
+     "ms_median": 0.28940686024725437,
+     "ms_p95": 0.38222449366003275
+    },
+    {
+     "group": "mixed 1280x720",
+     "tags": 90,
+     "found": 90,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2563877808220796,
+     "ms_median": 1.4695755671709776,
+     "ms_p95": 1.7131258151493967
+    },
+    {
+     "group": "motion 1280x720",
+     "tags": 57,
+     "found": 57,
+     "wrong_ids": 0,
+     "corner_px_median": 0.4829795818173645,
+     "ms_median": 1.224551466293633,
+     "ms_p95": 1.4299673144705594
+    },
+    {
+     "group": "noise 1280x720",
+     "tags": 44,
+     "found": 44,
+     "wrong_ids": 0,
+     "corner_px_median": 0.24098845273286235,
+     "ms_median": 1.5861175488680601,
+     "ms_p95": 1.7962560174055398
+    },
+    {
+     "group": "shadow 1280x720",
+     "tags": 49,
+     "found": 49,
+     "wrong_ids": 0,
+     "corner_px_median": 0.23815044938777308,
+     "ms_median": 1.08966208063066,
+     "ms_p95": 1.127305964473635
+    },
+    {
+     "group": "tiny 1280x720",
+     "tags": 93,
+     "found": 93,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2501398432402651,
+     "ms_median": 0.2953226212412119,
+     "ms_p95": 0.34967620158568025
+    },
+    {
+     "group": "underexposed 1280x720",
+     "tags": 40,
+     "found": 40,
+     "wrong_ids": 0,
+     "corner_px_median": 0.25880353833359937,
+     "ms_median": 0.7130139274522662,
+     "ms_p95": 1.0425641201436517
+    }
+   ]
+  },
+  "napa-recall": {
+   "scenes": [
+    {
+     "group": "640x480",
+     "tags": 256,
+     "found": 256,
+     "wrong_ids": 0,
+     "corner_px_median": 0.10149327087196476,
+     "ms_median": 0.4203915596008301,
+     "ms_p95": 0.49638395430520177
+    },
+    {
+     "group": "1280x720",
+     "tags": 256,
+     "found": 256,
+     "wrong_ids": 0,
+     "corner_px_median": 0.1563455679997645,
+     "ms_median": 0.8132370421662927,
+     "ms_p95": 0.9339223382994533
+    },
+    {
+     "group": "1280x800",
+     "tags": 256,
+     "found": 256,
+     "wrong_ids": 0,
+     "corner_px_median": 0.16446349376352393,
+     "ms_median": 0.838631996884942,
+     "ms_p95": 0.9615943301469088
+    },
+    {
+     "group": "1920x1080",
+     "tags": 256,
+     "found": 256,
+     "wrong_ids": 0,
+     "corner_px_median": 0.22831274656847406,
+     "ms_median": 1.3224058784544468,
+     "ms_p95": 1.480184367392212
+    }
+   ],
+   "hard": [
+    {
+     "group": "blur 640x480",
+     "tags": 57,
+     "found": 49,
+     "wrong_ids": 0,
+     "corner_px_median": 0.29398287097380427,
+     "ms_median": 0.26413751766085625,
+     "ms_p95": 0.44491166481748207
+    },
+    {
+     "group": "dark-noisy 640x480",
+     "tags": 56,
+     "found": 56,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2569462934402943,
+     "ms_median": 0.593752134591341,
+     "ms_p95": 0.7427439908497036
+    },
+    {
+     "group": "dense 640x480",
+     "tags": 475,
+     "found": 475,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2610543995856889,
+     "ms_median": 1.4448710717260838,
+     "ms_p95": 1.6444332664832468
+    },
+    {
+     "group": "edge 640x480",
+     "tags": 66,
+     "found": 66,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2678230080043646,
+     "ms_median": 0.19343604799360037,
+     "ms_p95": 0.2368870424106717
+    },
+    {
+     "group": "glare 640x480",
+     "tags": 52,
+     "found": 52,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2615561288507139,
+     "ms_median": 0.7397159934043884,
+     "ms_p95": 0.8172790054231881
+    },
+    {
+     "group": "jpeg 640x480",
+     "tags": 61,
+     "found": 61,
+     "wrong_ids": 0,
+     "corner_px_median": 0.27811457559275377,
+     "ms_median": 0.3608550177887082,
+     "ms_p95": 0.437941774725914
+    },
+    {
+     "group": "lowcontrast 640x480",
+     "tags": 60,
+     "found": 60,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2729875468531462,
+     "ms_median": 0.22756005637347698,
+     "ms_p95": 0.3186948015354573
+    },
+    {
+     "group": "mixed 640x480",
+     "tags": 92,
+     "found": 90,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2953203519983236,
+     "ms_median": 0.9418455883860588,
+     "ms_p95": 1.1161946807987988
+    },
+    {
+     "group": "motion 640x480",
+     "tags": 61,
+     "found": 46,
+     "wrong_ids": 0,
+     "corner_px_median": 0.4539730191207066,
+     "ms_median": 0.9224485838785768,
+     "ms_p95": 1.0656478232704103
+    },
+    {
+     "group": "noise 640x480",
+     "tags": 50,
+     "found": 50,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2666004479396788,
+     "ms_median": 0.9408533805981278,
+     "ms_p95": 1.0523594915866852
+    },
+    {
+     "group": "shadow 640x480",
+     "tags": 50,
+     "found": 50,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2577407671755932,
+     "ms_median": 0.7978775538504124,
+     "ms_p95": 0.8916207472793758
+    },
+    {
+     "group": "tiny 640x480",
+     "tags": 91,
+     "found": 91,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2375940187968198,
+     "ms_median": 0.22792594972997904,
+     "ms_p95": 0.34146110992878675
+    },
+    {
+     "group": "underexposed 640x480",
+     "tags": 37,
+     "found": 37,
+     "wrong_ids": 0,
+     "corner_px_median": 0.1863297346043277,
+     "ms_median": 0.42568950448185205,
+     "ms_p95": 0.74432254768908
+    },
+    {
+     "group": "blur 1280x720",
+     "tags": 56,
+     "found": 56,
+     "wrong_ids": 0,
+     "corner_px_median": 0.25727053363481145,
+     "ms_median": 0.4198971437290311,
+     "ms_p95": 0.5747616058215497
+    },
+    {
+     "group": "dark-noisy 1280x720",
+     "tags": 41,
+     "found": 41,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2947739678784504,
+     "ms_median": 1.1542190331965685,
+     "ms_p95": 1.9998286734335124
+    },
+    {
+     "group": "dense 1280x720",
+     "tags": 497,
+     "found": 497,
+     "wrong_ids": 0,
+     "corner_px_median": 0.27259410107052423,
+     "ms_median": 2.863196888938546,
+     "ms_p95": 2.9383907560259104
+    },
+    {
+     "group": "edge 1280x720",
+     "tags": 55,
+     "found": 55,
+     "wrong_ids": 0,
+     "corner_px_median": 0.24909553379020646,
+     "ms_median": 0.3468270879238844,
+     "ms_p95": 0.5193267017602919
+    },
+    {
+     "group": "glare 1280x720",
+     "tags": 41,
+     "found": 41,
+     "wrong_ids": 0,
+     "corner_px_median": 0.22291056295768275,
+     "ms_median": 1.8750466406345367,
+     "ms_p95": 2.1865183487534523
+    },
+    {
+     "group": "jpeg 1280x720",
+     "tags": 67,
+     "found": 67,
+     "wrong_ids": 0,
+     "corner_px_median": 0.3020355510942945,
+     "ms_median": 0.8567854529246688,
+     "ms_p95": 1.040016277693212
+    },
+    {
+     "group": "lowcontrast 1280x720",
+     "tags": 51,
+     "found": 51,
+     "wrong_ids": 0,
+     "corner_px_median": 0.3164325196293562,
+     "ms_median": 0.4368039080873132,
+     "ms_p95": 0.5610374733805656
+    },
+    {
+     "group": "mixed 1280x720",
+     "tags": 90,
+     "found": 90,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2563877808220796,
+     "ms_median": 2.296067075803876,
+     "ms_p95": 2.6774439262226224
+    },
+    {
+     "group": "motion 1280x720",
+     "tags": 57,
+     "found": 57,
+     "wrong_ids": 0,
+     "corner_px_median": 0.4829795818173645,
+     "ms_median": 2.2995243780314922,
+     "ms_p95": 2.52241917187348
+    },
+    {
+     "group": "noise 1280x720",
+     "tags": 44,
+     "found": 44,
+     "wrong_ids": 0,
+     "corner_px_median": 0.24098845273286235,
+     "ms_median": 2.5856494903564453,
+     "ms_p95": 2.960394322872161
+    },
+    {
+     "group": "shadow 1280x720",
+     "tags": 49,
+     "found": 49,
+     "wrong_ids": 0,
+     "corner_px_median": 0.23815044938777308,
+     "ms_median": 2.088659559376538,
+     "ms_p95": 2.1716897492296994
+    },
+    {
+     "group": "tiny 1280x720",
+     "tags": 93,
+     "found": 93,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2501398432402651,
+     "ms_median": 0.4110325826331973,
+     "ms_p95": 0.4989463835954665
+    },
+    {
+     "group": "underexposed 1280x720",
+     "tags": 40,
+     "found": 40,
+     "wrong_ids": 0,
+     "corner_px_median": 0.25880353833359937,
+     "ms_median": 1.4508299063891172,
+     "ms_p95": 2.5298503693193193
+    }
+   ]
+  },
+  "apriltag3-d1": {
+   "scenes": [
+    {
+     "group": "640x480",
+     "tags": 256,
+     "found": 256,
+     "wrong_ids": 0,
+     "corner_px_median": 0.10820955865005616,
+     "ms_median": 3.8776815636083484,
+     "ms_p95": 4.250275332015008
+    },
+    {
+     "group": "1280x720",
+     "tags": 256,
+     "found": 256,
+     "wrong_ids": 0,
+     "corner_px_median": 0.16097748877026055,
+     "ms_median": 10.086433961987495,
+     "ms_p95": 10.81600016914308
+    },
+    {
+     "group": "1280x800",
+     "tags": 256,
+     "found": 256,
+     "wrong_ids": 0,
+     "corner_px_median": 0.1678387459204851,
+     "ms_median": 10.840827482752502,
+     "ms_p95": 11.54472178313881
+    },
+    {
+     "group": "1920x1080",
+     "tags": 256,
+     "found": 256,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2270332815770838,
+     "ms_median": 19.863027380779386,
+     "ms_p95": 21.12019978230819
+    }
+   ],
+   "hard": [
+    {
+     "group": "blur 640x480",
+     "tags": 57,
+     "found": 44,
+     "wrong_ids": 0,
+     "corner_px_median": 0.29594401283779115,
+     "ms_median": 51.18364444933832,
+     "ms_p95": 53.35804709466174
+    },
+    {
+     "group": "dark-noisy 640x480",
+     "tags": 56,
+     "found": 56,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2651485083958486,
+     "ms_median": 45.80282955430448,
+     "ms_p95": 49.47744737146422
+    },
+    {
+     "group": "dense 640x480",
+     "tags": 475,
+     "found": 474,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2622315549938653,
+     "ms_median": 41.70233954209834,
+     "ms_p95": 44.176494458224624
+    },
+    {
+     "group": "edge 640x480",
+     "tags": 66,
+     "found": 66,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2716125007343876,
+     "ms_median": 45.020615914836526,
+     "ms_p95": 46.612283564172685
+    },
+    {
+     "group": "glare 640x480",
+     "tags": 52,
+     "found": 52,
+     "wrong_ids": 0,
+     "corner_px_median": 0.26137112399160917,
+     "ms_median": 32.95033297035843,
+     "ms_p95": 41.25321173341945
+    },
+    {
+     "group": "jpeg 640x480",
+     "tags": 61,
+     "found": 61,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2630491575413605,
+     "ms_median": 12.132560601457953,
+     "ms_p95": 13.515779003500938
+    },
+    {
+     "group": "lowcontrast 640x480",
+     "tags": 60,
+     "found": 37,
+     "wrong_ids": 0,
+     "corner_px_median": 0.3215048301117154,
+     "ms_median": 41.40985058620572,
+     "ms_p95": 43.34571718936786
+    },
+    {
+     "group": "mixed 640x480",
+     "tags": 92,
+     "found": 88,
+     "wrong_ids": 0,
+     "corner_px_median": 0.3050153494345303,
+     "ms_median": 47.96917305793613,
+     "ms_p95": 48.92390016466379
+    },
+    {
+     "group": "motion 640x480",
+     "tags": 61,
+     "found": 41,
+     "wrong_ids": 0,
+     "corner_px_median": 0.5417476716809526,
+     "ms_median": 39.72957201767713,
+     "ms_p95": 42.334824416320764
+    },
+    {
+     "group": "noise 640x480",
+     "tags": 50,
+     "found": 50,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2860675549234616,
+     "ms_median": 18.50263401865959,
+     "ms_p95": 22.895737551152706
+    },
+    {
+     "group": "shadow 640x480",
+     "tags": 50,
+     "found": 50,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2615445715671476,
+     "ms_median": 39.74889894016087,
+     "ms_p95": 42.55647712852806
+    },
+    {
+     "group": "tiny 640x480",
+     "tags": 91,
+     "found": 87,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2832710256809957,
+     "ms_median": 40.96473858226091,
+     "ms_p95": 44.12284465506673
+    },
+    {
+     "group": "underexposed 640x480",
+     "tags": 37,
+     "found": 37,
+     "wrong_ids": 0,
+     "corner_px_median": 0.18479572657944932,
+     "ms_median": 43.43536007218063,
+     "ms_p95": 45.78136645723134
+    },
+    {
+     "group": "blur 1280x720",
+     "tags": 56,
+     "found": 56,
+     "wrong_ids": 0,
+     "corner_px_median": 0.24130096786895414,
+     "ms_median": 140.18184994347394,
+     "ms_p95": 144.69347917474806
+    },
+    {
+     "group": "dark-noisy 1280x720",
+     "tags": 41,
+     "found": 41,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2891898250532303,
+     "ms_median": 130.26089349295944,
+     "ms_p95": 136.17404403630644
+    },
+    {
+     "group": "dense 1280x720",
+     "tags": 497,
+     "found": 497,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2746340891691019,
+     "ms_median": 108.4452624199912,
+     "ms_p95": 113.73818041756749
+    },
+    {
+     "group": "edge 1280x720",
+     "tags": 55,
+     "found": 55,
+     "wrong_ids": 0,
+     "corner_px_median": 0.24868328568585998,
+     "ms_median": 127.00752657838166,
+     "ms_p95": 132.11144934175536
+    },
+    {
+     "group": "glare 1280x720",
+     "tags": 41,
+     "found": 41,
+     "wrong_ids": 0,
+     "corner_px_median": 0.27288479260995446,
+     "ms_median": 89.02756858151406,
+     "ms_p95": 108.49811079679057
+    },
+    {
+     "group": "jpeg 1280x720",
+     "tags": 67,
+     "found": 66,
+     "wrong_ids": 0,
+     "corner_px_median": 0.3004407162621752,
+     "ms_median": 33.84642698802054,
+     "ms_p95": 42.90095150936395
+    },
+    {
+     "group": "lowcontrast 1280x720",
+     "tags": 51,
+     "found": 48,
+     "wrong_ids": 0,
+     "corner_px_median": 0.31688472837414866,
+     "ms_median": 125.42117806151509,
+     "ms_p95": 131.74598080804572
+    },
+    {
+     "group": "mixed 1280x720",
+     "tags": 90,
+     "found": 90,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2638062852272775,
+     "ms_median": 137.08530145231634,
+     "ms_p95": 139.44301398005337
+    },
+    {
+     "group": "motion 1280x720",
+     "tags": 57,
+     "found": 55,
+     "wrong_ids": 0,
+     "corner_px_median": 0.5231694678405503,
+     "ms_median": 121.33713206276298,
+     "ms_p95": 125.0806845491752
+    },
+    {
+     "group": "noise 1280x720",
+     "tags": 44,
+     "found": 43,
+     "wrong_ids": 0,
+     "corner_px_median": 0.24337695907310902,
+     "ms_median": 59.629142517223954,
+     "ms_p95": 68.87305192649364
+    },
+    {
+     "group": "shadow 1280x720",
+     "tags": 49,
+     "found": 49,
+     "wrong_ids": 0,
+     "corner_px_median": 0.23511057082953246,
+     "ms_median": 125.67129184026271,
+     "ms_p95": 132.1250849403441
+    },
+    {
+     "group": "tiny 1280x720",
+     "tags": 93,
+     "found": 93,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2530392347197712,
+     "ms_median": 132.18240498099476,
+     "ms_p95": 136.8765976279974
+    },
+    {
+     "group": "underexposed 1280x720",
+     "tags": 40,
+     "found": 40,
+     "wrong_ids": 0,
+     "corner_px_median": 0.24224983194503946,
+     "ms_median": 131.20335317216814,
+     "ms_p95": 136.6490674787201
+    }
+   ]
+  },
+  "aruco-nano": {
+   "scenes": [
+    {
+     "group": "640x480",
+     "tags": 256,
+     "found": 256,
+     "wrong_ids": 0,
+     "corner_px_median": 0.10629148011421469,
+     "ms_median": 0.856781960465014,
+     "ms_p95": 1.8706253613345325
+    },
+    {
+     "group": "1280x720",
+     "tags": 256,
+     "found": 256,
+     "wrong_ids": 0,
+     "corner_px_median": 0.16478646549012343,
+     "ms_median": 2.7247320394963026,
+     "ms_p95": 3.8457669201306994
+    },
+    {
+     "group": "1280x800",
+     "tags": 256,
+     "found": 256,
+     "wrong_ids": 0,
+     "corner_px_median": 0.16251328234451196,
+     "ms_median": 2.874640515074134,
+     "ms_p95": 3.9907195023261006
+    },
+    {
+     "group": "1920x1080",
+     "tags": 256,
+     "found": 256,
+     "wrong_ids": 0,
+     "corner_px_median": 0.22782563045001494,
+     "ms_median": 5.219100974500179,
+     "ms_p95": 6.3800663920119405
+    }
+   ],
+   "hard": [
+    {
+     "group": "blur 640x480",
+     "tags": 57,
+     "found": 41,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2964970341404657,
+     "ms_median": 0.9229921270161867,
+     "ms_p95": 1.1449908721260724
+    },
+    {
+     "group": "dark-noisy 640x480",
+     "tags": 56,
+     "found": 56,
+     "wrong_ids": 0,
+     "corner_px_median": 0.26844792065862855,
+     "ms_median": 3.536162548698485,
+     "ms_p95": 3.8450215593911707
+    },
+    {
+     "group": "dense 640x480",
+     "tags": 475,
+     "found": 474,
+     "wrong_ids": 0,
+     "corner_px_median": 0.26137373962683874,
+     "ms_median": 3.357419976964593,
+     "ms_p95": 3.8222664501518007
+    },
+    {
+     "group": "edge 640x480",
+     "tags": 66,
+     "found": 66,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2727675521436882,
+     "ms_median": 1.0715639218688011,
+     "ms_p95": 1.2426185654476283
+    },
+    {
+     "group": "glare 640x480",
+     "tags": 52,
+     "found": 52,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2616670583048145,
+     "ms_median": 1.4918120577931404,
+     "ms_p95": 1.771542488131672
+    },
+    {
+     "group": "jpeg 640x480",
+     "tags": 61,
+     "found": 61,
+     "wrong_ids": 0,
+     "corner_px_median": 0.26928537201051267,
+     "ms_median": 1.094048609957099,
+     "ms_p95": 1.5063506434671579
+    },
+    {
+     "group": "lowcontrast 640x480",
+     "tags": 60,
+     "found": 41,
+     "wrong_ids": 0,
+     "corner_px_median": 4.299559370478507,
+     "ms_median": 1.1868166038766503,
+     "ms_p95": 1.3919226592406628
+    },
+    {
+     "group": "mixed 640x480",
+     "tags": 92,
+     "found": 79,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2980883455938154,
+     "ms_median": 3.8929450092837214,
+     "ms_p95": 4.185924178455025
+    },
+    {
+     "group": "motion 640x480",
+     "tags": 61,
+     "found": 39,
+     "wrong_ids": 0,
+     "corner_px_median": 0.6465404762799802,
+     "ms_median": 1.5589784597977996,
+     "ms_p95": 1.6920188092626631
+    },
+    {
+     "group": "noise 640x480",
+     "tags": 50,
+     "found": 50,
+     "wrong_ids": 0,
+     "corner_px_median": 0.28787211905056165,
+     "ms_median": 4.03638812713325,
+     "ms_p95": 4.175411874894053
+    },
+    {
+     "group": "shadow 640x480",
+     "tags": 50,
+     "found": 50,
+     "wrong_ids": 0,
+     "corner_px_median": 0.26163908119542634,
+     "ms_median": 1.6270665219053626,
+     "ms_p95": 2.003494859673083
+    },
+    {
+     "group": "tiny 640x480",
+     "tags": 91,
+     "found": 76,
+     "wrong_ids": 0,
+     "corner_px_median": 0.26658282381440684,
+     "ms_median": 0.9599064942449331,
+     "ms_p95": 1.1099424911662936
+    },
+    {
+     "group": "underexposed 640x480",
+     "tags": 37,
+     "found": 37,
+     "wrong_ids": 0,
+     "corner_px_median": 0.18216449901220272,
+     "ms_median": 2.779157948680222,
+     "ms_p95": 3.393261204473674
+    },
+    {
+     "group": "blur 1280x720",
+     "tags": 56,
+     "found": 55,
+     "wrong_ids": 0,
+     "corner_px_median": 0.255683286586855,
+     "ms_median": 2.524439012631774,
+     "ms_p95": 3.2758480752818278
+    },
+    {
+     "group": "dark-noisy 1280x720",
+     "tags": 41,
+     "found": 41,
+     "wrong_ids": 0,
+     "corner_px_median": 0.29280426944847315,
+     "ms_median": 9.95288894046098,
+     "ms_p95": 10.785143706016243
+    },
+    {
+     "group": "dense 1280x720",
+     "tags": 497,
+     "found": 496,
+     "wrong_ids": 0,
+     "corner_px_median": 0.27218958321417963,
+     "ms_median": 7.483673514798284,
+     "ms_p95": 7.996674650348723
+    },
+    {
+     "group": "edge 1280x720",
+     "tags": 55,
+     "found": 55,
+     "wrong_ids": 0,
+     "corner_px_median": 0.24904637448633463,
+     "ms_median": 2.645716071128845,
+     "ms_p95": 3.5087459255009885
+    },
+    {
+     "group": "glare 1280x720",
+     "tags": 41,
+     "found": 41,
+     "wrong_ids": 0,
+     "corner_px_median": 0.27254327797690925,
+     "ms_median": 3.7510080728679895,
+     "ms_p95": 4.499161231797188
+    },
+    {
+     "group": "jpeg 1280x720",
+     "tags": 67,
+     "found": 66,
+     "wrong_ids": 0,
+     "corner_px_median": 0.29970805665565403,
+     "ms_median": 3.0002084095031023,
+     "ms_p95": 3.820781223475933
+    },
+    {
+     "group": "lowcontrast 1280x720",
+     "tags": 51,
+     "found": 51,
+     "wrong_ids": 0,
+     "corner_px_median": 0.35590742063415237,
+     "ms_median": 2.778566093184054,
+     "ms_p95": 3.140876244287938
+    },
+    {
+     "group": "mixed 1280x720",
+     "tags": 90,
+     "found": 90,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2656057819344805,
+     "ms_median": 10.96519804559648,
+     "ms_p95": 11.572473065461963
+    },
+    {
+     "group": "motion 1280x720",
+     "tags": 57,
+     "found": 56,
+     "wrong_ids": 0,
+     "corner_px_median": 0.6943671395106383,
+     "ms_median": 4.272195044904947,
+     "ms_p95": 4.5157964108511806
+    },
+    {
+     "group": "noise 1280x720",
+     "tags": 44,
+     "found": 43,
+     "wrong_ids": 0,
+     "corner_px_median": 0.23927298679845777,
+     "ms_median": 11.843515909276903,
+     "ms_p95": 12.233137816656381
+    },
+    {
+     "group": "shadow 1280x720",
+     "tags": 49,
+     "found": 49,
+     "wrong_ids": 0,
+     "corner_px_median": 0.23585188684050615,
+     "ms_median": 4.352525109425187,
+     "ms_p95": 5.330546165350825
+    },
+    {
+     "group": "tiny 1280x720",
+     "tags": 93,
+     "found": 93,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2517866104682699,
+     "ms_median": 2.4996650172397494,
+     "ms_p95": 2.715342654846608
+    },
+    {
+     "group": "underexposed 1280x720",
+     "tags": 40,
+     "found": 40,
+     "wrong_ids": 0,
+     "corner_px_median": 0.24211414347856294,
+     "ms_median": 6.97568547911942,
+     "ms_p95": 9.224368259310722
+    }
+   ]
+  },
+  "opencv-subpix": {
+   "scenes": [
+    {
+     "group": "640x480",
+     "tags": 256,
+     "found": 256,
+     "wrong_ids": 0,
+     "corner_px_median": 0.30267625164137535,
+     "ms_median": 11.38350204564631,
+     "ms_p95": 17.7928326302208
+    },
+    {
+     "group": "1280x720",
+     "tags": 256,
+     "found": 256,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2948460654912495,
+     "ms_median": 25.53362597245723,
+     "ms_p95": 34.639436297584325
+    },
+    {
+     "group": "1280x800",
+     "tags": 256,
+     "found": 256,
+     "wrong_ids": 0,
+     "corner_px_median": 0.303546177445871,
+     "ms_median": 24.22993304207921,
+     "ms_p95": 32.36512534786015
+    },
+    {
+     "group": "1920x1080",
+     "tags": 256,
+     "found": 256,
+     "wrong_ids": 0,
+     "corner_px_median": 0.32782675989876814,
+     "ms_median": 34.668187960051,
+     "ms_p95": 39.9222211446613
+    }
+   ],
+   "hard": [
+    {
+     "group": "blur 640x480",
+     "tags": 57,
+     "found": 43,
+     "wrong_ids": 0,
+     "corner_px_median": 0.7067585488887433,
+     "ms_median": 3.2107580918818712,
+     "ms_p95": 7.0325185079127515
+    },
+    {
+     "group": "dark-noisy 640x480",
+     "tags": 56,
+     "found": 56,
+     "wrong_ids": 0,
+     "corner_px_median": 0.3454874318861702,
+     "ms_median": 15.032741008326411,
+     "ms_p95": 17.966831906232983
+    },
+    {
+     "group": "dense 640x480",
+     "tags": 475,
+     "found": 472,
+     "wrong_ids": 0,
+     "corner_px_median": 0.4908883470827942,
+     "ms_median": 19.12581955548376,
+     "ms_p95": 23.41095714364201
+    },
+    {
+     "group": "edge 640x480",
+     "tags": 66,
+     "found": 46,
+     "wrong_ids": 0,
+     "corner_px_median": 0.3074090937473045,
+     "ms_median": 4.489382496103644,
+     "ms_p95": 11.99287521885708
+    },
+    {
+     "group": "glare 640x480",
+     "tags": 52,
+     "found": 52,
+     "wrong_ids": 0,
+     "corner_px_median": 0.3279854083650272,
+     "ms_median": 5.265691899694502,
+     "ms_p95": 13.314176688436419
+    },
+    {
+     "group": "jpeg 640x480",
+     "tags": 61,
+     "found": 61,
+     "wrong_ids": 0,
+     "corner_px_median": 0.3691299883414512,
+     "ms_median": 4.46610851213336,
+     "ms_p95": 7.460426434408873
+    },
+    {
+     "group": "lowcontrast 640x480",
+     "tags": 60,
+     "found": 51,
+     "wrong_ids": 0,
+     "corner_px_median": 0.3628932010179566,
+     "ms_median": 4.181353957392275,
+     "ms_p95": 8.97055541863665
+    },
+    {
+     "group": "mixed 640x480",
+     "tags": 92,
+     "found": 74,
+     "wrong_ids": 0,
+     "corner_px_median": 0.655797865902122,
+     "ms_median": 20.212083589285612,
+     "ms_p95": 23.122613190207627
+    },
+    {
+     "group": "motion 640x480",
+     "tags": 61,
+     "found": 28,
+     "wrong_ids": 0,
+     "corner_px_median": 1.6938269012371134,
+     "ms_median": 3.5429419949650764,
+     "ms_p95": 5.311969085596502
+    },
+    {
+     "group": "noise 640x480",
+     "tags": 50,
+     "found": 50,
+     "wrong_ids": 0,
+     "corner_px_median": 0.3407073943516159,
+     "ms_median": 25.842545554041862,
+     "ms_p95": 28.65090356208384
+    },
+    {
+     "group": "shadow 640x480",
+     "tags": 50,
+     "found": 50,
+     "wrong_ids": 0,
+     "corner_px_median": 0.29755950894074856,
+     "ms_median": 5.171502940356731,
+     "ms_p95": 10.556565783917897
+    },
+    {
+     "group": "tiny 640x480",
+     "tags": 91,
+     "found": 79,
+     "wrong_ids": 0,
+     "corner_px_median": 0.5643882744487921,
+     "ms_median": 4.214091692119837,
+     "ms_p95": 5.880740308202801
+    },
+    {
+     "group": "underexposed 640x480",
+     "tags": 37,
+     "found": 37,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2834675774259696,
+     "ms_median": 9.153293096460402,
+     "ms_p95": 12.131361628416924
+    },
+    {
+     "group": "blur 1280x720",
+     "tags": 56,
+     "found": 55,
+     "wrong_ids": 0,
+     "corner_px_median": 0.5669623802800476,
+     "ms_median": 6.347488495521247,
+     "ms_p95": 10.506248916499317
+    },
+    {
+     "group": "dark-noisy 1280x720",
+     "tags": 41,
+     "found": 41,
+     "wrong_ids": 0,
+     "corner_px_median": 0.3353684421447147,
+     "ms_median": 39.46785058360547,
+     "ms_p95": 44.083874218631536
+    },
+    {
+     "group": "dense 1280x720",
+     "tags": 497,
+     "found": 496,
+     "wrong_ids": 0,
+     "corner_px_median": 0.3256377318300178,
+     "ms_median": 34.277844009920955,
+     "ms_p95": 40.241508872713894
+    },
+    {
+     "group": "edge 1280x720",
+     "tags": 55,
+     "found": 47,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2932901837947778,
+     "ms_median": 8.529721526429057,
+     "ms_p95": 13.78467184258625
+    },
+    {
+     "group": "glare 1280x720",
+     "tags": 41,
+     "found": 41,
+     "wrong_ids": 0,
+     "corner_px_median": 0.34588607881625005,
+     "ms_median": 11.872779577970505,
+     "ms_p95": 19.113102974370122
+    },
+    {
+     "group": "jpeg 1280x720",
+     "tags": 67,
+     "found": 67,
+     "wrong_ids": 0,
+     "corner_px_median": 0.3423806976726007,
+     "ms_median": 10.858630412258208,
+     "ms_p95": 15.915745892561969
+    },
+    {
+     "group": "lowcontrast 1280x720",
+     "tags": 51,
+     "found": 51,
+     "wrong_ids": 0,
+     "corner_px_median": 0.33999980950949904,
+     "ms_median": 7.850132533349097,
+     "ms_p95": 12.82502325484529
+    },
+    {
+     "group": "mixed 1280x720",
+     "tags": 90,
+     "found": 90,
+     "wrong_ids": 0,
+     "corner_px_median": 0.5746495913463939,
+     "ms_median": 46.566562028601766,
+     "ms_p95": 56.751476670615375
+    },
+    {
+     "group": "motion 1280x720",
+     "tags": 57,
+     "found": 37,
+     "wrong_ids": 0,
+     "corner_px_median": 2.091077432185263,
+     "ms_median": 10.555398999713361,
+     "ms_p95": 14.306125242728738
+    },
+    {
+     "group": "noise 1280x720",
+     "tags": 44,
+     "found": 43,
+     "wrong_ids": 0,
+     "corner_px_median": 0.314760586126698,
+     "ms_median": 67.91010801680386,
+     "ms_p95": 70.31902805902064
+    },
+    {
+     "group": "shadow 1280x720",
+     "tags": 49,
+     "found": 49,
+     "wrong_ids": 0,
+     "corner_px_median": 0.30596172731989296,
+     "ms_median": 12.168451445177197,
+     "ms_p95": 18.69196945335716
+    },
+    {
+     "group": "tiny 1280x720",
+     "tags": 93,
+     "found": 93,
+     "wrong_ids": 0,
+     "corner_px_median": 0.4881895495447608,
+     "ms_median": 6.456649978645146,
+     "ms_p95": 8.061586401890963
+    },
+    {
+     "group": "underexposed 1280x720",
+     "tags": 40,
+     "found": 40,
+     "wrong_ids": 0,
+     "corner_px_median": 0.31593400639218283,
+     "ms_median": 23.90011108946055,
+     "ms_p95": 32.48221940593794
+    }
+   ]
+  },
+  "apriltag3-d2": {
+   "scenes": [
+    {
+     "group": "640x480",
+     "tags": 256,
+     "found": 247,
+     "wrong_ids": 0,
+     "corner_px_median": 0.10340222845453033,
+     "ms_median": 1.680806395597756,
+     "ms_p95": 1.9070698413997886
+    },
+    {
+     "group": "1280x720",
+     "tags": 256,
+     "found": 256,
+     "wrong_ids": 0,
+     "corner_px_median": 0.15602023067087917,
+     "ms_median": 3.799722995609045,
+     "ms_p95": 4.147805052343756
+    },
+    {
+     "group": "1280x800",
+     "tags": 256,
+     "found": 256,
+     "wrong_ids": 0,
+     "corner_px_median": 0.16834713474240676,
+     "ms_median": 4.092504037544131,
+     "ms_p95": 4.456946207210421
+    },
+    {
+     "group": "1920x1080",
+     "tags": 256,
+     "found": 256,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2303910295261725,
+     "ms_median": 7.350791012868285,
+     "ms_p95": 7.881660235580057
+    }
+   ],
+   "hard": [
+    {
+     "group": "blur 640x480",
+     "tags": 57,
+     "found": 44,
+     "wrong_ids": 0,
+     "corner_px_median": 0.33446363773835774,
+     "ms_median": 13.560931547544897,
+     "ms_p95": 14.464801957365125
+    },
+    {
+     "group": "dark-noisy 640x480",
+     "tags": 56,
+     "found": 56,
+     "wrong_ids": 0,
+     "corner_px_median": 0.27152157729636006,
+     "ms_median": 11.845145490951836,
+     "ms_p95": 13.095171051099896
+    },
+    {
+     "group": "dense 640x480",
+     "tags": 475,
+     "found": 467,
+     "wrong_ids": 0,
+     "corner_px_median": 0.26277312328185354,
+     "ms_median": 9.611702989786863,
+     "ms_p95": 10.256935772486031
+    },
+    {
+     "group": "edge 640x480",
+     "tags": 66,
+     "found": 62,
+     "wrong_ids": 0,
+     "corner_px_median": 0.27045169027010885,
+     "ms_median": 11.481908499263227,
+     "ms_p95": 13.202940952032804
+    },
+    {
+     "group": "glare 640x480",
+     "tags": 52,
+     "found": 52,
+     "wrong_ids": 0,
+     "corner_px_median": 0.26122112586780016,
+     "ms_median": 6.544074043631554,
+     "ms_p95": 7.789719256106763
+    },
+    {
+     "group": "jpeg 640x480",
+     "tags": 61,
+     "found": 61,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2724796509419496,
+     "ms_median": 4.140401491895318,
+     "ms_p95": 5.254221009090542
+    },
+    {
+     "group": "lowcontrast 640x480",
+     "tags": 60,
+     "found": 19,
+     "wrong_ids": 0,
+     "corner_px_median": 0.33029279683911106,
+     "ms_median": 11.184292496182024,
+     "ms_p95": 12.372979882638901
+    },
+    {
+     "group": "mixed 640x480",
+     "tags": 92,
+     "found": 80,
+     "wrong_ids": 0,
+     "corner_px_median": 0.32337597852379846,
+     "ms_median": 13.743034563958645,
+     "ms_p95": 14.588493667542934
+    },
+    {
+     "group": "motion 640x480",
+     "tags": 61,
+     "found": 42,
+     "wrong_ids": 0,
+     "corner_px_median": 0.6168199490034905,
+     "ms_median": 7.448460441082716,
+     "ms_p95": 8.694508485496044
+    },
+    {
+     "group": "noise 640x480",
+     "tags": 50,
+     "found": 50,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2825379488733782,
+     "ms_median": 5.8011909713968635,
+     "ms_p95": 7.311913603916763
+    },
+    {
+     "group": "shadow 640x480",
+     "tags": 50,
+     "found": 50,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2617667576359507,
+     "ms_median": 8.500986965373158,
+     "ms_p95": 9.629674849566072
+    },
+    {
+     "group": "tiny 640x480",
+     "tags": 91,
+     "found": 22,
+     "wrong_ids": 0,
+     "corner_px_median": 0.27430276477270155,
+     "ms_median": 11.514510028064251,
+     "ms_p95": 12.8411169629544
+    },
+    {
+     "group": "underexposed 640x480",
+     "tags": 37,
+     "found": 37,
+     "wrong_ids": 0,
+     "corner_px_median": 0.20225112372746593,
+     "ms_median": 12.688508490100503,
+     "ms_p95": 13.875302392989397
+    },
+    {
+     "group": "blur 1280x720",
+     "tags": 56,
+     "found": 56,
+     "wrong_ids": 0,
+     "corner_px_median": 0.3029947458092609,
+     "ms_median": 42.52044856548309,
+     "ms_p95": 43.89233808033168
+    },
+    {
+     "group": "dark-noisy 1280x720",
+     "tags": 41,
+     "found": 41,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2929431356932418,
+     "ms_median": 39.563790895044804,
+     "ms_p95": 42.541384359356016
+    },
+    {
+     "group": "dense 1280x720",
+     "tags": 497,
+     "found": 497,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2739073717445587,
+     "ms_median": 26.320326956920326,
+     "ms_p95": 27.970121707767248
+    },
+    {
+     "group": "edge 1280x720",
+     "tags": 55,
+     "found": 55,
+     "wrong_ids": 0,
+     "corner_px_median": 0.25014334150941536,
+     "ms_median": 35.50399653613567,
+     "ms_p95": 37.63707479229197
+    },
+    {
+     "group": "glare 1280x720",
+     "tags": 41,
+     "found": 41,
+     "wrong_ids": 0,
+     "corner_px_median": 0.27104067502248286,
+     "ms_median": 18.09005090035498,
+     "ms_p95": 20.66946349805221
+    },
+    {
+     "group": "jpeg 1280x720",
+     "tags": 67,
+     "found": 67,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2951959719794153,
+     "ms_median": 12.786296894773841,
+     "ms_p95": 17.148358817212284
+    },
+    {
+     "group": "lowcontrast 1280x720",
+     "tags": 51,
+     "found": 30,
+     "wrong_ids": 0,
+     "corner_px_median": 0.3242735591727617,
+     "ms_median": 35.973068908788264,
+     "ms_p95": 38.02834172965959
+    },
+    {
+     "group": "mixed 1280x720",
+     "tags": 90,
+     "found": 90,
+     "wrong_ids": 0,
+     "corner_px_median": 0.27568707934593817,
+     "ms_median": 41.58770258072764,
+     "ms_p95": 42.990978283341974
+    },
+    {
+     "group": "motion 1280x720",
+     "tags": 57,
+     "found": 55,
+     "wrong_ids": 0,
+     "corner_px_median": 0.6921420197278086,
+     "ms_median": 21.77633240353316,
+     "ms_p95": 23.669946030713618
+    },
+    {
+     "group": "noise 1280x720",
+     "tags": 44,
+     "found": 43,
+     "wrong_ids": 0,
+     "corner_px_median": 0.24489239042483613,
+     "ms_median": 17.52320514060557,
+     "ms_p95": 20.489937078673393
+    },
+    {
+     "group": "shadow 1280x720",
+     "tags": 49,
+     "found": 49,
+     "wrong_ids": 0,
+     "corner_px_median": 0.23583637534691448,
+     "ms_median": 23.916545906104147,
+     "ms_p95": 26.30783630302176
+    },
+    {
+     "group": "tiny 1280x720",
+     "tags": 93,
+     "found": 90,
+     "wrong_ids": 0,
+     "corner_px_median": 0.24913355224439007,
+     "ms_median": 35.059544490650296,
+     "ms_p95": 38.05396013194695
+    },
+    {
+     "group": "underexposed 1280x720",
+     "tags": 40,
+     "found": 40,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2471570454540542,
+     "ms_median": 35.85875639691949,
+     "ms_p95": 38.715592899825424
+    }
+   ]
+  },
+  "locus": {
+   "scenes": [
+    {
+     "group": "640x480",
+     "tags": 256,
+     "found": 256,
+     "wrong_ids": 0,
+     "corner_px_median": 0.1302001121358906,
+     "ms_median": 7.261001970618963,
+     "ms_p95": 7.626742299180478
+    },
+    {
+     "group": "1280x720",
+     "tags": 256,
+     "found": 256,
+     "wrong_ids": 0,
+     "corner_px_median": 0.17711445905131118,
+     "ms_median": 15.982947428710759,
+     "ms_p95": 16.497010516468436
+    },
+    {
+     "group": "1280x800",
+     "tags": 256,
+     "found": 256,
+     "wrong_ids": 0,
+     "corner_px_median": 0.19910344559034898,
+     "ms_median": 17.270395415835083,
+     "ms_p95": 17.802427639253438
+    },
+    {
+     "group": "1920x1080",
+     "tags": 256,
+     "found": 256,
+     "wrong_ids": 0,
+     "corner_px_median": 0.25710567616085656,
+     "ms_median": 31.366069917567074,
+     "ms_p95": 32.15684234164655
+    }
+   ],
+   "hard": [
+    {
+     "group": "blur 640x480",
+     "tags": 57,
+     "found": 46,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2901134352618416,
+     "ms_median": 3.8048980059102178,
+     "ms_p95": 4.772514302749187
+    },
+    {
+     "group": "dark-noisy 640x480",
+     "tags": 56,
+     "found": 0,
+     "wrong_ids": 0,
+     "corner_px_median": null,
+     "ms_median": 3.573123598471284,
+     "ms_p95": 4.102161922492087
+    },
+    {
+     "group": "dense 640x480",
+     "tags": 475,
+     "found": 475,
+     "wrong_ids": 0,
+     "corner_px_median": 0.31595088070206934,
+     "ms_median": 7.464935537427664,
+     "ms_p95": 8.698598307091743
+    },
+    {
+     "group": "edge 640x480",
+     "tags": 66,
+     "found": 59,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2658705190313114,
+     "ms_median": 3.727951552718878,
+     "ms_p95": 4.226230923086405
+    },
+    {
+     "group": "glare 640x480",
+     "tags": 52,
+     "found": 50,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2609417463561544,
+     "ms_median": 3.4158314811065793,
+     "ms_p95": 4.377284552901983
+    },
+    {
+     "group": "jpeg 640x480",
+     "tags": 61,
+     "found": 61,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2902600710949177,
+     "ms_median": 3.7420695880427957,
+     "ms_p95": 4.4970917399041355
+    },
+    {
+     "group": "lowcontrast 640x480",
+     "tags": 60,
+     "found": 59,
+     "wrong_ids": 0,
+     "corner_px_median": 0.28551548908191676,
+     "ms_median": 3.51080356631428,
+     "ms_p95": 4.080323199741542
+    },
+    {
+     "group": "mixed 640x480",
+     "tags": 92,
+     "found": 21,
+     "wrong_ids": 1,
+     "corner_px_median": 0.6013883070830309,
+     "ms_median": 11.0156579175964,
+     "ms_p95": 15.762251697015017
+    },
+    {
+     "group": "motion 640x480",
+     "tags": 61,
+     "found": 37,
+     "wrong_ids": 0,
+     "corner_px_median": 1.2932405418473794,
+     "ms_median": 3.825825871899724,
+     "ms_p95": 4.7312977141700685
+    },
+    {
+     "group": "noise 640x480",
+     "tags": 50,
+     "found": 50,
+     "wrong_ids": 0,
+     "corner_px_median": 0.26762537553593196,
+     "ms_median": 4.429748049005866,
+     "ms_p95": 5.198209267109632
+    },
+    {
+     "group": "shadow 640x480",
+     "tags": 50,
+     "found": 50,
+     "wrong_ids": 0,
+     "corner_px_median": 0.24689615757717848,
+     "ms_median": 4.548474564217031,
+     "ms_p95": 5.291931028477848
+    },
+    {
+     "group": "tiny 640x480",
+     "tags": 91,
+     "found": 84,
+     "wrong_ids": 0,
+     "corner_px_median": 0.48749763382201294,
+     "ms_median": 3.2081655226647854,
+     "ms_p95": 3.4873655647970736
+    },
+    {
+     "group": "underexposed 640x480",
+     "tags": 37,
+     "found": 4,
+     "wrong_ids": 0,
+     "corner_px_median": 0.3807849401842388,
+     "ms_median": 6.032555480487645,
+     "ms_p95": 10.838885302655399
+    },
+    {
+     "group": "blur 1280x720",
+     "tags": 56,
+     "found": 56,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2728681010050398,
+     "ms_median": 10.086174472235143,
+     "ms_p95": 11.233736004214732
+    },
+    {
+     "group": "dark-noisy 1280x720",
+     "tags": 41,
+     "found": 0,
+     "wrong_ids": 0,
+     "corner_px_median": null,
+     "ms_median": 10.726797510869801,
+     "ms_p95": 12.618829531129448
+    },
+    {
+     "group": "dense 1280x720",
+     "tags": 497,
+     "found": 497,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2712940676482287,
+     "ms_median": 16.506311483681202,
+     "ms_p95": 17.722026689443737
+    },
+    {
+     "group": "edge 1280x720",
+     "tags": 55,
+     "found": 52,
+     "wrong_ids": 0,
+     "corner_px_median": 0.28563277370855245,
+     "ms_median": 8.859231020323932,
+     "ms_p95": 9.79263832559809
+    },
+    {
+     "group": "glare 1280x720",
+     "tags": 41,
+     "found": 34,
+     "wrong_ids": 0,
+     "corner_px_median": 0.23648693487054542,
+     "ms_median": 8.147908956743777,
+     "ms_p95": 9.620073402766137
+    },
+    {
+     "group": "jpeg 1280x720",
+     "tags": 67,
+     "found": 67,
+     "wrong_ids": 0,
+     "corner_px_median": 0.30703078252749355,
+     "ms_median": 8.50085006095469,
+     "ms_p95": 9.60470326244831
+    },
+    {
+     "group": "lowcontrast 1280x720",
+     "tags": 51,
+     "found": 51,
+     "wrong_ids": 0,
+     "corner_px_median": 0.31789606428145145,
+     "ms_median": 8.290282567031682,
+     "ms_p95": 9.041443676687777
+    },
+    {
+     "group": "mixed 1280x720",
+     "tags": 90,
+     "found": 33,
+     "wrong_ids": 0,
+     "corner_px_median": 0.26057460045003783,
+     "ms_median": 37.197956000454724,
+     "ms_p95": 44.6351325022988
+    },
+    {
+     "group": "motion 1280x720",
+     "tags": 57,
+     "found": 54,
+     "wrong_ids": 0,
+     "corner_px_median": 2.023811678732171,
+     "ms_median": 9.950823499821126,
+     "ms_p95": 11.0701595665887
+    },
+    {
+     "group": "noise 1280x720",
+     "tags": 44,
+     "found": 43,
+     "wrong_ids": 0,
+     "corner_px_median": 0.24154442214310778,
+     "ms_median": 10.841701994650066,
+     "ms_p95": 12.08239891566336
+    },
+    {
+     "group": "shadow 1280x720",
+     "tags": 49,
+     "found": 49,
+     "wrong_ids": 0,
+     "corner_px_median": 0.24178868541418375,
+     "ms_median": 11.599105433560908,
+     "ms_p95": 12.464667833410203
+    },
+    {
+     "group": "tiny 1280x720",
+     "tags": 93,
+     "found": 93,
+     "wrong_ids": 0,
+     "corner_px_median": 0.29206234786072094,
+     "ms_median": 8.383321459405124,
+     "ms_p95": 8.711636054795235
+    },
+    {
+     "group": "underexposed 1280x720",
+     "tags": 40,
+     "found": 11,
+     "wrong_ids": 0,
+     "corner_px_median": 0.30429166986286327,
+     "ms_median": 17.212884034961462,
+     "ms_p95": 28.494074230547987
+    }
+   ]
+  },
+  "rapidtag-subpix": {
+   "scenes": [
+    {
+     "group": "640x480",
+     "tags": 256,
+     "found": 224,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2884627234097448,
+     "ms_median": 1.995382597669959,
+     "ms_p95": 2.183143317233771
+    },
+    {
+     "group": "1280x720",
+     "tags": 256,
+     "found": 256,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2948352329162236,
+     "ms_median": 5.40559645742178,
+     "ms_p95": 5.755502916872501
+    },
+    {
+     "group": "1280x800",
+     "tags": 256,
+     "found": 256,
+     "wrong_ids": 0,
+     "corner_px_median": 0.3035430000472801,
+     "ms_median": 5.892899935133755,
+     "ms_p95": 6.256975478027016
+    },
+    {
+     "group": "1920x1080",
+     "tags": 256,
+     "found": 256,
+     "wrong_ids": 0,
+     "corner_px_median": 0.3278407310612678,
+     "ms_median": 10.907827992923558,
+     "ms_p95": 11.456898495089263
+    }
+   ],
+   "hard": [
+    {
+     "group": "blur 640x480",
+     "tags": 57,
+     "found": 29,
+     "wrong_ids": 0,
+     "corner_px_median": 0.6245889086407728,
+     "ms_median": 1.2593790888786316,
+     "ms_p95": 1.416943490039557
+    },
+    {
+     "group": "dark-noisy 640x480",
+     "tags": 56,
+     "found": 47,
+     "wrong_ids": 0,
+     "corner_px_median": 0.3490780209019714,
+     "ms_median": 7.353451452217996,
+     "ms_p95": 9.634158865083007
+    },
+    {
+     "group": "dense 640x480",
+     "tags": 475,
+     "found": 156,
+     "wrong_ids": 0,
+     "corner_px_median": 0.5068544975452234,
+     "ms_median": 4.011977463960648,
+     "ms_p95": 4.489082761574537
+    },
+    {
+     "group": "edge 640x480",
+     "tags": 66,
+     "found": 47,
+     "wrong_ids": 0,
+     "corner_px_median": 0.30909401071163933,
+     "ms_median": 1.5269010327756405,
+     "ms_p95": 1.7163047799840567
+    },
+    {
+     "group": "glare 640x480",
+     "tags": 52,
+     "found": 52,
+     "wrong_ids": 0,
+     "corner_px_median": 0.32798326287354707,
+     "ms_median": 2.22787051461637,
+     "ms_p95": 2.672953752335161
+    },
+    {
+     "group": "jpeg 640x480",
+     "tags": 61,
+     "found": 59,
+     "wrong_ids": 0,
+     "corner_px_median": 0.38343912414257586,
+     "ms_median": 1.7421965021640062,
+     "ms_p95": 2.354036271572112
+    },
+    {
+     "group": "lowcontrast 640x480",
+     "tags": 60,
+     "found": 3,
+     "wrong_ids": 0,
+     "corner_px_median": 0.38119735006899214,
+     "ms_median": 1.6816406277939677,
+     "ms_p95": 2.0233607152476902
+    },
+    {
+     "group": "mixed 640x480",
+     "tags": 92,
+     "found": 0,
+     "wrong_ids": 0,
+     "corner_px_median": null,
+     "ms_median": 10.59962052386254,
+     "ms_p95": 12.0279646711424
+    },
+    {
+     "group": "motion 640x480",
+     "tags": 61,
+     "found": 32,
+     "wrong_ids": 0,
+     "corner_px_median": 2.1653623755053433,
+     "ms_median": 2.0294554997235537,
+     "ms_p95": 2.2873083129525185
+    },
+    {
+     "group": "noise 640x480",
+     "tags": 50,
+     "found": 50,
+     "wrong_ids": 0,
+     "corner_px_median": 0.34070548725297367,
+     "ms_median": 15.475810854695737,
+     "ms_p95": 16.16356261074543
+    },
+    {
+     "group": "shadow 640x480",
+     "tags": 50,
+     "found": 50,
+     "wrong_ids": 0,
+     "corner_px_median": 0.297559579562645,
+     "ms_median": 2.275197533890605,
+     "ms_p95": 2.788589755073189
+    },
+    {
+     "group": "tiny 640x480",
+     "tags": 91,
+     "found": 0,
+     "wrong_ids": 0,
+     "corner_px_median": null,
+     "ms_median": 1.2127308873459697,
+     "ms_p95": 1.2865016586147249
+    },
+    {
+     "group": "underexposed 640x480",
+     "tags": 37,
+     "found": 37,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2834691096197087,
+     "ms_median": 4.714600509032607,
+     "ms_p95": 6.13061626208946
+    },
+    {
+     "group": "blur 1280x720",
+     "tags": 56,
+     "found": 54,
+     "wrong_ids": 0,
+     "corner_px_median": 0.5669483231327108,
+     "ms_median": 3.7913916166871786,
+     "ms_p95": 4.245192476082592
+    },
+    {
+     "group": "dark-noisy 1280x720",
+     "tags": 41,
+     "found": 37,
+     "wrong_ids": 0,
+     "corner_px_median": 0.3353836844897665,
+     "ms_median": 23.067712550982833,
+     "ms_p95": 28.80948147503659
+    },
+    {
+     "group": "dense 1280x720",
+     "tags": 497,
+     "found": 493,
+     "wrong_ids": 0,
+     "corner_px_median": 0.3285620546999963,
+     "ms_median": 12.118510552681983,
+     "ms_p95": 12.936790345702319
+    },
+    {
+     "group": "edge 1280x720",
+     "tags": 55,
+     "found": 47,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2932901370535198,
+     "ms_median": 3.8611298659816384,
+     "ms_p95": 4.720738250762223
+    },
+    {
+     "group": "glare 1280x720",
+     "tags": 41,
+     "found": 41,
+     "wrong_ids": 0,
+     "corner_px_median": 0.3458993021176241,
+     "ms_median": 5.830384441651404,
+     "ms_p95": 6.549122603610158
+    },
+    {
+     "group": "jpeg 1280x720",
+     "tags": 67,
+     "found": 67,
+     "wrong_ids": 0,
+     "corner_px_median": 0.3463815978754164,
+     "ms_median": 5.114004481583834,
+     "ms_p95": 6.5804302343167365
+    },
+    {
+     "group": "lowcontrast 1280x720",
+     "tags": 51,
+     "found": 2,
+     "wrong_ids": 0,
+     "corner_px_median": 0.3606997636922696,
+     "ms_median": 4.370780079625547,
+     "ms_p95": 4.998626513406633
+    },
+    {
+     "group": "mixed 1280x720",
+     "tags": 90,
+     "found": 71,
+     "wrong_ids": 0,
+     "corner_px_median": 0.5580545778760568,
+     "ms_median": 30.553144053556025,
+     "ms_p95": 37.65887513291091
+    },
+    {
+     "group": "motion 1280x720",
+     "tags": 57,
+     "found": 53,
+     "wrong_ids": 0,
+     "corner_px_median": 2.5533865436660284,
+     "ms_median": 5.821969476528466,
+     "ms_p95": 6.449912767857313
+    },
+    {
+     "group": "noise 1280x720",
+     "tags": 44,
+     "found": 43,
+     "wrong_ids": 0,
+     "corner_px_median": 0.31475947249781805,
+     "ms_median": 45.26893503498286,
+     "ms_p95": 48.836731910705566
+    },
+    {
+     "group": "shadow 1280x720",
+     "tags": 49,
+     "found": 49,
+     "wrong_ids": 0,
+     "corner_px_median": 0.3059615354588421,
+     "ms_median": 6.262034992687404,
+     "ms_p95": 7.377671613357961
+    },
+    {
+     "group": "tiny 1280x720",
+     "tags": 93,
+     "found": 27,
+     "wrong_ids": 0,
+     "corner_px_median": 0.5539382847131901,
+     "ms_median": 3.6576599813997746,
+     "ms_p95": 4.0461604367010295
+    },
+    {
+     "group": "underexposed 1280x720",
+     "tags": 40,
+     "found": 40,
+     "wrong_ids": 0,
+     "corner_px_median": 0.31593011934457554,
+     "ms_median": 11.586545966565609,
+     "ms_p95": 17.995086777955294
+    }
+   ]
+  },
+  "wpilib-d2": {
+   "scenes": [
+    {
+     "group": "640x480",
+     "tags": 256,
+     "found": 142,
+     "wrong_ids": 0,
+     "corner_px_median": 0.12612049202254044,
+     "ms_median": 1.3091249857097864,
+     "ms_p95": 1.4380225096829233
+    },
+    {
+     "group": "1280x720",
+     "tags": 256,
+     "found": 224,
+     "wrong_ids": 0,
+     "corner_px_median": 0.17765316418611032,
+     "ms_median": 3.4933254355564713,
+     "ms_p95": 3.776785172522068
+    },
+    {
+     "group": "1280x800",
+     "tags": 256,
+     "found": 224,
+     "wrong_ids": 0,
+     "corner_px_median": 0.18063143116511088,
+     "ms_median": 3.746281028725207,
+     "ms_p95": 4.142556292936206
+    },
+    {
+     "group": "1920x1080",
+     "tags": 256,
+     "found": 251,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2379089187389213,
+     "ms_median": 7.033277535811067,
+     "ms_p95": 7.529201731085776
+    }
+   ],
+   "hard": [
+    {
+     "group": "blur 640x480",
+     "tags": 57,
+     "found": 2,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2732052519474369,
+     "ms_median": 9.143588016740978,
+     "ms_p95": 9.586796117946506
+    },
+    {
+     "group": "dark-noisy 640x480",
+     "tags": 56,
+     "found": 45,
+     "wrong_ids": 0,
+     "corner_px_median": 0.29188414121823314,
+     "ms_median": 7.971270475536585,
+     "ms_p95": 9.167164994869381
+    },
+    {
+     "group": "dense 640x480",
+     "tags": 475,
+     "found": 0,
+     "wrong_ids": 0,
+     "corner_px_median": null,
+     "ms_median": 6.342264940030873,
+     "ms_p95": 7.195437315385789
+    },
+    {
+     "group": "edge 640x480",
+     "tags": 66,
+     "found": 32,
+     "wrong_ids": 0,
+     "corner_px_median": 0.23549110980381943,
+     "ms_median": 8.331985562108457,
+     "ms_p95": 9.715571231208742
+    },
+    {
+     "group": "glare 640x480",
+     "tags": 52,
+     "found": 42,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2655413696239033,
+     "ms_median": 5.32787898555398,
+     "ms_p95": 6.180481077171862
+    },
+    {
+     "group": "jpeg 640x480",
+     "tags": 61,
+     "found": 38,
+     "wrong_ids": 0,
+     "corner_px_median": 0.26403050070565154,
+     "ms_median": 2.5891055120155215,
+     "ms_p95": 3.4729786450043316
+    },
+    {
+     "group": "lowcontrast 640x480",
+     "tags": 60,
+     "found": 11,
+     "wrong_ids": 0,
+     "corner_px_median": 0.34805474378637574,
+     "ms_median": 8.037488558329642,
+     "ms_p95": 9.240481280721724
+    },
+    {
+     "group": "mixed 640x480",
+     "tags": 92,
+     "found": 0,
+     "wrong_ids": 0,
+     "corner_px_median": null,
+     "ms_median": 8.813656400889158,
+     "ms_p95": 9.36148501932621
+    },
+    {
+     "group": "motion 640x480",
+     "tags": 61,
+     "found": 10,
+     "wrong_ids": 0,
+     "corner_px_median": 0.5023100829363973,
+     "ms_median": 5.843447055667639,
+     "ms_p95": 6.8011765368282795
+    },
+    {
+     "group": "noise 640x480",
+     "tags": 50,
+     "found": 40,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2606253011387531,
+     "ms_median": 3.8006840040907264,
+     "ms_p95": 4.620598629117012
+    },
+    {
+     "group": "shadow 640x480",
+     "tags": 50,
+     "found": 40,
+     "wrong_ids": 0,
+     "corner_px_median": 0.25813117750198655,
+     "ms_median": 6.528788013383746,
+     "ms_p95": 7.312850444577634
+    },
+    {
+     "group": "tiny 640x480",
+     "tags": 91,
+     "found": 0,
+     "wrong_ids": 0,
+     "corner_px_median": null,
+     "ms_median": 8.26074497308582,
+     "ms_p95": 9.378093341365457
+    },
+    {
+     "group": "underexposed 640x480",
+     "tags": 37,
+     "found": 31,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2042070799834843,
+     "ms_median": 8.701696060597897,
+     "ms_p95": 9.487718308810145
+    },
+    {
+     "group": "blur 1280x720",
+     "tags": 56,
+     "found": 33,
+     "wrong_ids": 0,
+     "corner_px_median": 0.26073609842119977,
+     "ms_median": 30.47304996289313,
+     "ms_p95": 31.234465958550572
+    },
+    {
+     "group": "dark-noisy 1280x720",
+     "tags": 41,
+     "found": 41,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2872042178491415,
+     "ms_median": 27.38363284152001,
+     "ms_p95": 28.844443743582815
+    },
+    {
+     "group": "dense 1280x720",
+     "tags": 497,
+     "found": 302,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2653757992194695,
+     "ms_median": 21.453683031722903,
+     "ms_p95": 22.93083891272545
+    },
+    {
+     "group": "edge 1280x720",
+     "tags": 55,
+     "found": 55,
+     "wrong_ids": 0,
+     "corner_px_median": 0.25539755899924343,
+     "ms_median": 27.607324067503214,
+     "ms_p95": 29.99120510648936
+    },
+    {
+     "group": "glare 1280x720",
+     "tags": 41,
+     "found": 41,
+     "wrong_ids": 0,
+     "corner_px_median": 0.29072318306568545,
+     "ms_median": 15.208942466415465,
+     "ms_p95": 17.746278876438737
+    },
+    {
+     "group": "jpeg 1280x720",
+     "tags": 67,
+     "found": 66,
+     "wrong_ids": 0,
+     "corner_px_median": 0.3001462302425927,
+     "ms_median": 8.413722971454263,
+     "ms_p95": 10.413433180656282
+    },
+    {
+     "group": "lowcontrast 1280x720",
+     "tags": 51,
+     "found": 30,
+     "wrong_ids": 0,
+     "corner_px_median": 0.3175738277997493,
+     "ms_median": 27.66149491071701,
+     "ms_p95": 29.495001689065248
+    },
+    {
+     "group": "mixed 1280x720",
+     "tags": 90,
+     "found": 17,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2993838640745311,
+     "ms_median": 28.048149426467717,
+     "ms_p95": 30.20043714204803
+    },
+    {
+     "group": "motion 1280x720",
+     "tags": 57,
+     "found": 50,
+     "wrong_ids": 0,
+     "corner_px_median": 0.5256748758418756,
+     "ms_median": 18.648397643119097,
+     "ms_p95": 21.174773352686316
+    },
+    {
+     "group": "noise 1280x720",
+     "tags": 44,
+     "found": 43,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2520518244279527,
+     "ms_median": 11.94845896679908,
+     "ms_p95": 13.961178332101554
+    },
+    {
+     "group": "shadow 1280x720",
+     "tags": 49,
+     "found": 49,
+     "wrong_ids": 0,
+     "corner_px_median": 0.23965949903278022,
+     "ms_median": 19.950695685110986,
+     "ms_p95": 22.66792468726635
+    },
+    {
+     "group": "tiny 1280x720",
+     "tags": 93,
+     "found": 0,
+     "wrong_ids": 0,
+     "corner_px_median": null,
+     "ms_median": 28.511511045508087,
+     "ms_p95": 31.035234336741265
+    },
+    {
+     "group": "underexposed 1280x720",
+     "tags": 40,
+     "found": 40,
+     "wrong_ids": 0,
+     "corner_px_median": 0.2526211940940754,
+     "ms_median": 27.442038990557194,
+     "ms_p95": 29.819004330784082
+    }
+   ]
+  }
+ }
+}
