@@ -1,7 +1,7 @@
 # Stereo rigs
 
-`StereoPoseSolver` fits one rig pose to the tag corners from two calibrated cameras at once. Each camera must see at
-least one tag from the layout, but the two can see different tags. It needs OpenCV: install `napa-vision[headless]`.
+`StereoPoseSolver` fits one rig pose to the tag corners from two calibrated cameras at once. Each camera must see
+at least one tag from the layout. The two can see different tags. It needs OpenCV, so install `napa-vision[headless]`.
 
 ```python
 from napa_vision import NapaDetector, StereoPoseSolver, load_stereo_calibration
@@ -26,41 +26,43 @@ else:
 
 ## Inputs
 
-- **Images:** raw, unrectified frames at each camera's calibrated resolution. Check sizes before detecting with
-  `calibration.left.validate_for_image_size(width, height)` and the same for `calibration.right`.
-- **Capture times:** each frame's exposure midpoint, in seconds, on one clock shared by both cameras. The solver
-  rejects pairs further apart than `max_capture_skew_s`, which has no default because the right value depends on how
-  fast your robot moves and how your cameras are triggered.
-- **Pairing:** the solver doesn't synchronize cameras, pair frames, estimate clock offsets, or compensate for motion
-  or rolling shutter. Capture, queues, threads, and filtering over time are up to you.
+- **Images.** Raw, unrectified frames at each camera's calibrated resolution. Check sizes before detecting with
+  `calibration.left.validate_for_image_size(width, height)`, and the same for `calibration.right`.
+- **Capture times.** Each frame's exposure midpoint, in seconds, on one clock shared by both cameras. The solver
+  rejects pairs further apart than `max_capture_skew_s`. That parameter has no default, because the right value
+  depends on how fast your robot moves and how your cameras are triggered.
+- **Pairing.** The solver does not synchronize cameras, pair frames, estimate clock offsets, or compensate for
+  motion or rolling shutter. Capture, queues, threads, and filtering over time are yours.
 
-The solver copies the calibration and layout when it's created.
+The solver copies the calibration and the layout when you create it. Later edits to your objects do not affect it.
 
 ## Results
 
-`result.status` is `"stereo"`, `"rejected"`, or, if you allow it, `"monocular"`. A stereo result is timestamped at the
-pair's midpoint, and its pose maps rig coordinates into field coordinates. `rig_to_left` and `rig_to_right` in the
-calibration are the cameras' poses in the rig, in WPILib axes.
+`result.status` is `"stereo"`, `"rejected"`, or `"monocular"` if you allow the fallback described below. A stereo
+result is timestamped at the pair's midpoint. Its pose maps rig coordinates into field coordinates. In the
+calibration, `rig_to_left` and `rig_to_right` are the cameras' poses in the rig, in WPILib axes.
 
-The solver starts from each camera's own solutions, fits all the corners together, and keeps every distinct plausible
-pose it finds in `result.poses`, best first. The search is local, so it isn't guaranteed to find every one.
-`result.pose` is the best one. Each pose's covariance includes the spread to the other candidates, but it assumes the
-calibration, mounts, and field layout are exact. It doesn't include calibration error, clock error, or mount flex, so
-a small covariance alone doesn't prove stereo improved accuracy.
+The solver starts from each camera's own solutions, fits all the corners together, and keeps every distinct
+plausible pose it finds in `result.poses`, best first. The search is local, so it is not guaranteed to find every
+candidate. `result.pose` is the best one.
 
-Diagnostics identify each observation by `(camera_id, tag_id)`, with its residual and any rejection reason. By default
-the solver can drop up to two observations that fail the reprojection limit, as long as both cameras still have at
-least one. Rejected results have no pose. If a noisy pair fails to converge, raising `max_iterations` lets each
-starting pose refine for longer, at some cost in time.
+Each pose's covariance includes the spread to the other candidates. It assumes the calibration, the mounts, and
+the field layout are exact. It does not include calibration error, clock error, or mount flex. A small covariance
+alone does not prove stereo improved your accuracy.
 
-Set `allow_monocular_fallback=True` to accept a one-camera pose when stereo fails. The result's status is then
-`"monocular"`, its timestamp is that camera's capture time, and `fallback_reason` says why stereo failed. The camera
-with the newer frame is tried first.
+Diagnostics identify each observation by `(camera_id, tag_id)`, with its residual and any rejection reason. By
+default the solver can drop up to two observations that fail the reprojection limit, as long as both cameras keep
+at least one. Rejected results have no pose. If a noisy pair fails to converge, raising `max_iterations` lets each
+starting pose refine longer, at some cost in time.
+
+Set `allow_monocular_fallback=True` to accept a one-camera pose when stereo fails. The status is then
+`"monocular"`, the timestamp is that camera's capture time, and `fallback_reason` says why stereo failed. The
+camera with the newer frame is tried first.
 
 ## Calibrating a rig
 
-Calibrate each camera on its own first. Then, with the intrinsics fixed and the cameras rigidly mounted, collect
-target corners that both cameras see at the same moment:
+Calibrate each camera on its own first (see [Camera calibration](calibration.md)). Then, with the intrinsics fixed
+and the cameras rigidly mounted, collect target corners that both cameras see at the same moment:
 
 ```python
 from napa_vision import calibrate_stereo_points, save_stereo_calibration
@@ -77,19 +79,26 @@ save_stereo_calibration("rig.json", rig)
 errors_px = rig.epipolar_errors(held_out_left_corners, held_out_right_corners)
 ```
 
-`calibrate_stereo_points` takes target points in metres and image points in pixels, with at least three views and four
-points per view. It keeps both cameras' intrinsics fixed, needs both cameras at the same resolution, and makes the
-left camera the rig's origin. You can also build a `StereoCalibration` directly from separately measured camera
-mounts. Only this fitting helper needs matching resolutions. The solver accepts different ones.
+`calibrate_stereo_points` takes target points in metres and image points in pixels, with at least three views and
+four points per view. It keeps both cameras' intrinsics fixed and makes the left camera the rig's origin. It needs
+both cameras at the same resolution. That limit belongs to this fitting helper only. The solver itself accepts
+different resolutions. You can also build a `StereoCalibration` directly from separately measured camera mounts.
 
-The saved file embeds both cameras' calibrations, their IDs, the mounts, the fit's RMS error, and the number of views.
-`require_production()` checks that the calibration was measured and has fit data, not that it's accurate. Before
-relying on a rig, check epipolar errors on held-out frames, measure the baseline physically, and confirm the
-timestamps line up. Epipolar errors can't reveal a wrong baseline length or a timing offset.
+The saved file embeds both cameras' calibrations, their IDs, the mounts, the fit's RMS error, and the number of
+views. `require_production()` checks that the calibration was measured and has fit data. It does not check that the
+calibration is accurate.
+
+Before you rely on a rig, do three checks the fit cannot do for you:
+
+1. Measure epipolar errors on held-out frames the fit never saw.
+2. Measure the baseline physically. Epipolar errors cannot reveal a wrong baseline length.
+3. Confirm the timestamps line up. Nothing in the fit detects a timing offset.
 
 ## Checking a rig on recorded frames
 
-The [paired replay evaluator](../benchmarks/README.md#stereo-paired-replay) runs the stereo solver, each camera on its
-own, and a simple fusion of the two over recorded pairs, and compares them with ground truth when you have it. Stereo
-has only been tested on synthetic frames so far, so there's no measured claim yet that it improves accuracy on real
-cameras.
+The [paired replay evaluator](../benchmarks/README.md#stereo-paired-replay) runs the stereo solver, each camera on
+its own, and a simple fusion of the two over recorded pairs. It compares all three against ground truth when you
+have it.
+
+Stereo has only been tested on synthetic frames so far. There is no measured claim yet that it improves accuracy
+on real cameras. Run the replay on your own rig before you decide it helps.
