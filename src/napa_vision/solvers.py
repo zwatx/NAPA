@@ -234,7 +234,8 @@ def _solution_error(
     if errors is not None and index < len(errors):
         value = float(np.asarray(errors[index]).reshape(-1)[0])
         if np.isfinite(value):
-            return value
+            # OpenCV averages over 2N scalar coordinates; our corner-distance RMS uses N points.
+            return math.sqrt(2.0) * value
     projected, _ = cv2.projectPoints(
         object_points,
         rvec,
