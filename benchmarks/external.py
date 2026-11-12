@@ -39,7 +39,8 @@ CONFIGS = (
     ),
 )
 FILES = ("train-00000-of-00001.parquet", "rich_truth.json", "manifest.json", "checksums.json")
-# NAPA settings: default and min_tag_px=16, each also with split_touching (for tags touching other shapes).
+# NAPA settings: default (min_tag_px=22; 32 before 2026-11-11) and min_tag_px=16, each also with split_touching
+# (for tags touching other shapes).
 NAPA_BACKENDS = ("napa", "napa16", "napa-split", "napa16-split")
 
 
@@ -236,7 +237,7 @@ def evaluate(root: Path, configs: list[str], names: list[str], repeats: int) -> 
             if name in NAPA_BACKENDS:
                 det = NapaDetector(
                     family=family,
-                    min_tag_px=16 if name.startswith("napa16") else 32,
+                    min_tag_px=16 if name.startswith("napa16") else 22,
                     max_detections=1024,
                     split_touching=name.endswith("-split"),
                 )

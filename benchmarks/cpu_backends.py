@@ -19,10 +19,12 @@ import gc
 import hashlib
 import json
 import os
+import struct
 import subprocess
 import sys
 import threading
 import time
+import weakref
 from collections.abc import Callable
 from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, version
@@ -173,8 +175,11 @@ _DOUBLE_P = ctypes.POINTER(ctypes.c_double)
 
 # ------------------------------------------------------------------------------------------- Napa
 
+# NapaDetector's default. Result files before 2026-11-11 used 32: their "napa" rows match today's "napa-mtp32".
+NAPA_DEFAULT_MIN_TAG_PX = 22
 
-def napa_backend(name: str, min_tag_px: int = 32) -> Backend:
+
+def napa_backend(name: str, min_tag_px: int = NAPA_DEFAULT_MIN_TAG_PX) -> Backend:
     from napa_vision import __version__
     from napa_vision.napa_detector import NapaDetector, _library
 
@@ -197,6 +202,7 @@ def napa_backend(name: str, min_tag_px: int = 32) -> Backend:
         "core_handle": str(library),
         "family": "tag36h11",
         "min_tag_px": params.min_tag_px,
+        "recover_shadows": probe.recover_shadows,
         # napa_core.c: base = min_tag_px * 3 / (4 * W), W = 8 for tag36h11; at least 1.
         "base_sampling_stride_px": max(1, params.min_tag_px * 3 // 32),
         "noisy_frame_box_averaging": (
@@ -587,6 +593,73 @@ def aruco_nano_backend(name: str, threads: int) -> Backend:
     return Backend(name, factory, config)
 
 
+# ---------------------------------------------------------------------------------------- vkapriltag
+
+
+def vkapriltag_backend(name: str, decimation: int, family: str = "tag36h11") -> Backend:
+    """Optional: a Vulkan-compute detector, run as a worker process. Skipped without the worker or a Vulkan device."""
+
+    worker = SHIM_DIR / "vkapriltag_worker"
+    if not worker.exists():
+        raise OSError(f"{worker} isn't built; see benchmarks/README.md")
+
+    def start() -> subprocess.Popen:
+        process = subprocess.Popen(
+            [str(worker), family, str(decimation)],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+        if process.stdout.readline() != b"ready\n":
+            process.kill()
+            raise RuntimeError("vkapriltag found no usable Vulkan device")
+        return process
+
+    def stop(process: subprocess.Popen) -> None:
+        # The worker exits when its input closes. A dropped Popen never closes its pipes (subprocess keeps a running
+        # child alive to reap it later), so each abandoned worker would wait forever, holding its Vulkan memory.
+        process.stdin.close()
+        try:
+            process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+        process.stdout.close()
+
+    stop(start())  # fails here, so the backend is skipped, when there is no device
+
+    def factory() -> DetectFn:
+        process = start()
+
+        def detect(image: np.ndarray) -> list[Detection]:
+            image = _contiguous(image)
+            height, width = image.shape[:2]
+            process.stdin.write(struct.pack("<ii", width, height))
+            process.stdin.write(image.tobytes())
+            process.stdin.flush()
+            count = struct.unpack("<i", process.stdout.read(4))[0]
+            rows = np.frombuffer(
+                process.stdout.read(count * 72),
+                np.dtype([("id", "<i4"), ("hamming", "<i4"), ("corners", "<f8", (4, 2))]),
+            )
+            return [
+                (int(row["id"]), row["corners"] - 0.5) for row in rows
+            ]  # pixel i covers [i, i + 1), as in libapriltag
+
+        detect.handle = process
+        weakref.finalize(detect, stop, process)  # ends the worker when the detector is dropped, or at exit
+        return detect
+
+    config = {
+        "library": "vkapriltag (yojobama/vkapriltag, Vulkan compute plus libapriltag on the CPU, via a worker process)",
+        "decimation": decimation,
+        "refine_edges": True,
+        "device": "whichever Vulkan device the loader picks; timings depend on it",
+        "pixel_offset_applied": -0.5,
+    }
+    return Backend(name, factory, config)
+
+
 # ------------------------------------------------------------------------------------------ RapidTag
 
 
@@ -644,8 +717,14 @@ def registry(threads: int) -> dict[str, Callable[[], Backend]]:
     """Every backend configuration by name. Building one imports and probes its library."""
 
     entries: dict[str, Callable[[], Backend]] = {
-        "napa": lambda: napa_backend("napa", 32),
-        **{f"napa-mtp{m}": (lambda m=m: napa_backend(f"napa-mtp{m}", m)) for m in NAPA_SWEEP if m != 32},
+        "vkapriltag-d1": lambda: vkapriltag_backend("vkapriltag-d1", 1),
+        "vkapriltag-d2": lambda: vkapriltag_backend("vkapriltag-d2", 2),
+        "napa": lambda: napa_backend("napa"),
+        **{
+            f"napa-mtp{m}": (lambda m=m: napa_backend(f"napa-mtp{m}", m))
+            for m in NAPA_SWEEP
+            if m != NAPA_DEFAULT_MIN_TAG_PX
+        },
         "apriltag3-d2": lambda: apriltag_backend("apriltag3-d2", 2.0, threads),
         "apriltag3-d1": lambda: apriltag_backend("apriltag3-d1", 1.0, threads),
         "wpilib-d2": lambda: wpilib_backend("wpilib-d2", 2.0, threads),
@@ -668,8 +747,10 @@ def registry(threads: int) -> dict[str, Callable[[], Backend]]:
 
 
 TUNING = {
-    "napa": "default",
-    **{f"napa-mtp{m}": f"tuned: min_tag_px={m}" for m in NAPA_SWEEP if m != 32},
+    "napa": f"default (min_tag_px={NAPA_DEFAULT_MIN_TAG_PX}, no shadow pass)",
+    "vkapriltag-d1": "defaults, decimation 1, refine_edges on",
+    "vkapriltag-d2": "defaults, decimation 2 (its default), refine_edges on",
+    **{f"napa-mtp{m}": f"tuned: min_tag_px={m}" for m in NAPA_SWEEP if m != NAPA_DEFAULT_MIN_TAG_PX},
     "apriltag3-d2": "default (quad_decimate=2)",
     "apriltag3-d1": "tuned: quad_decimate=1 (full resolution)",
     "wpilib-d2": "WPILib's defaults (quad_decimate=2, min cluster 300 px, critical angle 45 degrees)",

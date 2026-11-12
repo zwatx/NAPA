@@ -50,7 +50,7 @@ GROSS_CORNER_PX = 2.0
 
 
 def _stress_tiny(rng: np.random.Generator, width: int, height: int):
-    """1-4 tags with a 12-31 px black square: below NAPA's default min_tag_px of 32."""
+    """1-4 tags with a 12-31 px black square: below min_tag_px=32."""
 
     image = pm._uniform(rng, width, height) if rng.random() < 0.5 else pm._smooth_texture(rng, width, height)
     tags = pm.place_tags(rng, width, height, int(rng.integers(1, 5)), (12.0, 31.0), max_tilt_deg=10)
