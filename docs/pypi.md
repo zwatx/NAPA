@@ -68,8 +68,7 @@ core of an Intel i7-12700H. NAPA ran at `min_tag_px=32`, the default when this w
 | ArUco Nano | 4.8x | 99.9% | 0.044 px | 0 |
 | RapidTag, subpixel | 2.0x | 75.5% | 0.294 px | 19 |
 
-NAPA was faster than every other detector on every one of the 3,000 frames. The closest was ArUco Nano. NAPA's
-smallest lead over it on any frame was 1.8x. Its one wrong ID was a tag-shaped decoy with a random pattern.
+NAPA was fastest on all 3,000 frames (smallest lead over ArUco Nano: 1.8x). Its one wrong ID was a random-pattern decoy.
 
 In the [range sweep](https://github.com/zwatx/NAPA/blob/master/benchmarks/README.md#range), NAPA at `min_tag_px=32`
 found every tag from 22 px up. AprilTag at WPILib's defaults needed 80 px, and at full resolution 14 px. On the same

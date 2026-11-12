@@ -65,29 +65,19 @@ about 1.2x as much time. See [Choosing settings](docs/detection.md#choosing-sett
 | ArUco Nano | 4.8x | 99.9% | 0.044 px | 0 |
 | RapidTag, subpixel | 2.0x | 75.5% | 0.294 px | 19 |
 
-A few things worth knowing about that table:
+Notes on the table: NAPA was fastest on all 3,000 frames (smallest lead over ArUco Nano: 1.8x on one frame). Its one
+wrong ID was a random-pattern decoy. The lead grows with resolution: 18x at 640x480, 36x at 1280x720, 74x at 1920x1080
+against WPILib defaults.
 
-- NAPA was faster than every other detector on every one of the 3,000 frames. The closest was ArUco Nano. NAPA's
-  smallest lead over it on any frame was 1.8x.
-- NAPA's one wrong ID was a tag-shaped decoy with a random pattern.
-- OpenCV ArUco and RapidTag without subpixel refinement run at the same speed as above, with corners about a pixel off.
-- The lead grows with resolution. Against WPILib's defaults, the median speedup is 18x at 640x480, 36x at 1280x720,
-  and 74x at 1920x1080.
+Range: NAPA at `min_tag_px=32` found every tag from 22 px up, vs 80 px for WPILib defaults and 14 px for AprilTag at
+full resolution. Same camera, about 3.6x the range of WPILib defaults. At `min_tag_px=16` it found everything down to
+12 px, at ~3x the cost.
 
-Range follows from the smallest tag a detector finds. In the [range sweep](benchmarks/README.md#range), NAPA at
-`min_tag_px=32` found every tag from 22 px up. AprilTag at WPILib's defaults needed 80 px, and at full resolution
-14 px. On the same camera, NAPA sees about 3.6x as far as WPILib's defaults. At `min_tag_px=16`, NAPA found every
-tag down to 12 px, at about 3x the cost of `min_tag_px=32`.
+Corners: within 0.09 px on 95% of tags. Heavy motion blur is the exception (worst 3.4 px vs 2.2 px for full-resolution
+AprilTag).
 
-Corners hold up under most conditions. NAPA's worst-corner error was within 0.09 px on 95% of tags. Heavy motion
-blur is the exception. Its largest error there was 3.4 px, against 2.2 px for full-resolution AprilTag on the same tags.
-
-Two more results, both in the benchmark guide:
-
-- On 600 stress frames (tags under 32 px, heavy noise, up to 80 tags per frame), NAPA found 96% of tags at
-  `min_tag_px=32` and all of them at `min_tag_px=16`.
-- On tag16h5, the 2023 FRC family, AprilTag at its default two-bit correction reported 581 wrong IDs. NAPA reported
-  none. Its codes sit close together, so NAPA corrects fewer bits for that family.
+Also in the [benchmark guide](benchmarks/README.md): 96-100% found on 600 stress frames, and tag16h5 results where
+AprilTag's default correction produced 581 wrong IDs to NAPA's zero.
 
 The frames are synthetic and the timings come from one laptop CPU. Before you rely on any number here,
 [score NAPA on your own footage](docs/measuring.md). The

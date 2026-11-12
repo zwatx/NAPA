@@ -236,167 +236,61 @@ configuration and machine details, and a report covering methods, tradeoffs, and
 
 ## Stereo paired replay
 
-`stereo_replay.py` runs the [stereo solver](../docs/stereo.md) over recorded image pairs, alongside each camera on its own
-and a simple fusion of the two. It scores all three against ground truth when you have it:
+`stereo_replay.py` scores the [stereo solver](../docs/stereo.md) against each camera alone and a covariance-weighted
+fusion of the two, on recorded pairs:
 
 ```bash
 python benchmarks/stereo_replay.py corpus/pairs.json \
   --calibration rig.json --max-capture-skew-s 0.005 --output stereo-results.json
 ```
 
-The manifest holds the field layout (field-to-tag transforms in metres, in WPILib axes) and each frame's exposure
-midpoint on a shared clock. This example places tag 1 at field x = 3 m, facing the origin:
-
-```json
-{
-  "schema_version": 1,
-  "family": "tag36h11",
-  "tag_size_m": 0.1651,
-  "tag_layout": {"1": [[-1,0,0,3],[0,-1,0,0],[0,0,1,0],[0,0,0,1]]},
-  "pairs": [{
-    "left": {"camera_id": "left", "path": "left.png", "capture_time_s": 1.0},
-    "right": {"camera_id": "right", "path": "right.png", "capture_time_s": 1.002},
-    "ground_truth": [{
-      "timestamp_s": 1.001,
-      "field_to_rig": [[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1]]
-    }]
-  }]
-}
-```
-
-Image paths must stay inside the manifest's folder. Camera IDs must match the calibration, and resolutions must match the
-intrinsics. `ground_truth` is optional. To score a moving rig, give a truth sample at each camera's capture time and at
-the pair's midpoint. Results are scored only against a truth sample within 1 ns of their timestamp, with no interpolation.
-
-For each pair the output has the stereo result, each camera's own result, and `independent_pose_fusion`. The fusion
-combines each camera's best pose weighted by their covariances. It assumes the rig did not move between the two frames
-and uses the same capture-skew limit. It is a baseline to compare against, not a public solver. Each result records
-whether it was accepted and why, the observations used, the RMS error, the translation and rotation error, six standard
-deviations, and NEES, the squared pose error weighted by the inverse covariance. Timing reports p50 and p95 separately
-for detecting both images and for the joint solve, measured once per pair without warm-up. File loading and the baseline
-solves are not timed.
+The manifest holds the tag layout (WPILib axes, metres), paired image paths, exposure-midpoint capture times on one
+clock, and optional ground truth. Image paths must stay in the manifest folder, camera IDs and resolutions must match
+the calibration, and poses score only against truth within 1 ns of their timestamp. Output records acceptance, RMS
+error, pose error vs truth, std devs, NEES, and separate detect/solve timings. The fusion baseline assumes the rig did
+not move between frames. It is a yardstick, not a public solver.
 
 ## Independent datasets
 
-`external.py` evaluates unchanged third-party images, independent of our renderer. It pins
-[Locus-Tag Bench](https://huggingface.co/datasets/NoeFontana/locus-tag-bench) to revision
-`5346835a9ed350828472a4c83d6e3999cf94fefb`: all 700 images in its eleven AprilTag configurations. ChArUco is excluded
-because its marker dictionary is not an AprilTag family. The runner checks image and truth checksums, reads authoritative
-`rich_truth.json` TAG records, and rejects incomplete Parquet shards.
+`external.py` scores unchanged third-party images instead of our renders. Scoring here needs the right ID **and** quad
+IoU ≥ 0.5, one-to-one. Duplicates and unmatched detections count as false positives. Only complete ground-truth tags
+count toward recall, so unmatched detections may be unlabelled partial tags, not inventions. It reports recall,
+precision, corner error, and `corner_accuracy_at_1px` separately. No single "accuracy" number.
 
-Install the optional reader in your benchmark environment (`python -m pip install pyarrow`), alongside the headless
-benchmark dependencies. From the repository root:
+**Locus-Tag Bench** (700 images, 11 configs, pinned to `5346835a`):
 
 ```bash
-# Download pinned data once, into ignored work/.
+python -m pip install pyarrow
 python -m benchmarks.external --download
-# NAPA and upstream AprilTag d1. Construct once, warm up per image, shuffle three timed calls.
-# Set NAPA_CORE_LIBRARY to the exact build being evaluated, as in the CPU comparison workflow.
 python -m benchmarks.external --output work/external/locus-results.json
-# Ordinary NAPA settings only, without the optional peer build:
-python -m benchmarks.external --backends napa napa16 --output work/external/napa-results.json
+python -m benchmarks.external --backends napa napa16 --output work/external/napa-results.json  # NAPA only
 ```
 
-`napa-split` and `napa16-split` add `split_touching=True`, for the AprilGrid boards. Their results are in the
-[split_touching report](results/2026-10-31_split_touching/report.md).
+`napa-split`/`napa16-split` add `split_touching=True` for its AprilGrid boards
+([report](results/2026-10-31_split_touching/report.md)).
 
-How scoring works here, because it differs from the synthetic corpus:
-
-- A tag counts as found only with the correct ID **and** quad IoU of at least 0.5, with one-to-one matches.
-- Duplicate detections and unmatched predictions count as false positives under this annotation protocol.
-- Only complete, in-margin ground-truth tags enter the recall denominator. Detections matching partial truth are ignored.
-- Unmatched predictions can include partially visible tags the source annotations omit. Inspect them before you read them
-  as invented IDs.
-- Geometry is aligned cyclically, including reflected order. This does not validate canonical corner order.
-- Both datasets' truth coordinates are shifted by -0.5 into our integer pixel-centre convention.
-
-Each configuration reports recall, precision, corner-error median and p95, and `corner_accuracy_at_1px`: the fraction of
-all eligible truths, missed tags included, detected with all four corners within one pixel. These are separate metrics.
-There is no single aggregate "accuracy". Timings include the detector adapter and exclude image loading. NAPA's output
-capacity is 1,024 so dense boards are not truncated. Results preserve per-image detections, checksums, effective settings,
-the loaded core hash, and the evaluator hash. Output files are never overwritten.
-
-The same runner reads the
-[ICRA 2020 AprilTag accuracy dataset](https://huggingface.co/datasets/NoeFontana/apriltag-validation-data) (Kallwies,
-Forkel, and Wuensche, *Determining and Improving the Localization Accuracy of AprilTag Detection*, ICRA 2020). Download
-an archive from mirror revision `6c7653385d480351fe8235d010dedc18fbc0b992` and extract its scenario directory under
-`work/external/icra/`, keeping `tags.csv`, `pure_tags_images/`, and `checkerboard_corners_images/`. Then:
+**ICRA 2020 accuracy dataset.** Extract a scenario archive (mirror `6c765338`) under `work/external/icra/`, then:
 
 ```bash
 python -m benchmarks.external --root work/external/icra --configs icra-forward \
   --backends napa napa16 apriltag3-d1 --output work/external/icra-forward.json
 ```
 
-`icra-circle`, `icra-random`, and `icra-rotation` use the same layout. Missing images are errors. The mirror documents one
-removed corrupt checkerboard image in `circle`, so that archive needs an explicit, recorded exclusion protocol before this
-strict loader can evaluate it. Do not silently reduce denominators. The 2026-10-31 measurements cover forward only, both
-variants, not the full ICRA dataset.
+Published measurements cover forward only. One corrupt image is missing from `circle`; scoring it needs a recorded
+exclusion, never a silent smaller denominator.
 
-Detector-generated labels, including the FRC-heavy [willtoth collection](https://github.com/willtoth/apriltag_dataset),
-measure agreement with a reference detector, not independent ground-truth accuracy. Keep those results separate. Current
-measured gaps and rejected experiments are in the
-[independent baseline report](results/2026-10-31_external_baseline/report.md).
+**bdcudatag sets.** Regenerate into `work/` (scene generator at `4ff7a31a`, 32 scenes, 30 hard frames), then
+`python -m benchmarks.bdcudatag --backends napa napa16 apriltag3-d1 --output work/external/bdcudatag.json`. Scored by
+their rules (right ID, centre within 0.75 tag sides). On the 2,389-tag hard corpus NAPA finds 98.5% at the default vs
+96.0% in bdcudatag's published table. Their truth cannot rank corner accuracy, and their GPU timings are not
+like-for-like. [Report](results/2026-11-11_bdcudatag/report.md).
 
-### bdcudatag's benchmark sets
+**vkapriltag corpus.** A Vulkan detector's rendered corpus with exact corner truth: 4,313 frames, 9,991 tags. Generate
+with its `gen_corpus.py` (vkapriltag `956d5029`, AprilTag sources `b7c0ebe9`), then
+`python -m benchmarks.vkapriltag_corpus --backends napa napa16 apriltag3-d1 --output work/external/vkapriltag-results/napa.json`.
+Optional `vkapriltag-d1/d2` backends need a Vulkan device and report accuracy only. NAPA finds 98.3% at the default vs
+vkapriltag's 97.8/98.0% and full-resolution AprilTag's 96.8%, with no false detections from any of them. Corners are a
+wash on sharp frames; NAPA is better under blur. [Report](results/2026-11-11_vkapriltag/report.md).
 
-[bdcudatag](https://github.com/cobouch/bd-cudatag) publishes two benchmark sets that need no GPU to regenerate. Build them
-into ignored `work/`:
-
-```bash
-git clone https://github.com/cobouch/bd-cudatag work/external/bd-cudatag-src
-cd work/external/bd-cudatag-src && git checkout 4ff7a31a5a7ced787825a5e226580b3cbaef07f6
-g++ -std=c++20 -O2 -Idetector/src -Idetector/tests -Idetector/bench detector/bench/scene_gen.cpp -o scene_gen
-./scene_gen ../bdcudatag/scenes 32
-python detector/bench/gen_synthetic.py --frames 30 --out ../bdcudatag/synthetic-hard
-cd ../../..
-python -m benchmarks.bdcudatag --backends napa napa16 apriltag3-d1 --output work/external/bdcudatag.json
-```
-
-A set with the wrong frame or tag count is an error. The runner scores by that project's rules: the right ID and a centre
-within 0.75 tag sides. These results therefore stand apart from the IoU-scored sets above.
-
-On the 2,389-tag hard corpus, NAPA finds 97.0% at `min_tag_px=32` (then the default), 98.5% at the current default
-`min_tag_px=22` (2026-11-11 full benchmark), and 98.9% at `min_tag_px=16`. bdcudatag's published table says 96.0%, and
-full-resolution AprilTag 3 finds 97.0%. Among the detectors run here, only Locus reported a wrong ID (one). Corner error
-on these sets reflects their truth, not the detectors, so neither set can rank corner accuracy. bdcudatag itself cannot
-run here because it needs CUDA. Its figures are the ones it publishes, and its GPU timings are not like-for-like. Details
-are in the [report](results/2026-11-11_bdcudatag/report.md).
-
-### vkapriltag's corpus
-
-[vkapriltag](https://github.com/yojobama/vkapriltag) is a Vulkan AprilTag detector. Its image stages run on the GPU, and
-quad fitting and decoding run on the CPU through libapriltag. Its repository has a corpus generator,
-`apriltags_vulkan/tools/napa_corpus/gen_corpus.py`, that renders frames with exact corner truth (4x4 supersampling) and
-needs only NumPy and the AprilTag sources. Build it into ignored `work/`:
-
-```bash
-git clone https://github.com/yojobama/vkapriltag work/external/vkapriltag-src
-git -C work/external/vkapriltag-src checkout 956d502943306b1d408ab90104ba0a64f23dfe19
-git clone https://github.com/AprilRobotics/apriltag work/thirdparty/apriltag  # for its family tables
-git -C work/thirdparty/apriltag checkout b7c0ebe9aa20f82ec7a828579004f9e706bfecd9
-python work/external/vkapriltag-src/apriltags_vulkan/tools/napa_corpus/gen_corpus.py work/thirdparty/apriltag \
-  work/external/vkapriltag-corpus --jobs 4
-python -m benchmarks.vkapriltag_corpus --backends napa napa16 apriltag3-d1 \
-  --output work/external/vkapriltag-results/napa.json
-```
-
-The corpus has 26 scenarios and 4,313 frames, with 9,991 tag36h11 tags and a tag16h5 set with decoys. A corpus with other
-counts is an error. The runner scores by that project's `score_corpus.py`. A tag is found when a detection has its ID and
-its worst corner is within a quarter of the tag's side. Every other detection counts as false. Corner error is each found
-tag's worst corner, after converting our integer-centred pixels to the corpus's `[i, i + 1)` pixels. This truth has no
-offset (NAPA's mean signed error on it is 0.000 px), so unlike the bdcudatag sets it can compare corner accuracy.
-
-`vkapriltag-d1` and `vkapriltag-d2` are optional backends, used only where a Vulkan device and vkapriltag's library are
-present. `cpu_comparison_shims/build_vkapriltag.sh` builds a small worker against a released vkapriltag package. Its `.deb`
-unpacks with `dpkg-deb -x`, so nothing is installed. It also needs the
-[Vulkan headers](https://github.com/KhronosGroup/Vulkan-Headers). Set `XDG_CACHE_HOME` to a writable directory for its
-pipeline cache. It is configured as its validation tool is: `refine_edges` on, other defaults kept, at decimation 1 and 2
-(2 is its default). The backend reports accuracy only. Its timings belong to its target GPUs, so any time quoted is its own
-published figure.
-
-On the 9,991 tags, NAPA finds 98.2% at `min_tag_px=32` (then the default), 98.3% at the current default `min_tag_px=22`
-(2026-11-11 full benchmark), and 98.4% at `min_tag_px=16`. vkapriltag finds 97.8% and 98.0% at decimation 1 and 2, and
-full-resolution AprilTag 3 finds 96.8%. None of these reports a false tag36h11 detection. vkapriltag's median corner error
-is lower on sharp frames, mostly by under 0.01 px. NAPA's is lower under blur, motion blur, and on tags crossed by a bar
-over the border, where vkapriltag's 95th percentile reaches 0.43 and 1.1 px. Elsewhere their 95th percentiles sit within
-0.05 px of each other. vkapriltag's own timings are quoted, labelled, in the [report](results/2026-11-11_vkapriltag/report.md).
+Detector-labelled sets (e.g. the willtoth FRC collection) measure agreement with that detector, not accuracy. Keep them
+separate. See the [independent baseline report](results/2026-10-31_external_baseline/report.md).
