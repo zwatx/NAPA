@@ -203,6 +203,14 @@ def napa_backend(name: str, min_tag_px: int = NAPA_DEFAULT_MIN_TAG_PX) -> Backen
         "family": "tag36h11",
         "min_tag_px": params.min_tag_px,
         "recover_shadows": probe.recover_shadows,
+        "split_touching": probe.split_touching,
+        "regrow_small_tags": probe.regrow_small_tags,
+        "soft_decode": probe.soft_decode,
+        "align_corners": probe.align_corners,
+        "camera_gamma": probe.camera_gamma,
+        "tag_shape": probe.tag_shape,
+        "camera": None,
+        "max_detections": len(probe._results),
         # napa_core.c: base = min_tag_px * 3 / (4 * W), W = 8 for tag36h11; at least 1.
         "base_sampling_stride_px": max(1, params.min_tag_px * 3 // 32),
         "noisy_frame_box_averaging": (
