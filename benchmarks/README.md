@@ -9,10 +9,10 @@ Two scripts compare NAPA with other detectors on the same generated frames:
 
 Both time detector calls only. Camera delivery, colour conversion, and pose solving sit outside the timed region.
 
-The latest saved automatic-splitting results are from [November 14](results/2026-11-14_auto_split/report.md). The
-[November 11 full comparison](results/2026-11-11_full_benchmark/report.md) covers laptop and Pi settings across rendered
-and real footage. The older October 30 main/stress/range tables remain below with their original builds and scope; no
-new measurement run is used here.
+Start with the [14 November results](results/2026-11-14_auto_split/report.md) under
+[Latest results](#latest-results). The [11 November full comparison](results/2026-11-11_full_benchmark/report.md)
+covers laptop and Pi settings across rendered and real footage. The older October 30 tables stay below with their
+original builds and scope.
 
 For scoring NAPA on your own camera footage instead, see
 [Measuring on your own footage](../docs/measuring.md).
@@ -121,9 +121,9 @@ The script prints summary tables and writes two files:
 
 ## Latest results
 
-The completed [November 14 auto-splitting check](results/2026-11-14_auto_split/report.md) uses `min_tag_px=22`,
-`split_touching="auto"`, no shadows and `max_detections=2048`. The capacity is raised from the API default of 64 for
-dense boards. These are saved results from before the final consolidated frame-edge merge, not new measurements.
+[14 November](results/2026-11-14_auto_split/report.md), with `min_tag_px=22`, `split_touching="auto"`, shadows off,
+and `max_detections=2048`. The API default is 64. It was raised here so dense boards were not capped. This run
+predates the final frame-edge merge on this branch.
 
 | Dataset | Frames | Matched tags / labels, or outputs | Median ms, one Pi 5 core |
 | --- | --- | --- | --- |
