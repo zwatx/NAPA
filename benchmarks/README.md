@@ -9,10 +9,11 @@ Two scripts compare NAPA with other detectors on the same generated frames:
 
 Both time detector calls only. Camera delivery, colour conversion, and pose solving sit outside the timed region.
 
-Start with the [14 November results](results/2026-11-14_auto_split/report.md) under
-[Latest results](#latest-results). The [11 November full comparison](results/2026-11-11_full_benchmark/report.md)
-covers laptop and Pi settings across rendered and real footage. The older October 30 tables stay below with their
-original builds and scope.
+Start with the [15 November laptop comparison](results/2026-11-15_merged_cpu_comparison/report.md) under
+[Latest results](#latest-results). It covers the fixed synthetic corpus. The
+[14 November saved Pi results](results/2026-11-14_auto_split/report.md) and the
+[11 November full comparison](results/2026-11-11_full_benchmark/report.md) are older runs on different builds. The
+October 30 tables below keep their original builds and scope.
 
 For scoring NAPA on your own camera footage instead, see
 [Measuring on your own footage](../docs/measuring.md).
@@ -121,9 +122,37 @@ The script prints summary tables and writes two files:
 
 ## Latest results
 
-[14 November](results/2026-11-14_auto_split/report.md), with `min_tag_px=22`, `split_touching="auto"`, shadows off,
-and `max_detections=2048`. The API default is 64. It was raised here so dense boards were not capped. This run
-predates the final frame-edge merge on this branch.
+The [15 November comparison](results/2026-11-15_merged_cpu_comparison/report.md) measured source `2489605` on
+one P-core of an Intel i7-12700H, with one worker per detector. Each frame had one warm-up and ten timed calls,
+with detector order shuffled per frame. Timing includes detector calls and adapter conversion.
+
+The table shows six of the 16 settings on the 3,000 main frames. NAPA defaults use `min_tag_px=22`,
+`split_touching="auto"`, shadows off, and `max_detections=64`.
+
+| Detector | Median ms | p95 ms | Tags found | Wrong IDs |
+| --- | --- | --- | --- | --- |
+| NAPA defaults (`min_tag_px=22`) | 0.315 | 2.052 | 5519/5521 | 1 |
+| NAPA, `min_tag_px=16` | 0.569 | 3.885 | 5521/5521 | 1 |
+| AprilTag, WPILib defaults | 10.747 | 39.018 | 4759/5521 | 0 |
+| AprilTag, decimate 2 | 14.050 | 48.315 | 5503/5521 | 3 |
+| AprilTag, full resolution | 54.595 | 193.457 | 5517/5521 | 3 |
+| ArUco Nano | 1.803 | 8.020 | 5517/5521 | 0 |
+
+NAPA defaults found 5,519/5,521 tags in the main corpus, 4,540/4,577 in the 600 stress frames, and 893/900 in
+the range sweep. Across all 4,500 frames, that is 10,952/10,998 tags with one wrong ID. Its median/p95 worst-corner
+error on matched main-corpus tags was 0.017/0.080 px. Matches use IDs without a geometric gate; corner error uses
+the best cyclic or reflected corner ordering and counts only matched tags.
+
+The [report](results/2026-11-15_merged_cpu_comparison/report.md) has every setting and scene,
+[protocol](results/2026-11-15_merged_cpu_comparison/protocol.json), and scoring details. The
+[audit](results/2026-11-15_merged_cpu_comparison/audit.md) records coverage and monitor checks, including variable
+CPU frequency and package temperatures up to 97°C. These are synthetic-corpus results on one host; use your own
+footage to measure camera performance.
+
+Saved Raspberry Pi 5 results from [14 November](results/2026-11-14_auto_split/report.md) are older. They were not
+rerun for this code. That run used `min_tag_px=22`, `split_touching="auto"`, shadows off, and
+`max_detections=2048` on one Pi 5 core. The cap was raised there so dense boards were not cut off. The run predates
+the final frame-edge merge on this branch.
 
 | Dataset | Frames | Matched tags / labels, or outputs | Median ms, one Pi 5 core |
 | --- | --- | --- | --- |
@@ -132,17 +161,13 @@ predates the final frame-edge merge on this branch.
 | Locus AprilGrid renders | 200 | 2,768 / 2,916 | 5.743 |
 | ICRA forward renders | 50 | 4,258 / 7,700 | 9.882 |
 
-The rendered rows are matched against corner labels; unlabelled FRC/robot footage reports outputs only. The Pi uses
-reduced board subsets; see the explicit frame counts. The [saved summary](results/2026-11-14_auto_split/summary.json)
-retains all 25 laptop and 12 Pi sets, settings, source hashes, timings and scoring details.
+The rendered rows are matched against corner labels. Unlabelled FRC and robot footage reports outputs only. The Pi
+rows use smaller board subsets. Frame counts are in the table. The
+[saved summary](results/2026-11-14_auto_split/summary.json) keeps all 25 laptop sets and 12 Pi sets, with settings,
+source hashes, timings, and scoring details.
 
-On the full 4,500-frame fixed corpus (main + stress + range), the laptop auto setting found 10,952/10,998 tags with one
-wrong ID. Median/p95 worst-corner error was 0.017/0.089 px on detected tags. The separate 900-frame range pack found
-893/900 tags; the 600-frame stress pack found 4,540/4,577. Those subsets overlap the 4,500-frame corpus.
-
-For peer detector comparisons, use the [November 11 report](results/2026-11-11_full_benchmark/report.md), including its
-follow-up no-shadow rows and independent-reference tables. It predates auto splitting. Its tables distinguish synthetic
-truth, box matches, consensus and surveyed-ID sightings.
+The [November 11 report](results/2026-11-11_full_benchmark/report.md) is an earlier peer comparison. It predates
+auto splitting. Its tables keep synthetic truth, box matches, consensus, and surveyed-ID sightings apart.
 
 ## Historical fixed-corpus comparison (2026-10-30)
 

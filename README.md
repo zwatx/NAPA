@@ -45,35 +45,29 @@ from napa_vision.compat import Detector  # was: from pupil_apriltags import Dete
 
 ## How it compares
 
-Median time per frame on one Raspberry Pi 5 core, from the [November 14
-run](benchmarks/results/2026-11-14_auto_split/report.md):
+On November 15, we compared 16 detector settings on the same synthetic frames, using one P-core of an Intel
+i7-12700H. These are the results for the 3,000-frame main corpus:
 
-| Dataset | Frames | Tags matched, or detections returned | Median ms |
-| --- | --- | --- | --- |
-| Robot-camera captures | 297 | 684 returned (no labels) | 1.226 |
-| FRC footage | 188 | 346 returned (no labels) | 1.668 |
-| Locus AprilGrid renders | 200 | 2,768 of 2,916 matched | 5.743 |
-| ICRA forward renders | 50 | 4,258 of 7,700 matched | 9.882 |
+| Detector | Median ms | p95 ms | Tags found | Wrong IDs |
+| --- | --- | --- | --- | --- |
+| NAPA defaults (`min_tag_px=22`) | 0.315 | 2.052 | 5519/5521 | 1 |
+| NAPA, `min_tag_px=16` | 0.569 | 3.885 | 5521/5521 | 1 |
+| AprilTag, WPILib defaults | 10.747 | 39.018 | 4759/5521 | 0 |
+| AprilTag, decimate 2 | 14.050 | 48.315 | 5503/5521 | 3 |
+| AprilTag, full resolution | 54.595 | 193.457 | 5517/5521 | 3 |
+| ArUco Nano | 1.803 | 8.020 | 5517/5521 | 0 |
 
-The first two rows count detections returned, not recall. The rendered rows are checked against labelled corners.
+NAPA defaults are `min_tag_px=22`, `split_touching="auto"`, shadows off, and `max_detections=64`. On matched tags
+in the main corpus, its median/p95 worst-corner error was 0.017/0.080 px. Matches are scored by ID; corner error
+uses the best corner ordering and counts only matched tags.
 
-On a laptop P-core, NAPA found 10,952 of 10,998 tags in 4,500 synthetic frames, with 1 wrong ID. For detected tags,
-median worst-corner error was 0.017 px; p95 was 0.089 px.
+Including the 600 stress and 900 range frames, NAPA defaults found 10,952 of 10,998 tags, with one wrong ID.
+The [full report](benchmarks/results/2026-11-15_merged_cpu_comparison/report.md) has all 16 settings, per-scene
+results, and the timing method. The [measurement audit](benchmarks/results/2026-11-15_merged_cpu_comparison/audit.md)
+covers frequency and temperature variation during the run.
 
-The [November 11 comparison](benchmarks/results/2026-11-11_full_benchmark/report.md) used the same 297 robot-camera
-frames on one Pi 5 core, with an older NAPA build and the recall preset:
-
-| Detector / setting | Median ms | p99 ms |
-| --- | --- | --- |
-| NAPA recall preset (16, split, shadows 24) | 6.631 | 7.810 |
-| AprilTag 3, decimate 2 | 16.716 | 19.015 |
-| AprilTag 3, full resolution | 57.468 | 62.643 |
-| AprilTag, WPILib defaults | 13.809 | 15.710 |
-| ArUco Nano | 14.646 | 15.310 |
-
-The November 14 settings were `min_tag_px=22`, `split_touching="auto"`, shadows off, and `max_detections=2048` (the API
-default is 64). The two runs used different builds. The [benchmark guide](benchmarks/README.md#latest-results) has the
-full method and per-dataset results.
+The [benchmark guide](benchmarks/README.md#latest-results) also has the earlier Pi 5 measurements, made on older
+builds. For results on your camera and hardware, [measure your own footage](docs/measuring.md).
 
 ## How it works
 
