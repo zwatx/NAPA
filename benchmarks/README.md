@@ -160,10 +160,8 @@ the final frame-edge merge on this branch.
 | FRC footage | 188 | 346 outputs (no hand truth) | 1.668 |
 | Locus AprilGrid renders | 200 | 2,768 / 2,916 | 5.743 |
 | ICRA forward renders | 50 | 4,258 / 7,700 | 9.882 |
-| Roboflow test split | 258 | 434 / 1,039 boxes | 0.410 |
 
-The rendered rows are matched against corner labels. Roboflow counts box matches, without checking IDs.
-Unlabelled FRC and robot footage reports outputs only. The Pi
+The rendered rows are matched against corner labels. Unlabelled FRC and robot footage reports outputs only. The Pi
 rows use smaller board subsets. Frame counts are in the table. The
 [saved summary](results/2026-11-14_auto_split/summary.json) keeps all 25 laptop sets and 12 Pi sets, with settings,
 source hashes, timings, and scoring details.

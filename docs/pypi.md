@@ -67,19 +67,7 @@ The [full report](https://github.com/zwatx/NAPA/blob/feat/consolidated-detector-
 results, and the timing method. The [measurement audit](https://github.com/zwatx/NAPA/blob/feat/consolidated-detector-review/benchmarks/results/2026-11-15_merged_cpu_comparison/audit.md)
 covers frequency and temperature variation during the run.
 
-We also tested NAPA on third-party datasets. These results use one Raspberry Pi 5 core:
-
-| Dataset | Images | Matched / labelled | Median ms |
-| --- | --- | --- | --- |
-| Locus AprilGrid renders | 200 | 2,768 / 2,916 tags | 5.743 |
-| ICRA 2020 forward renders | 50 | 4,258 / 7,700 tags | 9.882 |
-| Roboflow test split | 258 | 434 / 1,039 boxes | 0.410 |
-
-Locus and ICRA have tag IDs and corner labels. Roboflow has bounding boxes, so its matches do not measure ID
-accuracy. These [November 14 results](https://github.com/zwatx/NAPA/blob/feat/consolidated-detector-review/benchmarks/results/2026-11-14_auto_split/report.md) use an older build,
-with automatic splitting, shadows off, and `max_detections=2048` for dense boards.
-
-The [benchmark guide](https://github.com/zwatx/NAPA/blob/feat/consolidated-detector-review/benchmarks/README.md#latest-results) has the full settings and other datasets.
+The [benchmark guide](https://github.com/zwatx/NAPA/blob/feat/consolidated-detector-review/benchmarks/README.md#latest-results) has the full method.
 For results on your camera and hardware, [measure your own footage](https://github.com/zwatx/NAPA/blob/feat/consolidated-detector-review/docs/measuring.md).
 
 ## Documentation
