@@ -425,6 +425,9 @@ python -m benchmarks.external --output work/external/locus-results.json
 python -m benchmarks.external --backends napa napa16 --output work/external/napa-results.json
 ```
 
+`napa-split` and `napa16-split` add `split_touching=True`, for the AprilGrid boards; their results are in the
+[split_touching report](results/2026-10-31_split_touching/report.md).
+
 Scoring requires the correct ID **and quad IoU ≥ 0.5**, with one-to-one matches. Duplicate detections and unmatched
 predictions count as false positives under this annotation protocol. Only complete, in-margin ground-truth tags
 enter the recall denominator; detections matching partial truth are ignored. Unmatched predictions can include

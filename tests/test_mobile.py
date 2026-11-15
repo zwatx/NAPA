@@ -51,9 +51,9 @@ def test_color_fallback_preserves_rounding_and_strides(monkeypatch, channels: in
     elif layout == "broadcast":
         image = np.broadcast_to(image[:1, :1], image.shape)
     before = image.copy()
-    # The original fixed-point BT.601 formula defines the fallback's exact rounding.
-    weighted = sum(image[..., c].astype(np.uint32) * weight for c, weight in enumerate((1868, 9617, 4899)))
-    expected = ((weighted + 8192) >> 14).astype(np.uint8)
+    # OpenCV's BGR2GRAY fixed-point weights and rounding define the result, with or without OpenCV installed.
+    weighted = sum(image[..., c].astype(np.uint32) * weight for c, weight in enumerate((3735, 19235, 9798)))
+    expected = ((weighted + 16384) >> 15).astype(np.uint8)
 
     actual = _grayscale(image)
 

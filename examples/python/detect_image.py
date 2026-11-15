@@ -15,7 +15,7 @@ def main() -> None:
     parser.add_argument("image", type=Path)
     parser.add_argument("--output", type=Path, help="save a copy with tags outlined, e.g. detected.png")
     parser.add_argument("--family", default="tag36h11")
-    parser.add_argument("--min-tag-px", type=int, default=32, help="lower to 16 for small or distant tags")
+    parser.add_argument("--min-tag-px", type=int, default=22, help="lower to 16 for small or distant tags")
     args = parser.parse_args()
 
     image = cv2.imread(str(args.image), cv2.IMREAD_COLOR)

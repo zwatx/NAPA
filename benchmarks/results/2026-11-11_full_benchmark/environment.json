@@ -1,0 +1,1142 @@
+{
+ "laptop": {
+  "machine": "x86_64",
+  "cpu": "4",
+  "core_sha256": "d5d0f356b465cce5aa256000d6e3975f0b4a3eff6c3b0f0e76af8fb5dcf8716c",
+  "core_source_sha256": "9f9fe2881ba4847fbc5bb0b92c10b869f3c4ab677fd006abc62b274d5c8ff63a",
+  "configs": {
+   "napa-m16": {
+    "min_tag_px": 16,
+    "max_detections": 2048
+   },
+   "napa-m22": {
+    "min_tag_px": 22,
+    "max_detections": 2048
+   },
+   "napa-m32": {
+    "min_tag_px": 32,
+    "max_detections": 2048
+   },
+   "napa-m43": {
+    "min_tag_px": 43,
+    "max_detections": 2048
+   },
+   "napa-m54": {
+    "min_tag_px": 54,
+    "max_detections": 2048
+   },
+   "napa-m64": {
+    "min_tag_px": 64,
+    "max_detections": 2048
+   },
+   "napa-m32-none": {
+    "min_tag_px": 32,
+    "recover_shadows": false,
+    "max_detections": 2048
+   },
+   "napa-m48-none": {
+    "min_tag_px": 48,
+    "recover_shadows": false,
+    "max_detections": 2048
+   },
+   "napa-m64-none": {
+    "min_tag_px": 64,
+    "recover_shadows": false,
+    "max_detections": 2048
+   },
+   "napa-tall22": {
+    "min_tag_px": 22,
+    "tag_shape": "tall",
+    "max_detections": 2048
+   },
+   "napa-tall22-none": {
+    "min_tag_px": 22,
+    "tag_shape": "tall",
+    "recover_shadows": false,
+    "max_detections": 2048
+   },
+   "napa-tall16": {
+    "min_tag_px": 16,
+    "tag_shape": "tall",
+    "max_detections": 2048
+   },
+   "napa-preset": {
+    "min_tag_px": 16,
+    "split_touching": true,
+    "recover_shadows": true,
+    "shadow_min_tag_px": 24,
+    "max_detections": 2048
+   },
+   "napa-m16-sh32": {
+    "min_tag_px": 16,
+    "recover_shadows": true,
+    "shadow_min_tag_px": 32,
+    "max_detections": 2048
+   },
+   "napa-m16-sh22": {
+    "min_tag_px": 16,
+    "recover_shadows": true,
+    "shadow_min_tag_px": 22,
+    "max_detections": 2048
+   },
+   "napa-m16-sh16": {
+    "min_tag_px": 16,
+    "recover_shadows": true,
+    "max_detections": 2048
+   },
+   "napa-tall16-sh22": {
+    "min_tag_px": 16,
+    "tag_shape": "tall",
+    "recover_shadows": true,
+    "shadow_min_tag_px": 22,
+    "max_detections": 2048
+   },
+   "napa-tall16-sh22-split": {
+    "min_tag_px": 16,
+    "tag_shape": "tall",
+    "split_touching": true,
+    "recover_shadows": true,
+    "shadow_min_tag_px": 22,
+    "max_detections": 2048
+   },
+   "napa-tall22-sh22": {
+    "min_tag_px": 22,
+    "tag_shape": "tall",
+    "recover_shadows": true,
+    "shadow_min_tag_px": 22,
+    "max_detections": 2048
+   },
+   "apriltag3-d1": {
+    "library": "AprilTag 3 (AprilRobotics/apriltag, C library via a ctypes shim)",
+    "commit": "b7c0ebe9aa20f82ec7a828579004f9e706bfecd9",
+    "build": "CMake Release (-O3 -DNDEBUG -std=gnu99), shared",
+    "family": "tag36h11",
+    "bits_corrected": 2,
+    "effective_nthreads": 1.0,
+    "effective_quad_decimate": 1.0,
+    "effective_quad_sigma": 0.0,
+    "effective_refine_edges": 1.0,
+    "effective_decode_sharpening": 0.25,
+    "effective_min_cluster_pixels": 24.0,
+    "effective_min_white_black_diff": 5.0,
+    "effective_max_line_fit_mse": 10.0,
+    "effective_critical_rad": 0.0,
+    "effective_deglitch": 0.0,
+    "corner_refinement": "refine_edges (on)",
+    "threads": 1,
+    "pixel_offset_applied": -0.5,
+    "tuning": "tuned: quad_decimate=1 (full resolution)"
+   },
+   "apriltag3-d2": {
+    "library": "AprilTag 3 (AprilRobotics/apriltag, C library via a ctypes shim)",
+    "commit": "b7c0ebe9aa20f82ec7a828579004f9e706bfecd9",
+    "build": "CMake Release (-O3 -DNDEBUG -std=gnu99), shared",
+    "family": "tag36h11",
+    "bits_corrected": 2,
+    "effective_nthreads": 1.0,
+    "effective_quad_decimate": 2.0,
+    "effective_quad_sigma": 0.0,
+    "effective_refine_edges": 1.0,
+    "effective_decode_sharpening": 0.25,
+    "effective_min_cluster_pixels": 24.0,
+    "effective_min_white_black_diff": 5.0,
+    "effective_max_line_fit_mse": 10.0,
+    "effective_critical_rad": 0.0,
+    "effective_deglitch": 0.0,
+    "corner_refinement": "refine_edges (on)",
+    "threads": 1,
+    "pixel_offset_applied": -0.5,
+    "tuning": "default (quad_decimate=2)"
+   },
+   "wpilib-d2": {
+    "library": "AprilTag 3, WPILib build (robotpy-apriltag)",
+    "version": "2026.2.2",
+    "family": "tag36h11",
+    "bits_corrected": 2,
+    "effective_numThreads": 1,
+    "effective_quadDecimate": 2.0,
+    "effective_quadSigma": 0.0,
+    "effective_refineEdges": true,
+    "effective_decodeSharpening": 0.25,
+    "effective_quad_minClusterPixels": 300,
+    "effective_quad_criticalAngle": 0.7853981633974483,
+    "effective_quad_maxLineFitMSE": 10.0,
+    "effective_quad_minWhiteBlackDiff": 5,
+    "effective_quad_deglitch": false,
+    "corner_refinement": "refineEdges (on)",
+    "threads": 1,
+    "pixel_offset_applied": -0.5,
+    "tuning": "WPILib's defaults (quad_decimate=2, min cluster 300 px, critical angle 45 degrees)"
+   },
+   "locus": {
+    "library": "Locus (locus-tag, Rust via PyO3)",
+    "version": "0.10.0",
+    "build": "PyPI abi3 manylinux wheel (maturin --release, no target-cpu flags)",
+    "profile": "standard",
+    "decimation": 1,
+    "threads": 1,
+    "threading": "scoped Rayon pool of `threads` workers per detector",
+    "family": "tag36h11",
+    "max_hamming": "family default (2 for tag36h11)",
+    "corner_refinement": "Erf + corner_subpix=True",
+    "effective_config": {
+     "name": null,
+     "threshold": {
+      "tile_size": 8,
+      "enable_sharpening": true,
+      "mode": "TileMidExtreme",
+      "local_mean_radius": 7,
+      "noise_k": 4.0
+     },
+     "quad": {
+      "min_area": 36,
+      "max_aspect_ratio": 10.0,
+      "min_fill_ratio": 0.0,
+      "max_fill_ratio": 0.98,
+      "min_edge_length": 4.0,
+      "min_edge_score": 4.0,
+      "subpixel_refinement_sigma": 0.6,
+      "upscale_factor": 1,
+      "max_elongation": 0.0,
+      "min_density": 0.0,
+      "extraction_mode": "ContourRdp",
+      "edlines_imbalance_gate": "Disabled",
+      "extraction_policy": "Static"
+     },
+     "decoder": {
+      "min_contrast": 20.0,
+      "refinement_mode": "Erf",
+      "max_hamming_error": null,
+      "max_border_error_rate": null,
+      "corner_subpix": true
+     },
+     "pose": {
+      "huber_delta_px": 1.5,
+      "tikhonov_alpha_max": 0.25,
+      "sigma_n_sq": 4.0,
+      "structure_tensor_radius": 2,
+      "pose_consistency_fpr": 0.0,
+      "pose_consistency_gate_sigma_px": 1.0,
+      "outlier_drop_d2_threshold": 0.0,
+      "pose_edge_refinement_enabled": false
+     },
+     "segmentation": {
+      "connectivity": "Four"
+     }
+    },
+    "pixel_offset_applied": -0.5,
+    "tuning": "default (standard profile)"
+   },
+   "opencv": {
+    "library": "OpenCV ArUco (cv2.aruco.ArucoDetector)",
+    "version": "5.0.0",
+    "build": "opencv-python-headless wheel",
+    "dictionary": "DICT_APRILTAG_36h11",
+    "threads": 1,
+    "param_adaptiveThreshWinSizeMin": 3,
+    "param_adaptiveThreshWinSizeMax": 23,
+    "param_adaptiveThreshWinSizeStep": 10,
+    "param_adaptiveThreshConstant": 7.0,
+    "param_minMarkerPerimeterRate": 0.03,
+    "param_maxMarkerPerimeterRate": 4.0,
+    "param_minOtsuStdDev": 5.0,
+    "param_errorCorrectionRate": 0.6,
+    "param_maxErroneousBitsInBorderRate": 0.35,
+    "param_cornerRefinementMethod": 0,
+    "param_useAruco3Detection": false,
+    "param_minSideLengthCanonicalImg": 32,
+    "param_minMarkerLengthRatioOriginalImg": 0.0,
+    "effective_corner_refinement": "none",
+    "aruco3_detection_scale": null,
+    "effective_min_marker_side": "perimeter >= 0.03 * max(w, h): about 5 px at 640, 14 px at 1920",
+    "max_correctable_bits": "floor(0.6 * 5) = 3 for tag36h11 (errorCorrectionRate * (hamming distance - 1) / 2)",
+    "pixel_offset_applied": 0.0,
+    "tuning": "default (no corner refinement)"
+   },
+   "opencv-subpix": {
+    "library": "OpenCV ArUco (cv2.aruco.ArucoDetector)",
+    "version": "5.0.0",
+    "build": "opencv-python-headless wheel",
+    "dictionary": "DICT_APRILTAG_36h11",
+    "threads": 1,
+    "param_adaptiveThreshWinSizeMin": 3,
+    "param_adaptiveThreshWinSizeMax": 23,
+    "param_adaptiveThreshWinSizeStep": 10,
+    "param_adaptiveThreshConstant": 7.0,
+    "param_minMarkerPerimeterRate": 0.03,
+    "param_maxMarkerPerimeterRate": 4.0,
+    "param_minOtsuStdDev": 5.0,
+    "param_errorCorrectionRate": 0.6,
+    "param_maxErroneousBitsInBorderRate": 0.35,
+    "param_cornerRefinementMethod": 1,
+    "param_useAruco3Detection": false,
+    "param_minSideLengthCanonicalImg": 32,
+    "param_minMarkerLengthRatioOriginalImg": 0.0,
+    "effective_corner_refinement": "subpix",
+    "aruco3_detection_scale": null,
+    "effective_min_marker_side": "perimeter >= 0.03 * max(w, h): about 5 px at 640, 14 px at 1920",
+    "max_correctable_bits": "floor(0.6 * 5) = 3 for tag36h11 (errorCorrectionRate * (hamming distance - 1) / 2)",
+    "pixel_offset_applied": 0.0,
+    "tuning": "tuned: CORNER_REFINE_SUBPIX"
+   },
+   "opencv-aruco3": {
+    "library": "OpenCV ArUco (cv2.aruco.ArucoDetector)",
+    "version": "5.0.0",
+    "build": "opencv-python-headless wheel",
+    "dictionary": "DICT_APRILTAG_36h11",
+    "threads": 1,
+    "param_adaptiveThreshWinSizeMin": 3,
+    "param_adaptiveThreshWinSizeMax": 23,
+    "param_adaptiveThreshWinSizeStep": 10,
+    "param_adaptiveThreshConstant": 7.0,
+    "param_minMarkerPerimeterRate": 0.03,
+    "param_maxMarkerPerimeterRate": 4.0,
+    "param_minOtsuStdDev": 5.0,
+    "param_errorCorrectionRate": 0.6,
+    "param_maxErroneousBitsInBorderRate": 0.35,
+    "param_cornerRefinementMethod": 0,
+    "param_useAruco3Detection": true,
+    "param_minSideLengthCanonicalImg": 32,
+    "param_minMarkerLengthRatioOriginalImg": 0.0,
+    "effective_corner_refinement": "none (forced SUBPIX runs on zero pyramid levels at full-scale detection)",
+    "aruco3_detection_scale": null,
+    "effective_min_marker_side": "32 px (minSideLengthCanonicalImg)",
+    "max_correctable_bits": "floor(0.6 * 5) = 3 for tag36h11 (errorCorrectionRate * (hamming distance - 1) / 2)",
+    "pixel_offset_applied": 0.0,
+    "tuning": "tuned: useAruco3Detection (defaults; no refinement runs at full scale)"
+   },
+   "aruco-nano": {
+    "library": "ArUco Nano (rmsalinas/aruco_nano, header-only C++ via a ctypes shim)",
+    "commit": "c99989bcab795ffa65d9e12df9de15f27677a835",
+    "opencv": "4.14.0",
+    "build": "g++ -O3 -std=c++17 against OpenCV 4.14.0 (Release, IPP-ICV, pthreads, baseline SSE3 + dispatch)",
+    "dictionary": "DICT_APRILTAG_36h11 only",
+    "effective_boxFilterSize": 15.0,
+    "effective_thres": 3.0,
+    "effective_minSize": 10.0,
+    "effective_maxAttemptsPerCandidate": 5.0,
+    "effective_maxTimesRevisited": 0.05000000074505806,
+    "effective_errorCorrectionRate": 0.0,
+    "effective_maxErroneousBitsInBorderRate": 0.0,
+    "effective_detectInvertedMarker": 0.0,
+    "effective_dictionaries": 1.0,
+    "effective_ArucoNanoVersion": 10.0,
+    "effective_opencv_threads": 1.0,
+    "corner_refinement": "always: line fit per side (refineCornersEdges)",
+    "threads": 1,
+    "pixel_offset_applied": 0.0,
+    "tuning": "default (36h11 dictionary only)"
+   },
+   "rapidtag": {
+    "library": "RapidTag (rapidtag, Rust via PyO3)",
+    "version": "0.1.12",
+    "build": "PyPI abi3 manylinux wheel (portable; no target-cpu=native)",
+    "dictionary": "DICT_APRILTAG_36h11",
+    "param_adaptive_thresh_win_size_min": 3,
+    "param_adaptive_thresh_win_size_max": 23,
+    "param_adaptive_thresh_win_size_step": 10,
+    "param_adaptive_thresh_constant": 7.0,
+    "param_error_correction_rate": 0.6,
+    "param_min_side_length_canonical_img": 32,
+    "param_corner_refinement_method": 0,
+    "param_detect_inverted_marker": false,
+    "effective_min_marker_side": "32 px (4 * min_side_length_canonical_img perimeter)",
+    "input_copy": "copies the frame into a Vec on every call (lib.rs extract_frame)",
+    "threads": 1,
+    "threading": "global Rayon pool over threshold scales; RAPIDTAG_CORES=",
+    "pixel_offset_applied": 0.0,
+    "tuning": "default (no corner refinement)"
+   },
+   "rapidtag-subpix": {
+    "library": "RapidTag (rapidtag, Rust via PyO3)",
+    "version": "0.1.12",
+    "build": "PyPI abi3 manylinux wheel (portable; no target-cpu=native)",
+    "dictionary": "DICT_APRILTAG_36h11",
+    "param_adaptive_thresh_win_size_min": 3,
+    "param_adaptive_thresh_win_size_max": 23,
+    "param_adaptive_thresh_win_size_step": 10,
+    "param_adaptive_thresh_constant": 7.0,
+    "param_error_correction_rate": 0.6,
+    "param_min_side_length_canonical_img": 32,
+    "param_corner_refinement_method": 1,
+    "param_detect_inverted_marker": false,
+    "effective_min_marker_side": "32 px (4 * min_side_length_canonical_img perimeter)",
+    "input_copy": "copies the frame into a Vec on every call (lib.rs extract_frame)",
+    "threads": 1,
+    "threading": "global Rayon pool over threshold scales; RAPIDTAG_CORES=",
+    "pixel_offset_applied": 0.0,
+    "tuning": "tuned: CORNER_REFINE_SUBPIX"
+   },
+   "vkapriltag-d1": {
+    "library": "vkapriltag (yojobama/vkapriltag, Vulkan compute plus libapriltag on the CPU, via a worker process)",
+    "decimation": 1,
+    "refine_edges": true,
+    "device": "whichever Vulkan device the loader picks; timings depend on it",
+    "pixel_offset_applied": -0.5,
+    "tuning": "defaults, decimation 1, refine_edges on"
+   },
+   "vkapriltag-d2": {
+    "library": "vkapriltag (yojobama/vkapriltag, Vulkan compute plus libapriltag on the CPU, via a worker process)",
+    "decimation": 2,
+    "refine_edges": true,
+    "device": "whichever Vulkan device the loader picks; timings depend on it",
+    "pixel_offset_applied": -0.5,
+    "tuning": "defaults, decimation 2 (its default), refine_edges on"
+   }
+  },
+  "health_before": [
+   "powersave",
+   "2894175"
+  ]
+ },
+ "pi5": {
+  "machine": "aarch64",
+  "cpu": "2",
+  "core_sha256": "dd6b96a90622454563552f7a7a9f472cfce4656cc783237fcd584d82e3e7edce",
+  "core_source_sha256": "9f9fe2881ba4847fbc5bb0b92c10b869f3c4ab677fd006abc62b274d5c8ff63a",
+  "configs": {
+   "napa-m16": {
+    "min_tag_px": 16,
+    "max_detections": 2048
+   },
+   "napa-m22": {
+    "min_tag_px": 22,
+    "max_detections": 2048
+   },
+   "napa-m32": {
+    "min_tag_px": 32,
+    "max_detections": 2048
+   },
+   "napa-m43": {
+    "min_tag_px": 43,
+    "max_detections": 2048
+   },
+   "napa-m54": {
+    "min_tag_px": 54,
+    "max_detections": 2048
+   },
+   "napa-m64": {
+    "min_tag_px": 64,
+    "max_detections": 2048
+   },
+   "napa-m32-none": {
+    "min_tag_px": 32,
+    "recover_shadows": false,
+    "max_detections": 2048
+   },
+   "napa-m48-none": {
+    "min_tag_px": 48,
+    "recover_shadows": false,
+    "max_detections": 2048
+   },
+   "napa-m64-none": {
+    "min_tag_px": 64,
+    "recover_shadows": false,
+    "max_detections": 2048
+   },
+   "napa-tall22": {
+    "min_tag_px": 22,
+    "tag_shape": "tall",
+    "max_detections": 2048
+   },
+   "napa-tall22-none": {
+    "min_tag_px": 22,
+    "tag_shape": "tall",
+    "recover_shadows": false,
+    "max_detections": 2048
+   },
+   "napa-tall16": {
+    "min_tag_px": 16,
+    "tag_shape": "tall",
+    "max_detections": 2048
+   },
+   "napa-preset": {
+    "min_tag_px": 16,
+    "split_touching": true,
+    "recover_shadows": true,
+    "shadow_min_tag_px": 24,
+    "max_detections": 2048
+   },
+   "napa-m16-sh32": {
+    "min_tag_px": 16,
+    "recover_shadows": true,
+    "shadow_min_tag_px": 32,
+    "max_detections": 2048
+   },
+   "napa-m16-sh22": {
+    "min_tag_px": 16,
+    "recover_shadows": true,
+    "shadow_min_tag_px": 22,
+    "max_detections": 2048
+   },
+   "napa-m16-sh16": {
+    "min_tag_px": 16,
+    "recover_shadows": true,
+    "max_detections": 2048
+   },
+   "napa-tall16-sh22": {
+    "min_tag_px": 16,
+    "tag_shape": "tall",
+    "recover_shadows": true,
+    "shadow_min_tag_px": 22,
+    "max_detections": 2048
+   },
+   "napa-tall16-sh22-split": {
+    "min_tag_px": 16,
+    "tag_shape": "tall",
+    "split_touching": true,
+    "recover_shadows": true,
+    "shadow_min_tag_px": 22,
+    "max_detections": 2048
+   },
+   "napa-tall22-sh22": {
+    "min_tag_px": 22,
+    "tag_shape": "tall",
+    "recover_shadows": true,
+    "shadow_min_tag_px": 22,
+    "max_detections": 2048
+   },
+   "apriltag3-d1": {
+    "library": "AprilTag 3 (AprilRobotics/apriltag, C library via a ctypes shim)",
+    "commit": null,
+    "build": "CMake Release (-O3 -DNDEBUG -std=gnu99), shared",
+    "family": "tag36h11",
+    "bits_corrected": 2,
+    "effective_nthreads": 1.0,
+    "effective_quad_decimate": 1.0,
+    "effective_quad_sigma": 0.0,
+    "effective_refine_edges": 1.0,
+    "effective_decode_sharpening": 0.25,
+    "effective_min_cluster_pixels": 24.0,
+    "effective_min_white_black_diff": 5.0,
+    "effective_max_line_fit_mse": 10.0,
+    "effective_critical_rad": 0.0,
+    "effective_deglitch": 0.0,
+    "corner_refinement": "refine_edges (on)",
+    "threads": 1,
+    "pixel_offset_applied": -0.5,
+    "tuning": "tuned: quad_decimate=1 (full resolution)"
+   },
+   "apriltag3-d2": {
+    "library": "AprilTag 3 (AprilRobotics/apriltag, C library via a ctypes shim)",
+    "commit": null,
+    "build": "CMake Release (-O3 -DNDEBUG -std=gnu99), shared",
+    "family": "tag36h11",
+    "bits_corrected": 2,
+    "effective_nthreads": 1.0,
+    "effective_quad_decimate": 2.0,
+    "effective_quad_sigma": 0.0,
+    "effective_refine_edges": 1.0,
+    "effective_decode_sharpening": 0.25,
+    "effective_min_cluster_pixels": 24.0,
+    "effective_min_white_black_diff": 5.0,
+    "effective_max_line_fit_mse": 10.0,
+    "effective_critical_rad": 0.0,
+    "effective_deglitch": 0.0,
+    "corner_refinement": "refine_edges (on)",
+    "threads": 1,
+    "pixel_offset_applied": -0.5,
+    "tuning": "default (quad_decimate=2)"
+   },
+   "wpilib-d2": {
+    "library": "AprilTag 3, WPILib build (robotpy-apriltag)",
+    "version": "2026.2.2",
+    "family": "tag36h11",
+    "bits_corrected": 2,
+    "effective_numThreads": 1,
+    "effective_quadDecimate": 2.0,
+    "effective_quadSigma": 0.0,
+    "effective_refineEdges": true,
+    "effective_decodeSharpening": 0.25,
+    "effective_quad_minClusterPixels": 300,
+    "effective_quad_criticalAngle": 0.7853981633974483,
+    "effective_quad_maxLineFitMSE": 10.0,
+    "effective_quad_minWhiteBlackDiff": 5,
+    "effective_quad_deglitch": false,
+    "corner_refinement": "refineEdges (on)",
+    "threads": 1,
+    "pixel_offset_applied": -0.5,
+    "tuning": "WPILib's defaults (quad_decimate=2, min cluster 300 px, critical angle 45 degrees)"
+   },
+   "locus": {
+    "library": "Locus (locus-tag, Rust via PyO3)",
+    "version": "0.10.0",
+    "build": "PyPI abi3 manylinux wheel (maturin --release, no target-cpu flags)",
+    "profile": "standard",
+    "decimation": 1,
+    "threads": 1,
+    "threading": "scoped Rayon pool of `threads` workers per detector",
+    "family": "tag36h11",
+    "max_hamming": "family default (2 for tag36h11)",
+    "corner_refinement": "Erf + corner_subpix=True",
+    "effective_config": {
+     "name": null,
+     "threshold": {
+      "tile_size": 8,
+      "enable_sharpening": true,
+      "mode": "TileMidExtreme",
+      "local_mean_radius": 7,
+      "noise_k": 4.0
+     },
+     "quad": {
+      "min_area": 36,
+      "max_aspect_ratio": 10.0,
+      "min_fill_ratio": 0.0,
+      "max_fill_ratio": 0.98,
+      "min_edge_length": 4.0,
+      "min_edge_score": 4.0,
+      "subpixel_refinement_sigma": 0.6,
+      "upscale_factor": 1,
+      "max_elongation": 0.0,
+      "min_density": 0.0,
+      "extraction_mode": "ContourRdp",
+      "edlines_imbalance_gate": "Disabled",
+      "extraction_policy": "Static"
+     },
+     "decoder": {
+      "min_contrast": 20.0,
+      "refinement_mode": "Erf",
+      "max_hamming_error": null,
+      "max_border_error_rate": null,
+      "corner_subpix": true
+     },
+     "pose": {
+      "huber_delta_px": 1.5,
+      "tikhonov_alpha_max": 0.25,
+      "sigma_n_sq": 4.0,
+      "structure_tensor_radius": 2,
+      "pose_consistency_fpr": 0.0,
+      "pose_consistency_gate_sigma_px": 1.0,
+      "outlier_drop_d2_threshold": 0.0,
+      "pose_edge_refinement_enabled": false
+     },
+     "segmentation": {
+      "connectivity": "Four"
+     }
+    },
+    "pixel_offset_applied": -0.5,
+    "tuning": "default (standard profile)"
+   },
+   "opencv": {
+    "library": "OpenCV ArUco (cv2.aruco.ArucoDetector)",
+    "version": "4.10.0",
+    "build": "opencv-python-headless wheel",
+    "dictionary": "DICT_APRILTAG_36h11",
+    "threads": 1,
+    "param_adaptiveThreshWinSizeMin": 3,
+    "param_adaptiveThreshWinSizeMax": 23,
+    "param_adaptiveThreshWinSizeStep": 10,
+    "param_adaptiveThreshConstant": 7.0,
+    "param_minMarkerPerimeterRate": 0.03,
+    "param_maxMarkerPerimeterRate": 4.0,
+    "param_minOtsuStdDev": 5.0,
+    "param_errorCorrectionRate": 0.6,
+    "param_maxErroneousBitsInBorderRate": 0.35,
+    "param_cornerRefinementMethod": 0,
+    "param_useAruco3Detection": false,
+    "param_minSideLengthCanonicalImg": 32,
+    "param_minMarkerLengthRatioOriginalImg": 0.0,
+    "effective_corner_refinement": "none",
+    "aruco3_detection_scale": null,
+    "effective_min_marker_side": "perimeter >= 0.03 * max(w, h): about 5 px at 640, 14 px at 1920",
+    "max_correctable_bits": "floor(0.6 * 5) = 3 for tag36h11 (errorCorrectionRate * (hamming distance - 1) / 2)",
+    "pixel_offset_applied": 0.0,
+    "tuning": "default (no corner refinement)"
+   },
+   "opencv-subpix": {
+    "library": "OpenCV ArUco (cv2.aruco.ArucoDetector)",
+    "version": "4.10.0",
+    "build": "opencv-python-headless wheel",
+    "dictionary": "DICT_APRILTAG_36h11",
+    "threads": 1,
+    "param_adaptiveThreshWinSizeMin": 3,
+    "param_adaptiveThreshWinSizeMax": 23,
+    "param_adaptiveThreshWinSizeStep": 10,
+    "param_adaptiveThreshConstant": 7.0,
+    "param_minMarkerPerimeterRate": 0.03,
+    "param_maxMarkerPerimeterRate": 4.0,
+    "param_minOtsuStdDev": 5.0,
+    "param_errorCorrectionRate": 0.6,
+    "param_maxErroneousBitsInBorderRate": 0.35,
+    "param_cornerRefinementMethod": 1,
+    "param_useAruco3Detection": false,
+    "param_minSideLengthCanonicalImg": 32,
+    "param_minMarkerLengthRatioOriginalImg": 0.0,
+    "effective_corner_refinement": "subpix",
+    "aruco3_detection_scale": null,
+    "effective_min_marker_side": "perimeter >= 0.03 * max(w, h): about 5 px at 640, 14 px at 1920",
+    "max_correctable_bits": "floor(0.6 * 5) = 3 for tag36h11 (errorCorrectionRate * (hamming distance - 1) / 2)",
+    "pixel_offset_applied": 0.0,
+    "tuning": "tuned: CORNER_REFINE_SUBPIX"
+   },
+   "opencv-aruco3": {
+    "library": "OpenCV ArUco (cv2.aruco.ArucoDetector)",
+    "version": "4.10.0",
+    "build": "opencv-python-headless wheel",
+    "dictionary": "DICT_APRILTAG_36h11",
+    "threads": 1,
+    "param_adaptiveThreshWinSizeMin": 3,
+    "param_adaptiveThreshWinSizeMax": 23,
+    "param_adaptiveThreshWinSizeStep": 10,
+    "param_adaptiveThreshConstant": 7.0,
+    "param_minMarkerPerimeterRate": 0.03,
+    "param_maxMarkerPerimeterRate": 4.0,
+    "param_minOtsuStdDev": 5.0,
+    "param_errorCorrectionRate": 0.6,
+    "param_maxErroneousBitsInBorderRate": 0.35,
+    "param_cornerRefinementMethod": 0,
+    "param_useAruco3Detection": true,
+    "param_minSideLengthCanonicalImg": 32,
+    "param_minMarkerLengthRatioOriginalImg": 0.0,
+    "effective_corner_refinement": "none (forced SUBPIX runs on zero pyramid levels at full-scale detection)",
+    "aruco3_detection_scale": null,
+    "effective_min_marker_side": "32 px (minSideLengthCanonicalImg)",
+    "max_correctable_bits": "floor(0.6 * 5) = 3 for tag36h11 (errorCorrectionRate * (hamming distance - 1) / 2)",
+    "pixel_offset_applied": 0.0,
+    "tuning": "tuned: useAruco3Detection (defaults; no refinement runs at full scale)"
+   },
+   "aruco-nano": {
+    "library": "ArUco Nano (rmsalinas/aruco_nano, header-only C++ via a ctypes shim)",
+    "commit": null,
+    "opencv": "4.14.0",
+    "build": "g++ -O3 -std=c++17 against OpenCV 4.14.0 (Release, IPP-ICV, pthreads, baseline SSE3 + dispatch)",
+    "dictionary": "DICT_APRILTAG_36h11 only",
+    "effective_boxFilterSize": 15.0,
+    "effective_thres": 3.0,
+    "effective_minSize": 10.0,
+    "effective_maxAttemptsPerCandidate": 5.0,
+    "effective_maxTimesRevisited": 0.05000000074505806,
+    "effective_errorCorrectionRate": 0.0,
+    "effective_maxErroneousBitsInBorderRate": 0.0,
+    "effective_detectInvertedMarker": 0.0,
+    "effective_dictionaries": 1.0,
+    "effective_ArucoNanoVersion": 10.0,
+    "effective_opencv_threads": 1.0,
+    "corner_refinement": "always: line fit per side (refineCornersEdges)",
+    "threads": 1,
+    "pixel_offset_applied": 0.0,
+    "tuning": "default (36h11 dictionary only)"
+   },
+   "rapidtag": {
+    "library": "RapidTag (rapidtag, Rust via PyO3)",
+    "version": "0.1.12",
+    "build": "PyPI abi3 manylinux wheel (portable; no target-cpu=native)",
+    "dictionary": "DICT_APRILTAG_36h11",
+    "param_adaptive_thresh_win_size_min": 3,
+    "param_adaptive_thresh_win_size_max": 23,
+    "param_adaptive_thresh_win_size_step": 10,
+    "param_adaptive_thresh_constant": 7.0,
+    "param_error_correction_rate": 0.6,
+    "param_min_side_length_canonical_img": 32,
+    "param_corner_refinement_method": 0,
+    "param_detect_inverted_marker": false,
+    "effective_min_marker_side": "32 px (4 * min_side_length_canonical_img perimeter)",
+    "input_copy": "copies the frame into a Vec on every call (lib.rs extract_frame)",
+    "threads": 1,
+    "threading": "global Rayon pool over threshold scales; RAPIDTAG_CORES=",
+    "pixel_offset_applied": 0.0,
+    "tuning": "default (no corner refinement)"
+   },
+   "rapidtag-subpix": {
+    "library": "RapidTag (rapidtag, Rust via PyO3)",
+    "version": "0.1.12",
+    "build": "PyPI abi3 manylinux wheel (portable; no target-cpu=native)",
+    "dictionary": "DICT_APRILTAG_36h11",
+    "param_adaptive_thresh_win_size_min": 3,
+    "param_adaptive_thresh_win_size_max": 23,
+    "param_adaptive_thresh_win_size_step": 10,
+    "param_adaptive_thresh_constant": 7.0,
+    "param_error_correction_rate": 0.6,
+    "param_min_side_length_canonical_img": 32,
+    "param_corner_refinement_method": 1,
+    "param_detect_inverted_marker": false,
+    "effective_min_marker_side": "32 px (4 * min_side_length_canonical_img perimeter)",
+    "input_copy": "copies the frame into a Vec on every call (lib.rs extract_frame)",
+    "threads": 1,
+    "threading": "global Rayon pool over threshold scales; RAPIDTAG_CORES=",
+    "pixel_offset_applied": 0.0,
+    "tuning": "tuned: CORNER_REFINE_SUBPIX"
+   }
+  },
+  "health_before": [
+   "temp=52.7'C",
+   "throttled=0x0",
+   "ondemand",
+   "2400000"
+  ]
+ },
+ "laptop-after-fix": {
+  "machine": "x86_64",
+  "cpu": "2",
+  "core_sha256": "60d48de15e43d9d9f6f52b15f8b9edc28d8d5c0ccc9c3a2b3f0c25ec333dc81d",
+  "core_source_sha256": "c986ca720e3a01b3810574b7c76d047f46d9325e083292c49c06f7dade63c11c",
+  "configs": {
+   "napa-m16": {
+    "min_tag_px": 16,
+    "max_detections": 2048
+   },
+   "napa-m22": {
+    "min_tag_px": 22,
+    "max_detections": 2048
+   },
+   "napa-m32": {
+    "min_tag_px": 32,
+    "max_detections": 2048
+   },
+   "napa-m43": {
+    "min_tag_px": 43,
+    "max_detections": 2048
+   },
+   "napa-m54": {
+    "min_tag_px": 54,
+    "max_detections": 2048
+   },
+   "napa-m64": {
+    "min_tag_px": 64,
+    "max_detections": 2048
+   },
+   "napa-m32-none": {
+    "min_tag_px": 32,
+    "recover_shadows": false,
+    "max_detections": 2048
+   },
+   "napa-m48-none": {
+    "min_tag_px": 48,
+    "recover_shadows": false,
+    "max_detections": 2048
+   },
+   "napa-m64-none": {
+    "min_tag_px": 64,
+    "recover_shadows": false,
+    "max_detections": 2048
+   },
+   "napa-tall22": {
+    "min_tag_px": 22,
+    "tag_shape": "tall",
+    "max_detections": 2048
+   },
+   "napa-tall22-none": {
+    "min_tag_px": 22,
+    "tag_shape": "tall",
+    "recover_shadows": false,
+    "max_detections": 2048
+   },
+   "napa-tall16": {
+    "min_tag_px": 16,
+    "tag_shape": "tall",
+    "max_detections": 2048
+   },
+   "napa-preset": {
+    "min_tag_px": 16,
+    "split_touching": true,
+    "recover_shadows": true,
+    "shadow_min_tag_px": 24,
+    "max_detections": 2048
+   },
+   "napa-m16-sh32": {
+    "min_tag_px": 16,
+    "recover_shadows": true,
+    "shadow_min_tag_px": 32,
+    "max_detections": 2048
+   },
+   "napa-m16-sh22": {
+    "min_tag_px": 16,
+    "recover_shadows": true,
+    "shadow_min_tag_px": 22,
+    "max_detections": 2048
+   },
+   "napa-m16-sh16": {
+    "min_tag_px": 16,
+    "recover_shadows": true,
+    "max_detections": 2048
+   },
+   "napa-tall16-sh22": {
+    "min_tag_px": 16,
+    "tag_shape": "tall",
+    "recover_shadows": true,
+    "shadow_min_tag_px": 22,
+    "max_detections": 2048
+   },
+   "napa-tall16-sh22-split": {
+    "min_tag_px": 16,
+    "tag_shape": "tall",
+    "split_touching": true,
+    "recover_shadows": true,
+    "shadow_min_tag_px": 22,
+    "max_detections": 2048
+   },
+   "napa-tall22-sh22": {
+    "min_tag_px": 22,
+    "tag_shape": "tall",
+    "recover_shadows": true,
+    "shadow_min_tag_px": 22,
+    "max_detections": 2048
+   },
+   "napa-m22-none": {
+    "min_tag_px": 22,
+    "recover_shadows": false,
+    "max_detections": 2048
+   },
+   "napa-m16-none": {
+    "min_tag_px": 16,
+    "recover_shadows": false,
+    "max_detections": 2048
+   }
+  },
+  "health_before": [
+   "powersave",
+   "1213293"
+  ]
+ },
+ "pi5-after-fix": {
+  "machine": "aarch64",
+  "cpu": "2",
+  "core_sha256": "2d675ceb0bb06b753f377e5c755c9441722966ad5484075f88fb24d821419815",
+  "core_source_sha256": "c986ca720e3a01b3810574b7c76d047f46d9325e083292c49c06f7dade63c11c",
+  "configs": {
+   "napa-m16": {
+    "min_tag_px": 16,
+    "max_detections": 2048
+   },
+   "napa-m22": {
+    "min_tag_px": 22,
+    "max_detections": 2048
+   },
+   "napa-m32": {
+    "min_tag_px": 32,
+    "max_detections": 2048
+   },
+   "napa-tall22": {
+    "min_tag_px": 22,
+    "tag_shape": "tall",
+    "max_detections": 2048
+   },
+   "napa-tall16": {
+    "min_tag_px": 16,
+    "tag_shape": "tall",
+    "max_detections": 2048
+   },
+   "napa-preset": {
+    "min_tag_px": 16,
+    "split_touching": true,
+    "recover_shadows": true,
+    "shadow_min_tag_px": 24,
+    "max_detections": 2048
+   },
+   "napa-m22-none": {
+    "min_tag_px": 22,
+    "recover_shadows": false,
+    "max_detections": 2048
+   }
+  },
+  "health_before": [
+   "temp=51.0'C",
+   "throttled=0x0",
+   "ondemand",
+   "2400000"
+  ]
+ },
+ "laptop-before-fix": {
+  "machine": "x86_64",
+  "cpu": "2",
+  "core_sha256": "62852ec4bd7ffc76813ceb83fd4f23b787e95b5997b9e043c4c289c22c1e778a",
+  "core_source_sha256": "9f9fe2881ba4847fbc5bb0b92c10b869f3c4ab677fd006abc62b274d5c8ff63a",
+  "configs": {
+   "napa-m16": {
+    "min_tag_px": 16,
+    "max_detections": 2048
+   },
+   "napa-m22": {
+    "min_tag_px": 22,
+    "max_detections": 2048
+   },
+   "napa-m32": {
+    "min_tag_px": 32,
+    "max_detections": 2048
+   },
+   "napa-m43": {
+    "min_tag_px": 43,
+    "max_detections": 2048
+   },
+   "napa-m54": {
+    "min_tag_px": 54,
+    "max_detections": 2048
+   },
+   "napa-m64": {
+    "min_tag_px": 64,
+    "max_detections": 2048
+   },
+   "napa-m32-none": {
+    "min_tag_px": 32,
+    "recover_shadows": false,
+    "max_detections": 2048
+   },
+   "napa-m48-none": {
+    "min_tag_px": 48,
+    "recover_shadows": false,
+    "max_detections": 2048
+   },
+   "napa-m64-none": {
+    "min_tag_px": 64,
+    "recover_shadows": false,
+    "max_detections": 2048
+   },
+   "napa-tall22": {
+    "min_tag_px": 22,
+    "tag_shape": "tall",
+    "max_detections": 2048
+   },
+   "napa-tall22-none": {
+    "min_tag_px": 22,
+    "tag_shape": "tall",
+    "recover_shadows": false,
+    "max_detections": 2048
+   },
+   "napa-tall16": {
+    "min_tag_px": 16,
+    "tag_shape": "tall",
+    "max_detections": 2048
+   },
+   "napa-preset": {
+    "min_tag_px": 16,
+    "split_touching": true,
+    "recover_shadows": true,
+    "shadow_min_tag_px": 24,
+    "max_detections": 2048
+   },
+   "napa-m16-sh32": {
+    "min_tag_px": 16,
+    "recover_shadows": true,
+    "shadow_min_tag_px": 32,
+    "max_detections": 2048
+   },
+   "napa-m16-sh22": {
+    "min_tag_px": 16,
+    "recover_shadows": true,
+    "shadow_min_tag_px": 22,
+    "max_detections": 2048
+   },
+   "napa-m16-sh16": {
+    "min_tag_px": 16,
+    "recover_shadows": true,
+    "max_detections": 2048
+   },
+   "napa-tall16-sh22": {
+    "min_tag_px": 16,
+    "tag_shape": "tall",
+    "recover_shadows": true,
+    "shadow_min_tag_px": 22,
+    "max_detections": 2048
+   },
+   "napa-tall16-sh22-split": {
+    "min_tag_px": 16,
+    "tag_shape": "tall",
+    "split_touching": true,
+    "recover_shadows": true,
+    "shadow_min_tag_px": 22,
+    "max_detections": 2048
+   },
+   "napa-tall22-sh22": {
+    "min_tag_px": 22,
+    "tag_shape": "tall",
+    "recover_shadows": true,
+    "shadow_min_tag_px": 22,
+    "max_detections": 2048
+   },
+   "napa-m22-none": {
+    "min_tag_px": 22,
+    "recover_shadows": false,
+    "max_detections": 2048
+   },
+   "napa-m16-none": {
+    "min_tag_px": 16,
+    "recover_shadows": false,
+    "max_detections": 2048
+   }
+  },
+  "health_before": [
+   "powersave",
+   "746908"
+  ]
+ },
+ "pi5-before-fix": {
+  "machine": "aarch64",
+  "cpu": "2",
+  "core_sha256": "dd6b96a90622454563552f7a7a9f472cfce4656cc783237fcd584d82e3e7edce",
+  "core_source_sha256": "9f9fe2881ba4847fbc5bb0b92c10b869f3c4ab677fd006abc62b274d5c8ff63a",
+  "configs": {
+   "napa-m16": {
+    "min_tag_px": 16,
+    "max_detections": 2048
+   },
+   "napa-m22": {
+    "min_tag_px": 22,
+    "max_detections": 2048
+   },
+   "napa-m32": {
+    "min_tag_px": 32,
+    "max_detections": 2048
+   },
+   "napa-tall22": {
+    "min_tag_px": 22,
+    "tag_shape": "tall",
+    "max_detections": 2048
+   },
+   "napa-tall16": {
+    "min_tag_px": 16,
+    "tag_shape": "tall",
+    "max_detections": 2048
+   },
+   "napa-preset": {
+    "min_tag_px": 16,
+    "split_touching": true,
+    "recover_shadows": true,
+    "shadow_min_tag_px": 24,
+    "max_detections": 2048
+   },
+   "napa-m22-none": {
+    "min_tag_px": 22,
+    "recover_shadows": false,
+    "max_detections": 2048
+   }
+  },
+  "health_before": [
+   "temp=52.1'C",
+   "throttled=0x0",
+   "ondemand",
+   "2400000"
+  ]
+ },
+ "pi5_frame_steps": {
+  "real": 1,
+  "rf-valid": 1,
+  "rf-test": 1,
+  "drive-test": 1,
+  "drive-valid": 2,
+  "fresh": 1,
+  "indoor": 1,
+  "icra": 2,
+  "icra-circle": 3,
+  "icra-random": 6,
+  "icra-rotation": 6,
+  "gopro": 3,
+  "vk": 4,
+  "bd-scenes": 1,
+  "bd-hard": 2,
+  "own": 3,
+  "stress": 2,
+  "locus": 3,
+  "range": 2,
+  "penn-tango-top": 3,
+  "penn-tango-bottom": 4,
+  "penn-visensor": 2,
+  "frc-more": 2
+ },
+ "machines": {
+  "laptop": "Intel Core i7-12700H, x86-64; one P-core per timing lane",
+  "pi5": "Raspberry Pi 5, aarch64, 2.4 GHz, one core per run"
+ },
+ "run_core_source_sha256": "9f9fe2881ba4847fbc5bb0b92c10b869f3c4ab677fd006abc62b274d5c8ff63a",
+ "after_fix_core_source_sha256": "c986ca720e3a01b3810574b7c76d047f46d9325e083292c49c06f7dade63c11c",
+ "note": "core_sha256 is the loaded binary; core_source_sha256 is the C source it was built from."
+}

@@ -44,7 +44,7 @@ int main(int argc, char **argv) {
         return 2;
     }
     /* The defaults NapaDetector uses in Python. */
-    napa_params params = {.min_tag_px = 32, .max_hamming = 3, .min_contrast = 20, .min_border_cells = 22,
+    napa_params params = {.min_tag_px = 22, .max_hamming = 3, .min_contrast = 20, .min_border_cells = 22,
                           .sharpening_x100 = 25};
     napa_detection found[64];
     napa_detector *detector = napa_create();
