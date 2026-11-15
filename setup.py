@@ -10,7 +10,7 @@ NATIVE = "src/napa_vision/_native"
 
 
 class BuildNative(build_ext):
-    """Compile the dependency-free C core as a plain shared library loaded with ctypes."""
+    """Compile the C core as a plain shared library loaded with ctypes."""
 
     def build_extensions(self) -> None:
         for extension in self.extensions:

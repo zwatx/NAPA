@@ -1,7 +1,7 @@
 /* NAPA. Copyright (c) 2026 Zachary Wilson.
  * SPDX-License-Identifier: GPL-3.0-only. Also available under a commercial license: see NOTICE.
  * Copies and works based on this file must keep this notice and credit Zachary Wilson. */
-/* Exercise new storage through real detections, including partial-allocation retry. */
+/* Exercise deferred shape storage through real detections, including partial-allocation retry. */
 #include <stdlib.h>
 #include <stdio.h>
 #include "../src/napa_vision/_native/napa_core.h"

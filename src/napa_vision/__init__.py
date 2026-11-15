@@ -1,4 +1,4 @@
-"""Napa: a fast tag36h11 AprilTag detector with optional pose processing."""
+"""Napa: a fast AprilTag detector with optional pose processing."""
 
 from __future__ import annotations
 

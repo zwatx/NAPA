@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "napa-vision"
 dynamic = ["version"]
-description = "A fast, dependency-free AprilTag detector for every tag family, with sub-pixel corners and poses with covariances"
+description = "A fast AprilTag detector for every tag family, with sub-pixel corners and poses with covariances"
 # PyPI's page: the README's essentials, with absolute links, since PyPI can't follow the repository's relative ones.
 readme = "docs/pypi.md"
 license = "GPL-3.0-only"

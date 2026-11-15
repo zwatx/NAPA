@@ -229,7 +229,6 @@ def estimate_rolling_shutter(
             if spread.min() < _LAYOUT_MIN_SPREAD:
                 continue
             for axis, across in ((1, 0), (0, 1)):
-                lines = height if axis == 1 else width
                 rate = float(np.mean(np.abs(speeds[:, across])))
                 if rate >= _SHUTTER_MIN_RATE * focal and rate * spread[axis] * 0.015 >= _SHUTTER_MIN_SHEAR_PX:
                     moving[axis].append((timestamp, tags, speeds, world))

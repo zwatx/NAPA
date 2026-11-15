@@ -2,7 +2,7 @@
  * SPDX-License-Identifier: GPL-3.0-only. Also available under a commercial license: see NOTICE.
  * Copies and works based on this file must keep this notice and credit Zachary Wilson. */
 /*
- * Napa core: a sparse-sampling ("rake") AprilTag 36h11 detector in portable C99.
+ * Napa core: a sparse-sampling ("rake") AprilTag detector in portable C99.
  *
  * Pipeline per frame, level by level (each level doubles the sampling stride):
  *   1. Rake: point-sample the image every 3/4 of the smallest cell. A tag's black border is one
@@ -14,12 +14,12 @@
  *   3. Keep tag-sized, tag-shaped blobs; each one's extreme points give a rough quad.
  *   4. Fit each side to its full-resolution edge along the normal, decode once cheaply to reject
  *      non-tags, then refine coarse to fine and intersect the four lines for the corners.
- *   5. Sample the 8x8 cell grid through the homography and decode. Multi-index hashing narrows
- *      the 2,348 rotated codewords to the few sharing an exact block with the payload.
+ *   5. Sample the family's cell grid through the homography and decode. Multi-index hashing
+ *      narrows the rotated codewords to those sharing a block with the payload.
  *   6. Repair the cases a plain fit gets wrong: a quiet zone darker than the background, a side
  *      fitted one cell out, and edges biased by clipped (saturated) exposure.
  *
- * The library has no dependencies and exposes a plain C ABI.
+ * The library exposes a plain C ABI and uses the C math library and POSIX or Windows threads.
  */
 
 #ifdef NAPA_PROFILE
@@ -413,7 +413,7 @@ struct napa_detector {
     size_t piece_capacity;
     napa_detection *piece_out; /* decoded pieces, appended after the other detections */
     size_t piece_out_capacity;
-    /* Newly admitted whole shapes wait until the existing whole detections are complete. */
+    /* Extended-shape detections wait until ordinary whole detections are complete. */
     napa_detection *shape_out;
     vec2 *shape_centers;
     size_t shape_out_capacity, shape_center_capacity;
@@ -2435,7 +2435,7 @@ struct fine_whole {
 /* Keep the rare illumination fit's sample arrays off the hot refinement stack. */
 static NAPA_NOINLINE void refresh_edge_light(const image_view *im, const vec2 q[4], edge_levels *levels);
 
-/* Retain original initial-fit samples before the existing TLS compacts them. */
+/* Initial-fit samples before total least squares compacts the arrays. */
 typedef struct {
     int count[4];
     unsigned rejection_mask;
@@ -2491,8 +2491,8 @@ static NAPA_FORCE_INLINE int fit_side_line_impl(double px[], double py[], double
                 }
             }
             if (rejected != NULL) *rejected = kept != good;
-            /* Shorten the second pass only with enough inliers. Retain the established
-             * partial-compaction fallback when too few samples survive. */
+            /* Shorten the second pass only with enough inliers. Otherwise it uses the
+             * full array, including the partially compacted prefix. */
             if (kept == good) break; /* unchanged samples would produce the same fit again */
             if (kept >= 3 && 2 * kept >= good) good = kept;
         }
@@ -2505,8 +2505,8 @@ static NAPA_FORCE_INLINE int fit_side_line(double px[], double py[], double wt[]
     return fit_side_line_impl(px, py, wt, good, reach, lx, ly, dx, dy, NULL);
 }
 
-/* Report initial sample rejection without changing arithmetic, compaction or
- * the established partial-compaction fallback. */
+/* Record which side rejected initial samples, including when too few inliers
+ * remain to shorten the second fit pass. */
 static NAPA_FORCE_INLINE int fit_initial_side_observed(double px[], double py[], double wt[], int good, double reach,
                      double *lx, double *ly, double *dx, double *dy, unsigned *mask, unsigned side) {
     int rejected = 0;
@@ -4914,14 +4914,14 @@ static int grow_pieces(napa_detector *det, size_t n) {
 #define PIECE_SEEN 0x8000u
 typedef char napa_side_fits_15_bits[NAPA_MAX_SIDE < 0x8000 ? 1 : -1]; /* coordinates leave PIECE_SEEN's bit free */
 
-/* Preserve the old box-density decision for existing split-piece dependencies. */
+/* Split-piece eligibility uses box density, independently of the whole quad's fill. */
 static int box_is_sparse(int count, int width, int height) {
     return (double)count / ((double)width * height) < 0.2;
 }
 
-/* These wholes used to wait for a coarser grid. Their finer outlines may
- * merge into the background there; retain them as additional proposals. */
-static int dense_whole_is_new(int base, int s, int last, int width, int height) {
+/* Large fine-grid outlines can merge into the background at coarser levels.
+ * Defer them until ordinary proposals finish, retaining their finer outlines. */
+static int dense_whole_needs_deferral(int base, int s, int last, int width, int height) {
     return base == 1 && s <= 2 && !last && width > 72 && height > 72;
 }
 
@@ -5056,8 +5056,8 @@ static int corners_touch(const image_view *view, const napa_detection *d, double
     return dark >= 3;
 }
 
-/* Coverage is queried for every proposal. Compute each accepted centre once, using exactly
- * the original ordered sum; caches have the same logical lengths as their output buffers. */
+/* Coverage is queried for every proposal. Compute each accepted centre once, preserving
+ * corner summation order; caches have the same logical lengths as their output buffers. */
 static int save_center(vec2 **centers, size_t *capacity, int index, const napa_detection *d) {
     if ((size_t)index >= *capacity) {
         size_t cap = *capacity ? 2 * *capacity : 64;
@@ -5877,7 +5877,7 @@ static int regrow_small(napa_detector *det, const image_view *view, const vec2 r
 
 /* The rough quad of a candidate blob, from its extreme points; shared by the candidate loop and its threaded
  * pre-pass, so both compute it the same way. */
-static NAPA_NOINLINE void rough_pick(const component *comp, int new_small, int pick[4][2]) {
+static NAPA_NOINLINE void rough_pick(const component *comp, int undersized_whole, int pick[4][2]) {
     /* Rough quad: of the extreme points (in clockwise angular order), the four that span the
      * largest quadrilateral. Start from the best of the eight axis and diagonal extremes, then
      * let each vertex move to any of the 16 extremes between its neighbours while the area
@@ -5912,7 +5912,7 @@ static NAPA_NOINLINE void rough_pick(const component *comp, int new_small, int p
         }
     }
     for (int t = 0; t < 4; t++) pick[t][0] = E[idx[t]][0], pick[t][1] = E[idx[t]][1];
-    if (new_small) complete_small_outline(pick, comp->minx, comp->maxx, comp->miny, comp->maxy);
+    if (undersized_whole) complete_small_outline(pick, comp->minx, comp->maxx, comp->miny, comp->maxy);
 }
 
 /* A rough quad's corners in pixels. */
@@ -5985,9 +5985,9 @@ static void memo_candidates(void *ctx, int chunk) {
         m->screen = m->fit = -1;
         m->frame_sides = 0;
         const int bw = comp->maxx - comp->minx + 1, bh = comp->maxy - comp->miny + 1;
-        const int new_small = j->base > 1 && (bw < j->lo || bh < j->lo);
-        rough_pick(comp, new_small, m->pick);
-        if (new_small || dense_whole_is_new(j->base, j->s, j->last, bw, bh)) continue; /* set aside by the loop */
+        const int undersized_whole = j->base > 1 && (bw < j->lo || bh < j->lo);
+        rough_pick(comp, undersized_whole, m->pick);
+        if (undersized_whole || dense_whole_needs_deferral(j->base, j->s, j->last, bw, bh)) continue; /* set aside by the loop */
         double best_area = quad_area_pts(m->pick), perim_q = 0;
         for (int k = 0; k < 4; k++) {
             int ex = m->pick[(k + 1) & 3][0] - m->pick[k][0], ey = m->pick[(k + 1) & 3][1] - m->pick[k][1];
@@ -5997,9 +5997,9 @@ static void memo_candidates(void *ctx, int chunk) {
         vec2 rough[4], fine[4];
         rough_corners(m->pick, j->s, j->sx, j->sy, j->offx, j->offy, rough);
         const int s = j->s;
-        if ((j->shadow || ((s <= 2 || (s <= 6 && !new_small)) && !j->last)) && j->params->min_border_cells >= 22) {
+        if ((j->shadow || ((s <= 2 || (s <= 6 && !undersized_whole)) && !j->last)) && j->params->min_border_cells >= 22) {
             m->screen = (signed char)quiet_zone_passes(j->view, rough, 0.5 * s * j->smax, j->cells, j->params->min_contrast,
-                                                       j->shadow || s <= 2 || (s <= 6 && !new_small), j->shadow);
+                                                       j->shadow || s <= 2 || (s <= 6 && !undersized_whole), j->shadow);
             if (!m->screen) continue;
         }
         double width = 0;
@@ -6259,11 +6259,11 @@ start:;
                 int32_t root = joined_root(B, det->piece_root[k]);
                 const blob_box *box = &B[root];
                 int candidate = det->slot[root];
-                /* A newly admitted sparse or fine parent was not an old candidate. Keep its extrema
-                 * chain, but do not let its fate or stride-one shortcut suppress old pieces. */
+                /* Sparse or deferred fine parents contribute extrema without controlling their
+                 * pieces' eligibility through a failure fate or the stride-one shortcut. */
                 if (candidate >= 0 && (box_is_sparse(box->count, box->maxx - box->minx + 1,
                                                     box->maxy - box->miny + 1) ||
-                    dense_whole_is_new(base, s, last, box->maxx - box->minx + 1,
+                    dense_whole_needs_deferral(base, s, last, box->maxx - box->minx + 1,
                                       box->maxy - box->miny + 1))) candidate = -1;
                 det->piece_cand[k] = candidate;
             }
@@ -6357,7 +6357,7 @@ start:;
             component confidence_self;
             component *self;
             component comp;
-            int new_small = 0, require_exact = confidence, extended_shape = 0;
+            int undersized_whole = 0, require_exact = confidence, extended_shape = 0;
             int t_minx, t_maxx, t_miny, t_maxy;
             napa_params strict_border;
             const napa_params *decode_params = params;
@@ -6406,10 +6406,10 @@ start:;
             self = delayed ? &det->fine_wholes[pending_index].data.shape
                    : piece ? &det->pieces[k] : &det->cands[ci];
             comp = *self;
-            new_small = !piece && base > 1 &&
+            undersized_whole = !piece && base > 1 &&
                 (comp.maxx - comp.minx + 1 < lo || comp.maxy - comp.miny + 1 < lo);
-            require_exact = new_small || confidence;
-            if (!delayed && !piece && (new_small || dense_whole_is_new(base, s, last,
+            require_exact = undersized_whole || confidence;
+            if (!delayed && !piece && (undersized_whole || dense_whole_needs_deferral(base, s, last,
                     comp.maxx - comp.minx + 1, comp.maxy - comp.miny + 1))) {
                 if (!remember_fine_whole(det, fine_whole_count, &comp, s, last)) return -2;
                 fine_whole_count++;
@@ -6419,7 +6419,7 @@ start:;
                     if (fine_whole_count > (size_t)(INT32_MAX - ordinary_count)) return -2;
                     candidate_count = ordinary_count + (int)fine_whole_count;
                 }
-                self->row_y = -6; /* absent legacy parents must not acquire new child dependencies */
+                self->row_y = -6; /* deferred wholes must not control split-piece eligibility */
                 continue;
             }
             /* row_y is spent after the extrema pass: it records how far each proposal got (-TRACE stage). */
@@ -6467,7 +6467,7 @@ start:;
             const cand_memo *mm = memo_level && !piece && !delayed ? &det->memo[ci] : NULL;
             int pick[4][2];
             if (mm) memcpy(pick, mm->pick, sizeof pick);
-            else rough_pick(&comp, new_small, pick);
+            else rough_pick(&comp, undersized_whole, pick);
             double best_area = quad_area_pts(pick);
             /* Every tag36h11 code has at least 10 white payload cells, so at most 54/64 of a tag's
              * square is dark (0.85 measured, against the quad grown by the half sample its corner
@@ -6483,13 +6483,13 @@ start:;
                 self->row_y = -6;
                 continue;
             }
-            /* The axis-aligned box grows when a thin tag rotates. Keep the old path for
-             * ordinary shapes; new sparse or slender proposals need quad-relative fill and
-             * compactness. A rectangle of aspect eight has area/perimeter^2 = 2/81. */
-            int old_bad_area = best_area < 0.3 * bw * bh;
-            extended_shape = !piece && (new_small || dense_whole_is_new(base, s, last, bw, bh) ||
-                                           box_is_sparse(comp.count, bw, bh) || old_bad_area);
-            if ((piece && old_bad_area) || (extended_shape &&
+            /* The axis-aligned box grows when a thin tag rotates. Sparse or slender whole
+             * proposals use quad-relative fill and compactness; pieces use box-relative area.
+             * A rectangle of aspect eight has area/perimeter^2 = 2/81. */
+            int low_box_fill = best_area < 0.3 * bw * bh;
+            extended_shape = !piece && (undersized_whole || dense_whole_needs_deferral(base, s, last, bw, bh) ||
+                                           box_is_sparse(comp.count, bw, bh) || low_box_fill);
+            if ((piece && low_box_fill) || (extended_shape &&
                 (81.0 * best_area < 2.0 * perim_q * perim_q || comp.count < 0.2 * best_area))) {
                 PROF_MARK(PROF_QUAD);
                 TRACE(6);
@@ -6497,20 +6497,20 @@ start:;
                 continue;
             }
             if (extended_shape) {
-                /* These wholes had no legacy candidate, or were rough-rejected with fate 6.
-                 * Their additional fitting must not change old piece eligibility. */
+                /* Extended wholes retain rough-rejection fate 6 so their additional fitting
+                 * does not change split-piece eligibility. */
                 self->row_y = -6;
                 if (covered_footprint(det->shape_out, det->shape_centers, shape_found,
                                       ccx, ccy, 0.3 * big_px + 2.0)) continue;
             }
             /* Short-code families match clutter more often even without bit correction.
-             * A new shape in those families needs a complete dark border, using the same
-             * samples as decoding. Existing shape paths retain the caller's threshold. */
+             * An extended shape in those families needs a complete dark border, using the
+             * same samples as decoding. Ordinary shapes use the caller's threshold. */
             if (extended_shape && ((det->fam.piece_hamming < 0 && params->min_border_cells < 28) ||
-                                   (new_small && params->max_hamming != 0))) {
+                                   (undersized_whole && params->max_hamming != 0))) {
                 strict_border = *params;
                 if (det->fam.piece_hamming < 0) strict_border.min_border_cells = 28;
-                if (new_small) strict_border.max_hamming = 0;
+                if (undersized_whole) strict_border.max_hamming = 0;
                 decode_params = &strict_border;
             }
             PROF_MARK(PROF_QUAD);
@@ -6521,12 +6521,12 @@ start:;
             /* Sparse paired border samples reject noise before the expensive edge profiles.
              * Permit one weak side and leave terminal proposals unscreened: their ring can have
              * local clutter that a later level would normally resolve. Final decode is unchanged. */
-            if ((shadow || piece || ((s <= 2 || (s <= 6 && !new_small)) && !last)) && params->min_border_cells >= 22) {
+            if ((shadow || piece || ((s <= 2 || (s <= 6 && !undersized_whole)) && !last)) && params->min_border_cells >= 22) {
                 /* A tag's quiet zone is brighter than its border all the way round; the interior
                  * fragments and clutter that dominate proposals average near zero. */
                 const int pass = mm && mm->screen >= 0 ? mm->screen
                     : quiet_zone_passes(&view, rough, 0.5 * s * smax, cells, params->min_contrast,
-                                        shadow || s <= 2 || (s <= 6 && !new_small), shadow);
+                                        shadow || s <= 2 || (s <= 6 && !undersized_whole), shadow);
                 if (!pass) {
                     PROF_MARK(PROF_FIT1);
                     TRACE(7);
@@ -7126,16 +7126,16 @@ refine_candidate:
         if (last) break;
     }
     det->touching_seen = watch && touching;
-    /* Retain the established whole detections and corners before adding new shapes.
-     * These ordinary additions precede optional pieces to keep the unsplit prefix stable. */
+    /* Append extended shapes after ordinary wholes and before optional pieces,
+     * keeping the unsplit detection prefix stable. */
     for (int k = 0; k < shape_found && found < max_out; k++) {
         if (!already_found_footprint(out, det->out_centers, found, &det->shape_out[k])) {
             if (!save_center(&det->out_centers, &det->out_center_capacity, found, &det->shape_out[k])) return -2;
             out[found++] = det->shape_out[k];
         }
     }
-    /* Confidence successes cannot cover old proposals during processing. Append
-     * them after old wholes/shapes and before optional pieces, preserving their prefix. */
+    /* Confidence successes must not suppress ordinary proposals through coverage checks.
+     * Append them after wholes/shapes and before optional pieces, preserving their prefix. */
     for (size_t k = 0; k < fine_whole_count && found < max_out; k++) {
         if (det->fine_wholes[k].kind != FINE_WHOLE_CONFIDENCE_FINISHED) continue;
         const napa_detection *d = &det->fine_wholes[k].data.completed;
@@ -7153,8 +7153,6 @@ refine_candidate:
     return found < max_out ? found : max_out;
 }
 
-/* Keep ordinary results first and untouched; recovery shares their coverage/duplicate checks.
- * Each pass resets its failed-quad cache: a failure under one threshold is not evidence for the other. */
 /* split_touching 2: frames where an ordinary pass finds tags touching dark shapes at their corners (AprilGrid boards,
  * tag mosaics) are detected again with split_touching, splitting necks from the start; other frames pay only the
  * corner checks on the tags they decode. */
@@ -7176,6 +7174,8 @@ int napa_detect(napa_detector *det, const uint8_t *img, int width, int height, i
     return detect_ordinary(det, img, width, height, stride, params, out, max_out);
 }
 
+/* Keep ordinary results first and untouched; recovery shares their coverage/duplicate checks.
+ * Each pass resets its failed-quad cache: a failure under one threshold is not evidence for the other. */
 int napa_detect_shadows_configured(napa_detector *det, const uint8_t *img, int width, int height, int stride,
                         const napa_params *params, napa_detection *out, int max_out, int shadow_min_tag_px) {
     if (params == NULL || (shadow_min_tag_px != 0 &&

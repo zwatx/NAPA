@@ -1,4 +1,4 @@
-"""Napa's native tag36h11 detector, loaded from the bundled C library with ctypes."""
+"""Napa's AprilTag detector, loaded from the bundled C library with ctypes."""
 
 from __future__ import annotations
 
@@ -243,8 +243,7 @@ class NapaDetector:
     least ``min_tag_px`` pixels wide contains a sample from the border's dark core, even with mild blur.
     ``min_tag_px`` is the side of the square whose corners are reported (the tag size for poses). Smaller
     tags may be missed. Corners are fitted at full resolution and returned in OpenCV's AprilTag corner
-    order, in pixel-centre coordinates. The default is 22; ``min_tag_px=32`` runs at about 0.5.1's speed and finds
-    fewer small tags.
+    order, in pixel-centre coordinates. The default is 22; increasing it trades small-tag sensitivity for speed.
 
     ``split_touching`` finds tags whose border touches another dark shape at a corner, as in AprilGrid calibration
     boards and tags set in a checkerboard: such a tag and its neighbours form one blob, which isn't tag-shaped. The
@@ -412,7 +411,6 @@ class NapaDetector:
         self.family = family
         self._library = library
         self._handle = ctypes.c_void_p(handle)
-        # Settings the library takes after creation; the detector is freed if any of them fails.
         try:
             if camera_gamma is not None:
                 if not hasattr(library, "napa_set_camera_gamma"):
@@ -509,26 +507,15 @@ class NapaDetector:
             return []
         rows = self._rows[:count]
         corners = rows["corners"].reshape(count, 4, 2).copy()
-        if self.soft_decode:
-            return [
-                FiducialImageObservation(
-                    tag_id,
-                    tag_corners,
-                    hamming=None if hamming < 0 else hamming,
-                    decision_margin=margin,
-                    family=self.family,
-                    soft_decoded=hamming < 0,
-                )
-                for tag_id, tag_corners, hamming, margin in zip(
-                    rows["id"].tolist(),
-                    corners,
-                    rows["hamming"].tolist(),
-                    rows["decision_margin"].tolist(),
-                    strict=True,
-                )
-            ]
         return [
-            FiducialImageObservation(tag_id, tag_corners, hamming=hamming, decision_margin=margin, family=self.family)
+            FiducialImageObservation(
+                tag_id,
+                tag_corners,
+                hamming=None if self.soft_decode and hamming < 0 else hamming,
+                decision_margin=margin,
+                family=self.family,
+                soft_decoded=self.soft_decode and hamming < 0,
+            )
             for tag_id, tag_corners, hamming, margin in zip(
                 rows["id"].tolist(), corners, rows["hamming"].tolist(), rows["decision_margin"].tolist(), strict=True
             )
@@ -639,7 +626,7 @@ def estimate_camera_gamma(
 
     total, seen = sums.sum(0), counts.sum(0)
     means = {g: float(total[i] / seen[i]) for i, g in enumerate(grid) if seen[i]}
-    used, tags = len(sums), int(seen[0]) if len(seen) else 0
+    used, tags = len(sums), int(seen[0])
     if used < min_frames:
         return CameraGammaEstimate(None, None, None, used, tags, means)
     rng = np.random.default_rng(0)

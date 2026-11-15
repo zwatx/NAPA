@@ -1,7 +1,7 @@
 /* NAPA. Copyright (c) 2026 Zachary Wilson.
  * SPDX-License-Identifier: GPL-3.0-only. Also available under a commercial license: see NOTICE.
  * Copies and works based on this file must keep this notice and credit Zachary Wilson. */
-/* Napa core: plain C ABI for the sparse-sampling AprilTag 36h11 detector. */
+/* Napa core: plain C ABI for the sparse-sampling AprilTag detector. */
 #ifndef NAPA_CORE_H
 #define NAPA_CORE_H
 
@@ -75,8 +75,7 @@ NAPA_API int napa_detect(napa_detector *det, const uint8_t *img, int width, int 
  * from a lower proposal threshold, up to max_out. Original corners are unchanged. Same errors as
  * napa_detect; on -2 the output is incomplete and must not be used. No extra search for families
  * whose exact-code chance-match rate exceeds the split recovery budget. Shadow recovery adds no
- * further napa_params changes; callers built before split_touching was added must rebuild against
- * this header. This new symbol requires an updated library. */
+ * further napa_params changes. Callers must build against the napa_params layout in this header. */
 NAPA_API int napa_detect_shadows(napa_detector *det, const uint8_t *img, int width, int height, int stride,
                                  const napa_params *params, napa_detection *out, int max_out);
 /* Recovery sampling minimum: 0 preserves full sensitivity; otherwise params->min_tag_px through

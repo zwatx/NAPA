@@ -100,8 +100,9 @@ def tag_cells(tag_id: int, *, family: str = "tag36h11", quiet_zone_cells: int = 
             data[y + outer, x + outer] = True
         index = np.arange(total) - outer
         x, y = np.meshgrid(index, index)
-        border = np.maximum(np.abs(x - (width - 1) / 2), np.abs(y - (width - 1) / 2)) == (width - 1) / 2
-        frame = np.maximum(np.abs(x - (width - 1) / 2), np.abs(y - (width - 1) / 2)) == (width + 1) / 2
+        distance = np.maximum(np.abs(x - (width - 1) / 2), np.abs(y - (width - 1) / 2))
+        border = distance == (width - 1) / 2
+        frame = distance == (width + 1) / 2
         pattern[~(data | border | frame)] = True
     else:
         pattern = pattern[1:-1, 1:-1]  # the white ring is the quiet zone, drawn below
