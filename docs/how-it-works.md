@@ -52,7 +52,7 @@ code allows is dropped: every tag36h11 code has at least 10 white cells. Then NA
 Each side's line fit drops samples that disagree with the rest of the edge, so a short obstruction along a side
 doesn't pull the corners off.
 
-Four kinds of image fool a plain edge fit. NAPA checks for the first three on every frame, and for the fourth
+Five kinds of image fool a plain edge fit. NAPA checks for four on every frame, and for small tags coming apart
 with `regrow_small_tags=True`:
 
 - **A grey quiet zone on a bright background** makes the margin look dark, so the first outline is the margin's. If
@@ -66,6 +66,11 @@ with `regrow_small_tags=True`:
   then a fragment of the tag. When a candidate up to 28 px across fails to fit or to read, NAPA regrows it at full
   resolution: it thresholds a small window around it, follows the dark pixels connected to the fragment, and fits and
   reads that outline instead. A component that runs out of the window has merged with its surroundings and is left.
+- **A tag running off the frame**, as a close tag does, has no outer edge on that side: its white margin, and
+  sometimes part of its border, lie outside the image. NAPA takes the frame edge as that side to find the tag, then
+  measures the side from the border's inner edge, a cell in, where white cells meet it. It keeps the tag only if every
+  other side's inner edge lies a cell inside it too, so the corners outside the image are about as accurate as the
+  rest.
 
 ## 5. Look up the ID
 
