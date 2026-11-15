@@ -1,0 +1,2618 @@
+{
+  "measurement": "Completed 2026-11-14 automatic-splitting campaign (America/Chicago date)",
+  "summary_prepared": "2026-11-15",
+  "new_detector_calls": false,
+  "machines": {
+    "laptop": {
+      "saved_scores_file": "out-auto2/scores.json",
+      "saved_scores_sha256": "d7ab957e3d04a9046127468861e6f8b46b9d2d9055ec57243cbe6e9e0dca9e72",
+      "packs": {
+        "basler-bg": {
+          "frames": 300,
+          "step": 1,
+          "cpu": "4",
+          "core_source_sha256": "b176874f0a7417eb715408ba8a18c99f0a7b526aeaf4b18735909f9db4277d99",
+          "core_binary_sha256": "d89884f75a500c5baced7805fe29be6a5de2f4bf77155a06319cdb9d3aa9fb69",
+          "started_utc": "2026-11-15T02:46:13.188954+00:00",
+          "finished_utc": "2026-11-15T02:46:22.747090+00:00",
+          "raw_results_sha256": "36f9f40a0abddb7265beb42bf0bf72b2519ea5323f7f6a6859e32c1136199b31",
+          "configs": {
+            "napa-m22-auto": {
+              "min_tag_px": 22,
+              "split_touching": "auto",
+              "max_detections": 2048
+            },
+            "napa-m22-split": {
+              "min_tag_px": 22,
+              "split_touching": true,
+              "max_detections": 2048
+            }
+          },
+          "metrics": {
+            "napa-m22-auto": {
+              "frames": 300.0,
+              "outputs": 0.0,
+              "false": 0.0,
+              "frames_with_false": 0.0,
+              "ms_p50": 0.4060895,
+              "ms_p95": 0.8259893,
+              "ms_p99": 0.84119453,
+              "ms_mean": 0.3944350066666667
+            },
+            "napa-m22-split": {
+              "frames": 300.0,
+              "outputs": 0.0,
+              "false": 0.0,
+              "frames_with_false": 0.0,
+              "ms_p50": 0.6304105,
+              "ms_p95": 1.41255225,
+              "ms_p99": 1.45284997,
+              "ms_mean": 0.6241736600000001
+            }
+          }
+        },
+        "basler-test": {
+          "frames": 297,
+          "step": 1,
+          "cpu": "12",
+          "core_source_sha256": "b176874f0a7417eb715408ba8a18c99f0a7b526aeaf4b18735909f9db4277d99",
+          "core_binary_sha256": "d89884f75a500c5baced7805fe29be6a5de2f4bf77155a06319cdb9d3aa9fb69",
+          "started_utc": "2026-11-15T02:52:22.429804+00:00",
+          "finished_utc": "2026-11-15T02:52:35.508168+00:00",
+          "raw_results_sha256": "c2efa2ab4ea1e790ebcc70d2dd81f0bffa96b5e0ace3e4865c7eea3a665827a3",
+          "configs": {
+            "napa-m22-auto": {
+              "min_tag_px": 22,
+              "split_touching": "auto",
+              "max_detections": 2048
+            },
+            "napa-m22-split": {
+              "min_tag_px": 22,
+              "split_touching": true,
+              "max_detections": 2048
+            }
+          },
+          "metrics": {
+            "napa-m22-auto": {
+              "frames": 297.0,
+              "outputs": 684.0,
+              "consensus_tags": 702.0,
+              "consensus_found": 683.0,
+              "unconfirmed": 1.0,
+              "ms_p50": 0.872969,
+              "ms_p95": 1.3010992,
+              "ms_p99": 1.474712920000001,
+              "ms_mean": 0.9247461515151514
+            },
+            "napa-m22-split": {
+              "frames": 297.0,
+              "outputs": 691.0,
+              "consensus_tags": 700.0,
+              "consensus_found": 685.0,
+              "unconfirmed": 6.0,
+              "ms_p50": 1.289961,
+              "ms_p95": 1.7679128,
+              "ms_p99": 2.0047525600000013,
+              "ms_mean": 1.3132974377104378
+            }
+          }
+        },
+        "bd-hard": {
+          "frames": 780,
+          "step": 1,
+          "cpu": "12",
+          "core_source_sha256": "b176874f0a7417eb715408ba8a18c99f0a7b526aeaf4b18735909f9db4277d99",
+          "core_binary_sha256": "d89884f75a500c5baced7805fe29be6a5de2f4bf77155a06319cdb9d3aa9fb69",
+          "started_utc": "2026-11-15T02:48:48.491751+00:00",
+          "finished_utc": "2026-11-15T02:49:01.211089+00:00",
+          "raw_results_sha256": "aef2114bc0ac436ccb9880decf8f413b6a137080acd2ea984b942f2b6abcbf54",
+          "configs": {
+            "napa-m22-auto": {
+              "min_tag_px": 22,
+              "split_touching": "auto",
+              "max_detections": 2048
+            },
+            "napa-m22-split": {
+              "min_tag_px": 22,
+              "split_touching": true,
+              "max_detections": 2048
+            }
+          },
+          "metrics": {
+            "napa-m22-auto": {
+              "frames": 780.0,
+              "outputs": 2352.0,
+              "expected": 2389.0,
+              "found": 2352.0,
+              "false": 0.0,
+              "ms_p50": 0.293788,
+              "ms_p95": 1.13794855,
+              "ms_p99": 1.3612557200000004,
+              "ms_mean": 0.39980085512820507,
+              "by_size": {
+                "0-16": [
+                  44,
+                  50
+                ],
+                "16-20": [
+                  51,
+                  56
+                ],
+                "20-24": [
+                  94,
+                  96
+                ],
+                "24-32": [
+                  266,
+                  275
+                ],
+                "32-48": [
+                  523,
+                  533
+                ],
+                "48-64": [
+                  367,
+                  368
+                ],
+                "64+": [
+                  1007,
+                  1011
+                ]
+              }
+            },
+            "napa-m22-split": {
+              "frames": 780.0,
+              "outputs": 2353.0,
+              "expected": 2389.0,
+              "found": 2353.0,
+              "false": 0.0,
+              "ms_p50": 0.3282875,
+              "ms_p95": 1.3147209,
+              "ms_p99": 1.9707084600000007,
+              "ms_mean": 0.4624753846153846,
+              "by_size": {
+                "0-16": [
+                  44,
+                  50
+                ],
+                "16-20": [
+                  51,
+                  56
+                ],
+                "20-24": [
+                  94,
+                  96
+                ],
+                "24-32": [
+                  266,
+                  275
+                ],
+                "32-48": [
+                  524,
+                  533
+                ],
+                "48-64": [
+                  367,
+                  368
+                ],
+                "64+": [
+                  1007,
+                  1011
+                ]
+              }
+            }
+          }
+        },
+        "bd-scenes": {
+          "frames": 128,
+          "step": 1,
+          "cpu": "8",
+          "core_source_sha256": "b176874f0a7417eb715408ba8a18c99f0a7b526aeaf4b18735909f9db4277d99",
+          "core_binary_sha256": "d89884f75a500c5baced7805fe29be6a5de2f4bf77155a06319cdb9d3aa9fb69",
+          "started_utc": "2026-11-15T02:47:36.579338+00:00",
+          "finished_utc": "2026-11-15T02:47:38.914135+00:00",
+          "raw_results_sha256": "d0b02f681771d65e110f106fd8d501324c611194ef8fee47cbf725556589f4cd",
+          "configs": {
+            "napa-m22-auto": {
+              "min_tag_px": 22,
+              "split_touching": "auto",
+              "max_detections": 2048
+            },
+            "napa-m22-split": {
+              "min_tag_px": 22,
+              "split_touching": true,
+              "max_detections": 2048
+            }
+          },
+          "metrics": {
+            "napa-m22-auto": {
+              "frames": 128.0,
+              "outputs": 1024.0,
+              "expected": 1024.0,
+              "found": 1024.0,
+              "false": 0.0,
+              "ms_p50": 0.4706785,
+              "ms_p95": 0.6277018999999999,
+              "ms_p99": 0.65597734,
+              "ms_mean": 0.4625375234375,
+              "by_size": {
+                "16-20": [
+                  4,
+                  4
+                ],
+                "20-24": [
+                  28,
+                  28
+                ],
+                "32-48": [
+                  106,
+                  106
+                ],
+                "48-64": [
+                  68,
+                  68
+                ],
+                "64+": [
+                  818,
+                  818
+                ]
+              }
+            },
+            "napa-m22-split": {
+              "frames": 128.0,
+              "outputs": 1024.0,
+              "expected": 1024.0,
+              "found": 1024.0,
+              "false": 0.0,
+              "ms_p50": 0.50041,
+              "ms_p95": 0.6704633499999999,
+              "ms_p99": 0.68864332,
+              "ms_mean": 0.49266869531249996,
+              "by_size": {
+                "16-20": [
+                  4,
+                  4
+                ],
+                "20-24": [
+                  28,
+                  28
+                ],
+                "32-48": [
+                  106,
+                  106
+                ],
+                "48-64": [
+                  68,
+                  68
+                ],
+                "64+": [
+                  818,
+                  818
+                ]
+              }
+            }
+          }
+        },
+        "drive-test": {
+          "frames": 194,
+          "step": 1,
+          "cpu": "12",
+          "core_source_sha256": "b176874f0a7417eb715408ba8a18c99f0a7b526aeaf4b18735909f9db4277d99",
+          "core_binary_sha256": "d89884f75a500c5baced7805fe29be6a5de2f4bf77155a06319cdb9d3aa9fb69",
+          "started_utc": "2026-11-15T02:48:43.716461+00:00",
+          "finished_utc": "2026-11-15T02:48:48.332469+00:00",
+          "raw_results_sha256": "e43fd13ab93047ba6fb87c7e53487f676ac8eaa9ad116ee23ecba119489fa146",
+          "configs": {
+            "napa-m22-auto": {
+              "min_tag_px": 22,
+              "split_touching": "auto",
+              "max_detections": 2048
+            },
+            "napa-m22-split": {
+              "min_tag_px": 22,
+              "split_touching": true,
+              "max_detections": 2048
+            }
+          },
+          "metrics": {
+            "napa-m22-auto": {
+              "frames": 194.0,
+              "outputs": 361.0,
+              "boxes": 573.0,
+              "box_matched": 361.0,
+              "box_unmatched": 0.0,
+              "ms_p50": 0.47389749999999997,
+              "ms_p95": 0.6695763,
+              "ms_p99": 0.72998926,
+              "ms_mean": 0.47285814432989687
+            },
+            "napa-m22-split": {
+              "frames": 194.0,
+              "outputs": 373.0,
+              "boxes": 573.0,
+              "box_matched": 373.0,
+              "box_unmatched": 0.0,
+              "ms_p50": 0.5990584999999999,
+              "ms_p95": 0.83295495,
+              "ms_p99": 0.8892340599999999,
+              "ms_mean": 0.5903928711340206
+            }
+          }
+        },
+        "drive-valid": {
+          "frames": 1097,
+          "step": 1,
+          "cpu": "12",
+          "core_source_sha256": "b176874f0a7417eb715408ba8a18c99f0a7b526aeaf4b18735909f9db4277d99",
+          "core_binary_sha256": "d89884f75a500c5baced7805fe29be6a5de2f4bf77155a06319cdb9d3aa9fb69",
+          "started_utc": "2026-11-15T02:48:16.680271+00:00",
+          "finished_utc": "2026-11-15T02:48:43.561624+00:00",
+          "raw_results_sha256": "e59de68b0335ea5bc3088899ae87b1c551bc239a96e3814b6786f91bf1dfe252",
+          "configs": {
+            "napa-m22-auto": {
+              "min_tag_px": 22,
+              "split_touching": "auto",
+              "max_detections": 2048
+            },
+            "napa-m22-split": {
+              "min_tag_px": 22,
+              "split_touching": true,
+              "max_detections": 2048
+            }
+          },
+          "metrics": {
+            "napa-m22-auto": {
+              "frames": 1097.0,
+              "outputs": 2049.0,
+              "boxes": 3186.0,
+              "box_matched": 2049.0,
+              "box_unmatched": 0.0,
+              "ms_p50": 0.49639,
+              "ms_p95": 0.7421564,
+              "ms_p99": 0.88125652,
+              "ms_mean": 0.5056247037374658
+            },
+            "napa-m22-split": {
+              "frames": 1097.0,
+              "outputs": 2132.0,
+              "boxes": 3186.0,
+              "box_matched": 2132.0,
+              "box_unmatched": 0.0,
+              "ms_p50": 0.619218,
+              "ms_p95": 0.9412812,
+              "ms_p99": 1.1057698399999996,
+              "ms_mean": 0.628583772105743
+            }
+          }
+        },
+        "frc-more": {
+          "frames": 1000,
+          "step": 1,
+          "cpu": "12",
+          "core_source_sha256": "b176874f0a7417eb715408ba8a18c99f0a7b526aeaf4b18735909f9db4277d99",
+          "core_binary_sha256": "d89884f75a500c5baced7805fe29be6a5de2f4bf77155a06319cdb9d3aa9fb69",
+          "started_utc": "2026-11-15T02:47:20.302993+00:00",
+          "finished_utc": "2026-11-15T02:48:16.484890+00:00",
+          "raw_results_sha256": "422cfd74f46ad802c9f8490fad9d8ee80636c69e99d47c3ba024da68cb823133",
+          "configs": {
+            "napa-m22-auto": {
+              "min_tag_px": 22,
+              "split_touching": "auto",
+              "max_detections": 2048
+            },
+            "napa-m22-split": {
+              "min_tag_px": 22,
+              "split_touching": true,
+              "max_detections": 2048
+            }
+          },
+          "metrics": {
+            "napa-m22-auto": {
+              "frames": 1000.0,
+              "outputs": 1949.0,
+              "consensus_tags": 2156.0,
+              "consensus_found": 1939.0,
+              "unconfirmed": 6.0,
+              "ms_p50": 1.294373,
+              "ms_p95": 2.22995365,
+              "ms_p99": 3.03064992,
+              "ms_mean": 1.2238200339999998
+            },
+            "napa-m22-split": {
+              "frames": 1000.0,
+              "outputs": 1959.0,
+              "consensus_tags": 2155.0,
+              "consensus_found": 1947.0,
+              "unconfirmed": 8.0,
+              "ms_p50": 1.5357865,
+              "ms_p95": 2.959696,
+              "ms_p99": 4.404497089999998,
+              "ms_mean": 1.506727455
+            }
+          }
+        },
+        "fresh": {
+          "frames": 120,
+          "step": 1,
+          "cpu": "4",
+          "core_source_sha256": "b176874f0a7417eb715408ba8a18c99f0a7b526aeaf4b18735909f9db4277d99",
+          "core_binary_sha256": "d89884f75a500c5baced7805fe29be6a5de2f4bf77155a06319cdb9d3aa9fb69",
+          "started_utc": "2026-11-15T02:46:11.846108+00:00",
+          "finished_utc": "2026-11-15T02:46:13.046982+00:00",
+          "raw_results_sha256": "f6a8c13db87157d6c384807c3b703e568bf898db80bdbd5a5fc92124eae3a20c",
+          "configs": {
+            "napa-m22-auto": {
+              "min_tag_px": 22,
+              "split_touching": "auto",
+              "max_detections": 2048
+            },
+            "napa-m22-split": {
+              "min_tag_px": 22,
+              "split_touching": true,
+              "max_detections": 2048
+            }
+          },
+          "metrics": {
+            "napa-m22-auto": {
+              "frames": 120.0,
+              "outputs": 0.0,
+              "false": 0.0,
+              "frames_with_false": 0.0,
+              "ms_p50": 0.1684445,
+              "ms_p95": 0.6164235,
+              "ms_p99": 0.6718358300000001,
+              "ms_mean": 0.2410525416666667
+            },
+            "napa-m22-split": {
+              "frames": 120.0,
+              "outputs": 0.0,
+              "false": 0.0,
+              "frames_with_false": 0.0,
+              "ms_p50": 0.221301,
+              "ms_p95": 1.20670945,
+              "ms_p99": 1.50017472,
+              "ms_mean": 0.35648199166666666
+            }
+          }
+        },
+        "gopro": {
+          "frames": 1560,
+          "step": 1,
+          "cpu": "12",
+          "core_source_sha256": "b176874f0a7417eb715408ba8a18c99f0a7b526aeaf4b18735909f9db4277d99",
+          "core_binary_sha256": "d89884f75a500c5baced7805fe29be6a5de2f4bf77155a06319cdb9d3aa9fb69",
+          "started_utc": "2026-11-15T02:44:49.051767+00:00",
+          "finished_utc": "2026-11-15T02:47:20.123863+00:00",
+          "raw_results_sha256": "676e4d238ee004a2a04bf7142c8c83c5581d772c2b839f5e3f985602e01f56f8",
+          "configs": {
+            "napa-m22-auto": {
+              "min_tag_px": 22,
+              "split_touching": "auto",
+              "max_detections": 2048
+            },
+            "napa-m22-split": {
+              "min_tag_px": 22,
+              "split_touching": true,
+              "max_detections": 2048
+            }
+          },
+          "metrics": {
+            "napa-m22-auto": {
+              "frames": 1560.0,
+              "outputs": 7566.0,
+              "sightings": 7566.0,
+              "false": 0.0,
+              "ms_p50": 2.2035655,
+              "ms_p95": 3.1864173499999997,
+              "ms_p99": 4.109380540000002,
+              "ms_mean": 2.2456194108974357
+            },
+            "napa-m22-split": {
+              "frames": 1560.0,
+              "outputs": 7769.0,
+              "sightings": 7769.0,
+              "false": 0.0,
+              "ms_p50": 2.88014,
+              "ms_p95": 4.8315021,
+              "ms_p99": 5.45690798,
+              "ms_mean": 3.0027285153846153
+            }
+          }
+        },
+        "icra": {
+          "frames": 100,
+          "step": 1,
+          "cpu": "4",
+          "core_source_sha256": "b176874f0a7417eb715408ba8a18c99f0a7b526aeaf4b18735909f9db4277d99",
+          "core_binary_sha256": "d89884f75a500c5baced7805fe29be6a5de2f4bf77155a06319cdb9d3aa9fb69",
+          "started_utc": "2026-11-15T02:45:25.016862+00:00",
+          "finished_utc": "2026-11-15T02:45:40.766557+00:00",
+          "raw_results_sha256": "2b73ae489924780bce0cb4ab49ddcd6d50b850a2a39eebcf4fd93895434f4f4c",
+          "configs": {
+            "napa-m22-auto": {
+              "min_tag_px": 22,
+              "split_touching": "auto",
+              "max_detections": 2048
+            },
+            "napa-m22-split": {
+              "min_tag_px": 22,
+              "split_touching": true,
+              "max_detections": 2048
+            }
+          },
+          "metrics": {
+            "napa-m22-auto": {
+              "frames": 100.0,
+              "outputs": 8620.0,
+              "expected": 15400.0,
+              "found": 8620.0,
+              "false": 0.0,
+              "ms_p50": 5.3731325000000005,
+              "ms_p95": 14.94082725,
+              "ms_p99": 15.536877430000002,
+              "ms_mean": 6.10378201,
+              "corner_p50": 0.08324061508655842,
+              "corner_p95": 0.3541607673212518,
+              "corner_max": 0.812803789361316,
+              "by_size": {
+                "0-16": [
+                  2159,
+                  8600
+                ],
+                "16-20": [
+                  1425,
+                  1564
+                ],
+                "20-24": [
+                  1183,
+                  1232
+                ],
+                "24-32": [
+                  1474,
+                  1540
+                ],
+                "32-48": [
+                  1190,
+                  1232
+                ],
+                "48-64": [
+                  881,
+                  924
+                ],
+                "64+": [
+                  308,
+                  308
+                ]
+              }
+            },
+            "napa-m22-split": {
+              "frames": 100.0,
+              "outputs": 8914.0,
+              "expected": 15400.0,
+              "found": 8914.0,
+              "false": 0.0,
+              "ms_p50": 5.738433,
+              "ms_p95": 13.305564749999998,
+              "ms_p99": 14.252371320000002,
+              "ms_mean": 5.801547159999999,
+              "corner_p50": 0.08542833253670751,
+              "corner_p95": 0.36866365767073656,
+              "corner_max": 0.812803789361316,
+              "by_size": {
+                "0-16": [
+                  2453,
+                  8600
+                ],
+                "16-20": [
+                  1425,
+                  1564
+                ],
+                "20-24": [
+                  1183,
+                  1232
+                ],
+                "24-32": [
+                  1474,
+                  1540
+                ],
+                "32-48": [
+                  1190,
+                  1232
+                ],
+                "48-64": [
+                  881,
+                  924
+                ],
+                "64+": [
+                  308,
+                  308
+                ]
+              }
+            }
+          }
+        },
+        "icra-circle": {
+          "frames": 181,
+          "step": 1,
+          "cpu": "4",
+          "core_source_sha256": "b176874f0a7417eb715408ba8a18c99f0a7b526aeaf4b18735909f9db4277d99",
+          "core_binary_sha256": "d89884f75a500c5baced7805fe29be6a5de2f4bf77155a06319cdb9d3aa9fb69",
+          "started_utc": "2026-11-15T02:45:40.907995+00:00",
+          "finished_utc": "2026-11-15T02:46:08.384501+00:00",
+          "raw_results_sha256": "954f134e45287bb069fef395a50dda607e17bffd795815b9e7e097a75dd21fd8",
+          "configs": {
+            "napa-m22-auto": {
+              "min_tag_px": 22,
+              "split_touching": "auto",
+              "max_detections": 2048
+            },
+            "napa-m22-split": {
+              "min_tag_px": 22,
+              "split_touching": true,
+              "max_detections": 2048
+            }
+          },
+          "metrics": {
+            "napa-m22-auto": {
+              "frames": 181.0,
+              "outputs": 23241.0,
+              "expected": 27862.0,
+              "found": 23241.0,
+              "false": 0.0,
+              "ms_p50": 5.603861,
+              "ms_p95": 6.503996,
+              "ms_p99": 6.8463963999999935,
+              "ms_mean": 5.344540872928177,
+              "corner_p50": 0.05714017850866428,
+              "corner_p95": 0.2334202219174091,
+              "corner_max": 1.4454940331941926,
+              "by_size": {
+                "0-16": [
+                  0,
+                  36
+                ],
+                "16-20": [
+                  0,
+                  1136
+                ],
+                "20-24": [
+                  424,
+                  1851
+                ],
+                "24-32": [
+                  3037,
+                  4117
+                ],
+                "32-48": [
+                  8722,
+                  9316
+                ],
+                "48-64": [
+                  7022,
+                  7192
+                ],
+                "64+": [
+                  4036,
+                  4214
+                ]
+              }
+            },
+            "napa-m22-split": {
+              "frames": 181.0,
+              "outputs": 23241.0,
+              "expected": 27862.0,
+              "found": 23241.0,
+              "false": 0.0,
+              "ms_p50": 5.951016,
+              "ms_p95": 6.821669,
+              "ms_p99": 7.006166799999999,
+              "ms_mean": 5.6509956353591155,
+              "corner_p50": 0.05714017850866428,
+              "corner_p95": 0.2334202219174091,
+              "corner_max": 1.4454940331941926,
+              "by_size": {
+                "0-16": [
+                  0,
+                  36
+                ],
+                "16-20": [
+                  0,
+                  1136
+                ],
+                "20-24": [
+                  424,
+                  1851
+                ],
+                "24-32": [
+                  3037,
+                  4117
+                ],
+                "32-48": [
+                  8722,
+                  9316
+                ],
+                "48-64": [
+                  7022,
+                  7192
+                ],
+                "64+": [
+                  4036,
+                  4214
+                ]
+              }
+            }
+          }
+        },
+        "icra-random": {
+          "frames": 400,
+          "step": 1,
+          "cpu": "8",
+          "core_source_sha256": "b176874f0a7417eb715408ba8a18c99f0a7b526aeaf4b18735909f9db4277d99",
+          "core_binary_sha256": "d89884f75a500c5baced7805fe29be6a5de2f4bf77155a06319cdb9d3aa9fb69",
+          "started_utc": "2026-11-15T02:47:44.662921+00:00",
+          "finished_utc": "2026-11-15T02:48:35.627689+00:00",
+          "raw_results_sha256": "2b13c3d377aacb4e3cbc9619cae79832df73084f9359871a1f27e7fd77ea5787",
+          "configs": {
+            "napa-m22-auto": {
+              "min_tag_px": 22,
+              "split_touching": "auto",
+              "max_detections": 2048
+            },
+            "napa-m22-split": {
+              "min_tag_px": 22,
+              "split_touching": true,
+              "max_detections": 2048
+            }
+          },
+          "metrics": {
+            "napa-m22-auto": {
+              "frames": 400.0,
+              "outputs": 38652.0,
+              "expected": 38300.0,
+              "found": 38300.0,
+              "false": 0.0,
+              "ms_p50": 4.4515395,
+              "ms_p95": 5.770699649999998,
+              "ms_p99": 6.0512557,
+              "ms_mean": 4.462885105,
+              "corner_p50": 0.018439088914556673,
+              "corner_p95": 0.06699999999989643,
+              "corner_max": 0.3410630440255599,
+              "by_size": {
+                "32-48": [
+                  2694,
+                  2694
+                ],
+                "48-64": [
+                  10043,
+                  10043
+                ],
+                "64+": [
+                  25563,
+                  25563
+                ]
+              }
+            },
+            "napa-m22-split": {
+              "frames": 400.0,
+              "outputs": 38652.0,
+              "expected": 38300.0,
+              "found": 38300.0,
+              "false": 0.0,
+              "ms_p50": 4.7625695,
+              "ms_p95": 6.178413600000001,
+              "ms_p99": 6.477521079999989,
+              "ms_mean": 4.78822945,
+              "corner_p50": 0.018439088914556673,
+              "corner_p95": 0.06699999999989643,
+              "corner_max": 0.3410630440255599,
+              "by_size": {
+                "32-48": [
+                  2694,
+                  2694
+                ],
+                "48-64": [
+                  10043,
+                  10043
+                ],
+                "64+": [
+                  25563,
+                  25563
+                ]
+              }
+            }
+          }
+        },
+        "icra-rotation": {
+          "frames": 361,
+          "step": 1,
+          "cpu": "12",
+          "core_source_sha256": "b176874f0a7417eb715408ba8a18c99f0a7b526aeaf4b18735909f9db4277d99",
+          "core_binary_sha256": "d89884f75a500c5baced7805fe29be6a5de2f4bf77155a06319cdb9d3aa9fb69",
+          "started_utc": "2026-11-15T02:51:04.090923+00:00",
+          "finished_utc": "2026-11-15T02:52:18.014435+00:00",
+          "raw_results_sha256": "4c4c71543bdfcef2c09ed05f43a0f221e1bc2d9d520c8608ac6f40d3fdf122cc",
+          "configs": {
+            "napa-m22-auto": {
+              "min_tag_px": 22,
+              "split_touching": "auto",
+              "max_detections": 2048
+            },
+            "napa-m22-split": {
+              "min_tag_px": 22,
+              "split_touching": true,
+              "max_detections": 2048
+            }
+          },
+          "metrics": {
+            "napa-m22-auto": {
+              "frames": 361.0,
+              "outputs": 55594.0,
+              "expected": 55594.0,
+              "found": 55594.0,
+              "false": 0.0,
+              "ms_p50": 7.688747,
+              "ms_p95": 8.547076,
+              "ms_p99": 8.822147199999998,
+              "ms_mean": 7.771112335180055,
+              "corner_p50": 0.02765863337191516,
+              "corner_p95": 0.07375872822623451,
+              "corner_max": 0.16407315441573372,
+              "by_size": {
+                "48-64": [
+                  55594,
+                  55594
+                ]
+              }
+            },
+            "napa-m22-split": {
+              "frames": 361.0,
+              "outputs": 55594.0,
+              "expected": 55594.0,
+              "found": 55594.0,
+              "false": 0.0,
+              "ms_p50": 8.186851,
+              "ms_p95": 9.151422,
+              "ms_p99": 9.465457599999999,
+              "ms_mean": 8.270018243767312,
+              "corner_p50": 0.02765863337191516,
+              "corner_p95": 0.07375872822623451,
+              "corner_max": 0.16407315441573372,
+              "by_size": {
+                "48-64": [
+                  55594,
+                  55594
+                ]
+              }
+            }
+          }
+        },
+        "indoor": {
+          "frames": 268,
+          "step": 1,
+          "cpu": "4",
+          "core_source_sha256": "b176874f0a7417eb715408ba8a18c99f0a7b526aeaf4b18735909f9db4277d99",
+          "core_binary_sha256": "d89884f75a500c5baced7805fe29be6a5de2f4bf77155a06319cdb9d3aa9fb69",
+          "started_utc": "2026-11-15T02:46:08.526150+00:00",
+          "finished_utc": "2026-11-15T02:46:11.702229+00:00",
+          "raw_results_sha256": "7d33e742c866bdae9b014d17ce79d4941da335e97007a966bb1a38cfc6a2e2b0",
+          "configs": {
+            "napa-m22-auto": {
+              "min_tag_px": 22,
+              "split_touching": "auto",
+              "max_detections": 2048
+            },
+            "napa-m22-split": {
+              "min_tag_px": 22,
+              "split_touching": true,
+              "max_detections": 2048
+            }
+          },
+          "metrics": {
+            "napa-m22-auto": {
+              "frames": 268.0,
+              "outputs": 0.0,
+              "false": 0.0,
+              "frames_with_false": 0.0,
+              "ms_p50": 0.1103655,
+              "ms_p95": 0.7488929499999998,
+              "ms_p99": 1.6058109399999951,
+              "ms_mean": 0.19344548880597015
+            },
+            "napa-m22-split": {
+              "frames": 268.0,
+              "outputs": 0.0,
+              "false": 0.0,
+              "frames_with_false": 0.0,
+              "ms_p50": 0.165541,
+              "ms_p95": 1.0408190499999987,
+              "ms_p99": 2.2737514199999915,
+              "ms_mean": 0.2826138171641791
+            }
+          }
+        },
+        "locus": {
+          "frames": 600,
+          "step": 1,
+          "cpu": "12",
+          "core_source_sha256": "b176874f0a7417eb715408ba8a18c99f0a7b526aeaf4b18735909f9db4277d99",
+          "core_binary_sha256": "d89884f75a500c5baced7805fe29be6a5de2f4bf77155a06319cdb9d3aa9fb69",
+          "started_utc": "2026-11-15T02:49:29.855443+00:00",
+          "finished_utc": "2026-11-15T02:51:03.937718+00:00",
+          "raw_results_sha256": "635e59921de109ec96b748940943ee48862acb12ca286b3f4936c293adcf0e38",
+          "configs": {
+            "napa-m22-auto": {
+              "min_tag_px": 22,
+              "split_touching": "auto",
+              "max_detections": 2048
+            },
+            "napa-m22-split": {
+              "min_tag_px": 22,
+              "split_touching": true,
+              "max_detections": 2048
+            }
+          },
+          "metrics": {
+            "napa-m22-auto": {
+              "frames": 600.0,
+              "outputs": 8219.0,
+              "expected": 8743.0,
+              "found": 8148.0,
+              "false": 53.0,
+              "ms_p50": 4.0975695,
+              "ms_p95": 17.415776400000002,
+              "ms_p99": 25.66079022,
+              "ms_mean": 5.985833081666667,
+              "corner_p50": 0.03513455596650248,
+              "corner_p95": 0.3208969286564742,
+              "corner_max": 12.534950267514082,
+              "by_size": {
+                "16-20": [
+                  46,
+                  212
+                ],
+                "20-24": [
+                  169,
+                  309
+                ],
+                "24-32": [
+                  313,
+                  347
+                ],
+                "32-48": [
+                  780,
+                  785
+                ],
+                "48-64": [
+                  904,
+                  1001
+                ],
+                "64+": [
+                  5936,
+                  6089
+                ]
+              }
+            },
+            "napa-m22-split": {
+              "frames": 600.0,
+              "outputs": 8219.0,
+              "expected": 8743.0,
+              "found": 8148.0,
+              "false": 53.0,
+              "ms_p50": 4.5978,
+              "ms_p95": 15.254915299999988,
+              "ms_p99": 26.604330769999997,
+              "ms_mean": 5.503993824999999,
+              "corner_p50": 0.03513455596650248,
+              "corner_p95": 0.3208969286564742,
+              "corner_max": 12.534950267514082,
+              "by_size": {
+                "16-20": [
+                  46,
+                  212
+                ],
+                "20-24": [
+                  169,
+                  309
+                ],
+                "24-32": [
+                  313,
+                  347
+                ],
+                "32-48": [
+                  780,
+                  785
+                ],
+                "48-64": [
+                  904,
+                  1001
+                ],
+                "64+": [
+                  5936,
+                  6089
+                ]
+              }
+            }
+          }
+        },
+        "own": {
+          "frames": 4500,
+          "step": 1,
+          "cpu": "8",
+          "core_source_sha256": "b176874f0a7417eb715408ba8a18c99f0a7b526aeaf4b18735909f9db4277d99",
+          "core_binary_sha256": "d89884f75a500c5baced7805fe29be6a5de2f4bf77155a06319cdb9d3aa9fb69",
+          "started_utc": "2026-11-15T02:44:26.843254+00:00",
+          "finished_utc": "2026-11-15T02:46:07.782789+00:00",
+          "raw_results_sha256": "621456ab96e0ba7b43bd172681a2ba1772465825bf644a247ea6bff2acc7016c",
+          "configs": {
+            "napa-m22-auto": {
+              "min_tag_px": 22,
+              "split_touching": "auto",
+              "max_detections": 2048
+            },
+            "napa-m22-split": {
+              "min_tag_px": 22,
+              "split_touching": true,
+              "max_detections": 2048
+            }
+          },
+          "metrics": {
+            "napa-m22-auto": {
+              "frames": 4500.0,
+              "outputs": 10953.0,
+              "expected": 10998.0,
+              "found": 10952.0,
+              "false": 1.0,
+              "ms_p50": 0.21127449999999998,
+              "ms_p95": 2.158148500000005,
+              "ms_p99": 3.68749033,
+              "ms_mean": 0.49267462844444443,
+              "corner_p50": 0.017423295994744608,
+              "corner_p95": 0.08948274849847693,
+              "corner_max": 1.5869846628930415,
+              "by_size": {
+                "0-16": [
+                  199,
+                  232
+                ],
+                "16-20": [
+                  183,
+                  194
+                ],
+                "20-24": [
+                  189,
+                  189
+                ],
+                "24-32": [
+                  215,
+                  215
+                ],
+                "32-48": [
+                  1129,
+                  1130
+                ],
+                "48-64": [
+                  1459,
+                  1459
+                ],
+                "64+": [
+                  7578,
+                  7579
+                ]
+              }
+            },
+            "napa-m22-split": {
+              "frames": 4500.0,
+              "outputs": 10970.0,
+              "expected": 10998.0,
+              "found": 10969.0,
+              "false": 1.0,
+              "ms_p50": 0.245171,
+              "ms_p95": 3.0431553500000006,
+              "ms_p99": 4.62371287,
+              "ms_mean": 0.6407774508888889,
+              "corner_p50": 0.017453929817601743,
+              "corner_p95": 0.08953593217679953,
+              "corner_max": 1.5869846628930415,
+              "by_size": {
+                "0-16": [
+                  210,
+                  232
+                ],
+                "16-20": [
+                  187,
+                  194
+                ],
+                "20-24": [
+                  189,
+                  189
+                ],
+                "24-32": [
+                  215,
+                  215
+                ],
+                "32-48": [
+                  1130,
+                  1130
+                ],
+                "48-64": [
+                  1459,
+                  1459
+                ],
+                "64+": [
+                  7579,
+                  7579
+                ]
+              }
+            }
+          }
+        },
+        "penn-tango-bottom": {
+          "frames": 1563,
+          "step": 1,
+          "cpu": "8",
+          "core_source_sha256": "b176874f0a7417eb715408ba8a18c99f0a7b526aeaf4b18735909f9db4277d99",
+          "core_binary_sha256": "d89884f75a500c5baced7805fe29be6a5de2f4bf77155a06319cdb9d3aa9fb69",
+          "started_utc": "2026-11-15T02:46:07.926698+00:00",
+          "finished_utc": "2026-11-15T02:47:23.877302+00:00",
+          "raw_results_sha256": "b966cd72dd943fb79f732f4f8338e1c16446d6e80ca89b46f8bd936359d972f5",
+          "configs": {
+            "napa-m22-auto": {
+              "min_tag_px": 22,
+              "split_touching": "auto",
+              "max_detections": 2048
+            },
+            "napa-m22-split": {
+              "min_tag_px": 22,
+              "split_touching": true,
+              "max_detections": 2048
+            }
+          },
+          "metrics": {
+            "napa-m22-auto": {
+              "frames": 1563.0,
+              "outputs": 6136.0,
+              "sightings": 6136.0,
+              "false": 0.0,
+              "ms_p50": 0.996935,
+              "ms_p95": 1.4377137999999998,
+              "ms_p99": 1.6071325199999993,
+              "ms_mean": 0.9958462591170827
+            },
+            "napa-m22-split": {
+              "frames": 1563.0,
+              "outputs": 6210.0,
+              "sightings": 6210.0,
+              "false": 0.0,
+              "ms_p50": 1.228033,
+              "ms_p95": 1.7171100999999998,
+              "ms_p99": 1.9031306999999966,
+              "ms_mean": 1.215930788227767
+            }
+          }
+        },
+        "penn-tango-top": {
+          "frames": 1563,
+          "step": 1,
+          "cpu": "8",
+          "core_source_sha256": "b176874f0a7417eb715408ba8a18c99f0a7b526aeaf4b18735909f9db4277d99",
+          "core_binary_sha256": "d89884f75a500c5baced7805fe29be6a5de2f4bf77155a06319cdb9d3aa9fb69",
+          "started_utc": "2026-11-15T02:47:24.017538+00:00",
+          "finished_utc": "2026-11-15T02:47:36.441140+00:00",
+          "raw_results_sha256": "c254d01dd412ab2f9f706303721560e2b1497e0ca4b4c6bd2e660750e476f450",
+          "configs": {
+            "napa-m22-auto": {
+              "min_tag_px": 22,
+              "split_touching": "auto",
+              "max_detections": 2048
+            },
+            "napa-m22-split": {
+              "min_tag_px": 22,
+              "split_touching": true,
+              "max_detections": 2048
+            }
+          },
+          "metrics": {
+            "napa-m22-auto": {
+              "frames": 1563.0,
+              "outputs": 735.0,
+              "sightings": 735.0,
+              "false": 0.0,
+              "ms_p50": 0.100314,
+              "ms_p95": 0.2779956,
+              "ms_p99": 0.4121629199999998,
+              "ms_mean": 0.13263182981445937
+            },
+            "napa-m22-split": {
+              "frames": 1563.0,
+              "outputs": 774.0,
+              "sightings": 774.0,
+              "false": 0.0,
+              "ms_p50": 0.13911,
+              "ms_p95": 0.33140179999999997,
+              "ms_p99": 0.4475441999999997,
+              "ms_mean": 0.16905384964811263
+            }
+          }
+        },
+        "penn-visensor": {
+          "frames": 1489,
+          "step": 1,
+          "cpu": "12",
+          "core_source_sha256": "b176874f0a7417eb715408ba8a18c99f0a7b526aeaf4b18735909f9db4277d99",
+          "core_binary_sha256": "d89884f75a500c5baced7805fe29be6a5de2f4bf77155a06319cdb9d3aa9fb69",
+          "started_utc": "2026-11-15T02:44:26.872628+00:00",
+          "finished_utc": "2026-11-15T02:44:48.887515+00:00",
+          "raw_results_sha256": "7e03d28d38d89ec897f39e2e771b0c798400dcf17e7bcdd5b8da169ef33a5986",
+          "configs": {
+            "napa-m22-auto": {
+              "min_tag_px": 22,
+              "split_touching": "auto",
+              "max_detections": 2048
+            },
+            "napa-m22-split": {
+              "min_tag_px": 22,
+              "split_touching": true,
+              "max_detections": 2048
+            }
+          },
+          "metrics": {
+            "napa-m22-auto": {
+              "frames": 1489.0,
+              "outputs": 948.0,
+              "sightings": 948.0,
+              "false": 0.0,
+              "ms_p50": 0.274665,
+              "ms_p95": 0.6306531999999999,
+              "ms_p99": 0.8287691999999975,
+              "ms_mean": 0.3223369697783747
+            },
+            "napa-m22-split": {
+              "frames": 1489.0,
+              "outputs": 966.0,
+              "sightings": 966.0,
+              "false": 0.0,
+              "ms_p50": 0.349254,
+              "ms_p95": 0.6984859999999999,
+              "ms_p99": 0.9111872799999992,
+              "ms_mean": 0.38377125184687716
+            }
+          }
+        },
+        "range": {
+          "frames": 900,
+          "step": 1,
+          "cpu": "12",
+          "core_source_sha256": "b176874f0a7417eb715408ba8a18c99f0a7b526aeaf4b18735909f9db4277d99",
+          "core_binary_sha256": "d89884f75a500c5baced7805fe29be6a5de2f4bf77155a06319cdb9d3aa9fb69",
+          "started_utc": "2026-11-15T02:52:18.164176+00:00",
+          "finished_utc": "2026-11-15T02:52:22.272974+00:00",
+          "raw_results_sha256": "5309ef549d56764b1344b680369fff57b7182b51a5db816bdaa95b2556417c04",
+          "configs": {
+            "napa-m22-auto": {
+              "min_tag_px": 22,
+              "split_touching": "auto",
+              "max_detections": 2048
+            },
+            "napa-m22-split": {
+              "min_tag_px": 22,
+              "split_touching": true,
+              "max_detections": 2048
+            }
+          },
+          "metrics": {
+            "napa-m22-auto": {
+              "frames": 900.0,
+              "outputs": 893.0,
+              "expected": 900.0,
+              "found": 893.0,
+              "false": 0.0,
+              "ms_p50": 0.08271300000000001,
+              "ms_p95": 0.156119,
+              "ms_p99": 0.17953824,
+              "ms_mean": 0.09143594666666666,
+              "corner_p50": 0.02950872039576774,
+              "corner_p95": 0.10844160205266203,
+              "corner_max": 0.44763892123733046,
+              "by_size": {
+                "0-16": [
+                  143,
+                  150
+                ],
+                "16-20": [
+                  100,
+                  100
+                ],
+                "20-24": [
+                  100,
+                  100
+                ],
+                "24-32": [
+                  100,
+                  100
+                ],
+                "32-48": [
+                  150,
+                  150
+                ],
+                "48-64": [
+                  100,
+                  100
+                ],
+                "64+": [
+                  200,
+                  200
+                ]
+              }
+            },
+            "napa-m22-split": {
+              "frames": 900.0,
+              "outputs": 893.0,
+              "expected": 900.0,
+              "found": 893.0,
+              "false": 0.0,
+              "ms_p50": 0.08361299999999999,
+              "ms_p95": 0.1576811,
+              "ms_p99": 0.17365136999999997,
+              "ms_mean": 0.09224667111111112,
+              "corner_p50": 0.02950872039576774,
+              "corner_p95": 0.10844160205266203,
+              "corner_max": 0.44763892123733046,
+              "by_size": {
+                "0-16": [
+                  143,
+                  150
+                ],
+                "16-20": [
+                  100,
+                  100
+                ],
+                "20-24": [
+                  100,
+                  100
+                ],
+                "24-32": [
+                  100,
+                  100
+                ],
+                "32-48": [
+                  150,
+                  150
+                ],
+                "48-64": [
+                  100,
+                  100
+                ],
+                "64+": [
+                  200,
+                  200
+                ]
+              }
+            }
+          }
+        },
+        "real": {
+          "frames": 188,
+          "step": 1,
+          "cpu": "4",
+          "core_source_sha256": "b176874f0a7417eb715408ba8a18c99f0a7b526aeaf4b18735909f9db4277d99",
+          "core_binary_sha256": "d89884f75a500c5baced7805fe29be6a5de2f4bf77155a06319cdb9d3aa9fb69",
+          "started_utc": "2026-11-15T02:46:22.889996+00:00",
+          "finished_utc": "2026-11-15T02:46:31.384987+00:00",
+          "raw_results_sha256": "3132f8fe5a25302b11b5f8412acaffc3916eb9ce39f621c7fa1cce2c2f81cde7",
+          "configs": {
+            "napa-m22-auto": {
+              "min_tag_px": 22,
+              "split_touching": "auto",
+              "max_detections": 2048
+            },
+            "napa-m22-split": {
+              "min_tag_px": 22,
+              "split_touching": true,
+              "max_detections": 2048
+            }
+          },
+          "metrics": {
+            "napa-m22-auto": {
+              "frames": 188.0,
+              "outputs": 346.0,
+              "consensus_tags": 380.0,
+              "consensus_found": 346.0,
+              "unconfirmed": 0.0,
+              "ms_p50": 0.9341520000000001,
+              "ms_p95": 1.6052594500000001,
+              "ms_p99": 2.0508306599999973,
+              "ms_mean": 0.8937913244680853
+            },
+            "napa-m22-split": {
+              "frames": 188.0,
+              "outputs": 350.0,
+              "consensus_tags": 380.0,
+              "consensus_found": 350.0,
+              "unconfirmed": 0.0,
+              "ms_p50": 1.204235,
+              "ms_p95": 2.2092756500000004,
+              "ms_p99": 3.3575079099999994,
+              "ms_mean": 1.1668102180851063
+            }
+          }
+        },
+        "rf-test": {
+          "frames": 258,
+          "step": 1,
+          "cpu": "8",
+          "core_source_sha256": "b176874f0a7417eb715408ba8a18c99f0a7b526aeaf4b18735909f9db4277d99",
+          "core_binary_sha256": "d89884f75a500c5baced7805fe29be6a5de2f4bf77155a06319cdb9d3aa9fb69",
+          "started_utc": "2026-11-15T02:47:41.813598+00:00",
+          "finished_utc": "2026-11-15T02:47:44.531436+00:00",
+          "raw_results_sha256": "ad80f7e2f9ce8925db19ed9824c2d54f030c99931e7f91303a864dbf96555096",
+          "configs": {
+            "napa-m22-auto": {
+              "min_tag_px": 22,
+              "split_touching": "auto",
+              "max_detections": 2048
+            },
+            "napa-m22-split": {
+              "min_tag_px": 22,
+              "split_touching": true,
+              "max_detections": 2048
+            }
+          },
+          "metrics": {
+            "napa-m22-auto": {
+              "frames": 258.0,
+              "outputs": 434.0,
+              "boxes": 1039.0,
+              "box_matched": 434.0,
+              "box_unmatched": 0.0,
+              "ms_p50": 0.253132,
+              "ms_p95": 0.4642332499999997,
+              "ms_p99": 0.55500583,
+              "ms_mean": 0.26676351550387595
+            },
+            "napa-m22-split": {
+              "frames": 258.0,
+              "outputs": 437.0,
+              "boxes": 1039.0,
+              "box_matched": 437.0,
+              "box_unmatched": 0.0,
+              "ms_p50": 0.32338,
+              "ms_p95": 0.5720385499999999,
+              "ms_p99": 0.6642448500000001,
+              "ms_mean": 0.3388918837209302
+            }
+          }
+        },
+        "rf-valid": {
+          "frames": 259,
+          "step": 1,
+          "cpu": "8",
+          "core_source_sha256": "b176874f0a7417eb715408ba8a18c99f0a7b526aeaf4b18735909f9db4277d99",
+          "core_binary_sha256": "d89884f75a500c5baced7805fe29be6a5de2f4bf77155a06319cdb9d3aa9fb69",
+          "started_utc": "2026-11-15T02:47:39.048484+00:00",
+          "finished_utc": "2026-11-15T02:47:41.679109+00:00",
+          "raw_results_sha256": "ac050e3677860aa0415b609c5b3445238f616df5f26ee3f395b55a2ef797e654",
+          "configs": {
+            "napa-m22-auto": {
+              "min_tag_px": 22,
+              "split_touching": "auto",
+              "max_detections": 2048
+            },
+            "napa-m22-split": {
+              "min_tag_px": 22,
+              "split_touching": true,
+              "max_detections": 2048
+            }
+          },
+          "metrics": {
+            "napa-m22-auto": {
+              "frames": 259.0,
+              "outputs": 387.0,
+              "boxes": 1069.0,
+              "box_matched": 384.0,
+              "box_unmatched": 3.0,
+              "ms_p50": 0.240271,
+              "ms_p95": 0.41943339999999996,
+              "ms_p99": 0.5170811799999998,
+              "ms_mean": 0.24861298455598457
+            },
+            "napa-m22-split": {
+              "frames": 259.0,
+              "outputs": 387.0,
+              "boxes": 1069.0,
+              "box_matched": 384.0,
+              "box_unmatched": 3.0,
+              "ms_p50": 0.319908,
+              "ms_p95": 0.5205377999999999,
+              "ms_p99": 0.6112804199999996,
+              "ms_mean": 0.3224924324324325
+            }
+          }
+        },
+        "stress": {
+          "frames": 600,
+          "step": 1,
+          "cpu": "12",
+          "core_source_sha256": "b176874f0a7417eb715408ba8a18c99f0a7b526aeaf4b18735909f9db4277d99",
+          "core_binary_sha256": "d89884f75a500c5baced7805fe29be6a5de2f4bf77155a06319cdb9d3aa9fb69",
+          "started_utc": "2026-11-15T02:49:01.361765+00:00",
+          "finished_utc": "2026-11-15T02:49:29.675848+00:00",
+          "raw_results_sha256": "2e8c8cdf51e25607d0b9b4e161a6a759f7dce662ec00d0d69a3115e387c31090",
+          "configs": {
+            "napa-m22-auto": {
+              "min_tag_px": 22,
+              "split_touching": "auto",
+              "max_detections": 2048
+            },
+            "napa-m22-split": {
+              "min_tag_px": 22,
+              "split_touching": true,
+              "max_detections": 2048
+            }
+          },
+          "metrics": {
+            "napa-m22-auto": {
+              "frames": 600.0,
+              "outputs": 4540.0,
+              "expected": 4577.0,
+              "found": 4540.0,
+              "false": 0.0,
+              "ms_p50": 0.9641949999999999,
+              "ms_p95": 4.245785099999997,
+              "ms_p99": 5.536226559999999,
+              "ms_mean": 1.3449705016666667,
+              "corner_p50": 0.017130291586525872,
+              "corner_p95": 0.08990966479659784,
+              "corner_max": 1.5869846628930415,
+              "by_size": {
+                "0-16": [
+                  56,
+                  82
+                ],
+                "16-20": [
+                  83,
+                  94
+                ],
+                "20-24": [
+                  89,
+                  89
+                ],
+                "24-32": [
+                  115,
+                  115
+                ],
+                "32-48": [
+                  629,
+                  629
+                ],
+                "48-64": [
+                  867,
+                  867
+                ],
+                "64+": [
+                  2701,
+                  2701
+                ]
+              }
+            },
+            "napa-m22-split": {
+              "frames": 600.0,
+              "outputs": 4555.0,
+              "expected": 4577.0,
+              "found": 4555.0,
+              "false": 0.0,
+              "ms_p50": 1.2553635,
+              "ms_p95": 5.689795799999987,
+              "ms_p99": 8.493262379999997,
+              "ms_mean": 1.8631465416666666,
+              "corner_p50": 0.017189627179514305,
+              "corner_p95": 0.09049562960311397,
+              "corner_max": 1.5869846628930415,
+              "by_size": {
+                "0-16": [
+                  67,
+                  82
+                ],
+                "16-20": [
+                  87,
+                  94
+                ],
+                "20-24": [
+                  89,
+                  89
+                ],
+                "24-32": [
+                  115,
+                  115
+                ],
+                "32-48": [
+                  629,
+                  629
+                ],
+                "48-64": [
+                  867,
+                  867
+                ],
+                "64+": [
+                  2701,
+                  2701
+                ]
+              }
+            }
+          }
+        },
+        "vk": {
+          "frames": 4113,
+          "step": 1,
+          "cpu": "4",
+          "core_source_sha256": "b176874f0a7417eb715408ba8a18c99f0a7b526aeaf4b18735909f9db4277d99",
+          "core_binary_sha256": "d89884f75a500c5baced7805fe29be6a5de2f4bf77155a06319cdb9d3aa9fb69",
+          "started_utc": "2026-11-15T02:44:26.843310+00:00",
+          "finished_utc": "2026-11-15T02:45:24.866383+00:00",
+          "raw_results_sha256": "348bc1046573fc7494ff12f7f9e74ba8b622a4993cd5b69a7f5283f946d97383",
+          "configs": {
+            "napa-m22-auto": {
+              "min_tag_px": 22,
+              "split_touching": "auto",
+              "max_detections": 2048
+            },
+            "napa-m22-split": {
+              "min_tag_px": 22,
+              "split_touching": true,
+              "max_detections": 2048
+            }
+          },
+          "metrics": {
+            "napa-m22-auto": {
+              "frames": 4113.0,
+              "outputs": 9818.0,
+              "expected": 9991.0,
+              "found": 9818.0,
+              "false": 0.0,
+              "ms_p50": 0.147983,
+              "ms_p95": 0.6848787999999997,
+              "ms_p99": 1.3698150800000002,
+              "ms_mean": 0.21398504497933382,
+              "corner_p50": 0.018911900985406543,
+              "corner_p95": 0.08131573112085362,
+              "corner_max": 1.4280471140686968,
+              "by_size": {
+                "0-16": [
+                  17,
+                  25
+                ],
+                "16-20": [
+                  23,
+                  25
+                ],
+                "20-24": [
+                  25,
+                  25
+                ],
+                "24-32": [
+                  72,
+                  72
+                ],
+                "32-48": [
+                  3052,
+                  3052
+                ],
+                "48-64": [
+                  1893,
+                  1896
+                ],
+                "64+": [
+                  4736,
+                  4896
+                ]
+              }
+            },
+            "napa-m22-split": {
+              "frames": 4113.0,
+              "outputs": 9827.0,
+              "expected": 9991.0,
+              "found": 9827.0,
+              "false": 0.0,
+              "ms_p50": 0.157293,
+              "ms_p95": 0.8479825999999996,
+              "ms_p99": 1.8042346000000007,
+              "ms_mean": 0.2371875949428641,
+              "corner_p50": 0.018910843450233927,
+              "corner_p95": 0.08134545092886981,
+              "corner_max": 1.4280471140686968,
+              "by_size": {
+                "0-16": [
+                  17,
+                  25
+                ],
+                "16-20": [
+                  24,
+                  25
+                ],
+                "20-24": [
+                  25,
+                  25
+                ],
+                "24-32": [
+                  72,
+                  72
+                ],
+                "32-48": [
+                  3052,
+                  3052
+                ],
+                "48-64": [
+                  1893,
+                  1896
+                ],
+                "64+": [
+                  4744,
+                  4896
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "pi": {
+      "saved_scores_file": "out-pi-auto2/scores.json",
+      "saved_scores_sha256": "3484a313f185439c3ce10f883d1a6d86690c6ff62a484287d7b513eee7503315",
+      "packs": {
+        "basler-bg": {
+          "frames": 300,
+          "step": 1,
+          "cpu": "2",
+          "core_source_sha256": "b176874f0a7417eb715408ba8a18c99f0a7b526aeaf4b18735909f9db4277d99",
+          "core_binary_sha256": "ee15e270447f6983039ea358699770496f9ac2af727a2588be49605cb45b3020",
+          "started_utc": "2026-11-15T02:45:04.793114+00:00",
+          "finished_utc": "2026-11-15T02:45:13.037781+00:00",
+          "raw_results_sha256": "8d1e036adab0324d464e10ce715a8a5186a10a540243dff4c7707f83a487fe4f",
+          "configs": {
+            "napa-m22-auto": {
+              "min_tag_px": 22,
+              "split_touching": "auto",
+              "max_detections": 2048
+            },
+            "napa-m22-split": {
+              "min_tag_px": 22,
+              "split_touching": true,
+              "max_detections": 2048
+            }
+          },
+          "metrics": {
+            "napa-m22-auto": {
+              "frames": 300.0,
+              "outputs": 0.0,
+              "false": 0.0,
+              "frames_with_false": 0.0,
+              "ms_p50": 0.674683,
+              "ms_p95": 1.23445265,
+              "ms_p99": 1.3043918399999999,
+              "ms_mean": 0.64766852
+            },
+            "napa-m22-split": {
+              "frames": 300.0,
+              "outputs": 0.0,
+              "false": 0.0,
+              "frames_with_false": 0.0,
+              "ms_p50": 1.0019605,
+              "ms_p95": 2.18150985,
+              "ms_p99": 2.2654348099999995,
+              "ms_mean": 0.9981174500000001
+            }
+          }
+        },
+        "basler-test": {
+          "frames": 297,
+          "step": 1,
+          "cpu": "3",
+          "core_source_sha256": "b176874f0a7417eb715408ba8a18c99f0a7b526aeaf4b18735909f9db4277d99",
+          "core_binary_sha256": "ee15e270447f6983039ea358699770496f9ac2af727a2588be49605cb45b3020",
+          "started_utc": "2026-11-15T02:44:43.780706+00:00",
+          "finished_utc": "2026-11-15T02:44:54.170923+00:00",
+          "raw_results_sha256": "541516c2117057f1cb303c056abac868454518750f6240cc8e4d1437bb4222c6",
+          "configs": {
+            "napa-m22-auto": {
+              "min_tag_px": 22,
+              "split_touching": "auto",
+              "max_detections": 2048
+            },
+            "napa-m22-split": {
+              "min_tag_px": 22,
+              "split_touching": true,
+              "max_detections": 2048
+            }
+          },
+          "metrics": {
+            "napa-m22-auto": {
+              "frames": 297.0,
+              "outputs": 684.0,
+              "consensus_tags": 685.0,
+              "consensus_found": 683.0,
+              "unconfirmed": 1.0,
+              "ms_p50": 1.226386,
+              "ms_p95": 1.7988651999999998,
+              "ms_p99": 1.9829219600000016,
+              "ms_mean": 1.2688650942760944
+            },
+            "napa-m22-split": {
+              "frames": 297.0,
+              "outputs": 691.0,
+              "consensus_tags": 683.0,
+              "consensus_found": 683.0,
+              "unconfirmed": 8.0,
+              "ms_p50": 1.766625,
+              "ms_p95": 2.3284154,
+              "ms_p99": 2.6767902800000027,
+              "ms_mean": 1.7874308518518516
+            }
+          }
+        },
+        "drive-test": {
+          "frames": 194,
+          "step": 1,
+          "cpu": "2",
+          "core_source_sha256": "b176874f0a7417eb715408ba8a18c99f0a7b526aeaf4b18735909f9db4277d99",
+          "core_binary_sha256": "ee15e270447f6983039ea358699770496f9ac2af727a2588be49605cb45b3020",
+          "started_utc": "2026-11-15T02:45:00.079493+00:00",
+          "finished_utc": "2026-11-15T02:45:03.743774+00:00",
+          "raw_results_sha256": "6775f35c0b82fcd97f4eb0a5b9ea730112320fe8943111b7fff63f14e01739f8",
+          "configs": {
+            "napa-m22-auto": {
+              "min_tag_px": 22,
+              "split_touching": "auto",
+              "max_detections": 2048
+            },
+            "napa-m22-split": {
+              "min_tag_px": 22,
+              "split_touching": true,
+              "max_detections": 2048
+            }
+          },
+          "metrics": {
+            "napa-m22-auto": {
+              "frames": 194.0,
+              "outputs": 361.0,
+              "boxes": 573.0,
+              "box_matched": 361.0,
+              "box_unmatched": 0.0,
+              "ms_p50": 0.616128,
+              "ms_p95": 0.8895514499999999,
+              "ms_p99": 0.95904346,
+              "ms_mean": 0.6266202525773196
+            },
+            "napa-m22-split": {
+              "frames": 194.0,
+              "outputs": 373.0,
+              "boxes": 573.0,
+              "box_matched": 373.0,
+              "box_unmatched": 0.0,
+              "ms_p50": 0.806303,
+              "ms_p95": 1.10707975,
+              "ms_p99": 1.25713397,
+              "ms_mean": 0.7946652577319588
+            }
+          }
+        },
+        "frc-more": {
+          "frames": 500,
+          "step": 1,
+          "cpu": "3",
+          "core_source_sha256": "b176874f0a7417eb715408ba8a18c99f0a7b526aeaf4b18735909f9db4277d99",
+          "core_binary_sha256": "ee15e270447f6983039ea358699770496f9ac2af727a2588be49605cb45b3020",
+          "started_utc": "2026-11-15T02:44:55.189606+00:00",
+          "finished_utc": "2026-11-15T02:45:16.228064+00:00",
+          "raw_results_sha256": "17e048947ea66a7e43beee1550d484a963d86bd35ce5ef5374f9354ec786bdf4",
+          "configs": {
+            "napa-m22-auto": {
+              "min_tag_px": 22,
+              "split_touching": "auto",
+              "max_detections": 2048
+            },
+            "napa-m22-split": {
+              "min_tag_px": 22,
+              "split_touching": true,
+              "max_detections": 2048
+            }
+          },
+          "metrics": {
+            "napa-m22-auto": {
+              "frames": 500.0,
+              "outputs": 968.0,
+              "consensus_tags": 967.0,
+              "consensus_found": 962.0,
+              "unconfirmed": 4.0,
+              "ms_p50": 1.6676245,
+              "ms_p95": 2.6653594999999988,
+              "ms_p99": 3.519985929999998,
+              "ms_mean": 1.54662812
+            },
+            "napa-m22-split": {
+              "frames": 500.0,
+              "outputs": 975.0,
+              "consensus_tags": 962.0,
+              "consensus_found": 962.0,
+              "unconfirmed": 11.0,
+              "ms_p50": 2.0039015,
+              "ms_p95": 3.616819349999998,
+              "ms_p99": 4.933638149999999,
+              "ms_mean": 1.9101570860000001
+            }
+          }
+        },
+        "fresh": {
+          "frames": 120,
+          "step": 1,
+          "cpu": "3",
+          "core_source_sha256": "b176874f0a7417eb715408ba8a18c99f0a7b526aeaf4b18735909f9db4277d99",
+          "core_binary_sha256": "ee15e270447f6983039ea358699770496f9ac2af727a2588be49605cb45b3020",
+          "started_utc": "2026-11-15T02:45:17.287360+00:00",
+          "finished_utc": "2026-11-15T02:45:18.401950+00:00",
+          "raw_results_sha256": "cd10bc41dccdb8e7bc583ea12b345f43a2ff24267af65cbf54515bb68ec844bc",
+          "configs": {
+            "napa-m22-auto": {
+              "min_tag_px": 22,
+              "split_touching": "auto",
+              "max_detections": 2048
+            },
+            "napa-m22-split": {
+              "min_tag_px": 22,
+              "split_touching": true,
+              "max_detections": 2048
+            }
+          },
+          "metrics": {
+            "napa-m22-auto": {
+              "frames": 120.0,
+              "outputs": 0.0,
+              "false": 0.0,
+              "frames_with_false": 0.0,
+              "ms_p50": 0.29351700000000003,
+              "ms_p95": 0.9345549,
+              "ms_p99": 1.0320888200000002,
+              "ms_mean": 0.39363489166666665
+            },
+            "napa-m22-split": {
+              "frames": 120.0,
+              "outputs": 0.0,
+              "false": 0.0,
+              "frames_with_false": 0.0,
+              "ms_p50": 0.3590455,
+              "ms_p95": 1.7035071499999999,
+              "ms_p99": 2.331465610000001,
+              "ms_mean": 0.5755534833333333
+            }
+          }
+        },
+        "icra": {
+          "frames": 50,
+          "step": 1,
+          "cpu": "3",
+          "core_source_sha256": "b176874f0a7417eb715408ba8a18c99f0a7b526aeaf4b18735909f9db4277d99",
+          "core_binary_sha256": "ee15e270447f6983039ea358699770496f9ac2af727a2588be49605cb45b3020",
+          "started_utc": "2026-11-15T02:45:19.452530+00:00",
+          "finished_utc": "2026-11-15T02:45:28.233541+00:00",
+          "raw_results_sha256": "c4795069d4b399ca2b072e1f550e1c3c434e2c722a84fb4e65fdb75a3af5d0a6",
+          "configs": {
+            "napa-m22-auto": {
+              "min_tag_px": 22,
+              "split_touching": "auto",
+              "max_detections": 2048
+            },
+            "napa-m22-split": {
+              "min_tag_px": 22,
+              "split_touching": true,
+              "max_detections": 2048
+            }
+          },
+          "metrics": {
+            "napa-m22-auto": {
+              "frames": 50.0,
+              "outputs": 4258.0,
+              "expected": 7700.0,
+              "found": 4258.0,
+              "false": 0.0,
+              "ms_p50": 9.8820065,
+              "ms_p95": 29.361528099999997,
+              "ms_p99": 31.639761799999995,
+              "ms_mean": 12.03480188,
+              "corner_p50": 0.08210358745407643,
+              "corner_p95": 0.3649143695505018,
+              "corner_max": 0.7821636657375427,
+              "by_size": {
+                "0-16": [
+                  1068,
+                  4312
+                ],
+                "16-20": [
+                  827,
+                  924
+                ],
+                "20-24": [
+                  600,
+                  616
+                ],
+                "24-32": [
+                  574,
+                  616
+                ],
+                "32-48": [
+                  595,
+                  616
+                ],
+                "48-64": [
+                  594,
+                  616
+                ]
+              }
+            },
+            "napa-m22-split": {
+              "frames": 50.0,
+              "outputs": 4363.0,
+              "expected": 7700.0,
+              "found": 4363.0,
+              "false": 0.0,
+              "ms_p50": 10.72106,
+              "ms_p95": 26.15788305,
+              "ms_p99": 29.74629744,
+              "ms_mean": 11.33776292,
+              "corner_p50": 0.08417244204601416,
+              "corner_p95": 0.3796974079657439,
+              "corner_max": 0.7821636657375427,
+              "by_size": {
+                "0-16": [
+                  1173,
+                  4312
+                ],
+                "16-20": [
+                  827,
+                  924
+                ],
+                "20-24": [
+                  600,
+                  616
+                ],
+                "24-32": [
+                  574,
+                  616
+                ],
+                "32-48": [
+                  595,
+                  616
+                ],
+                "48-64": [
+                  594,
+                  616
+                ]
+              }
+            }
+          }
+        },
+        "icra-random": {
+          "frames": 67,
+          "step": 1,
+          "cpu": "3",
+          "core_source_sha256": "b176874f0a7417eb715408ba8a18c99f0a7b526aeaf4b18735909f9db4277d99",
+          "core_binary_sha256": "ee15e270447f6983039ea358699770496f9ac2af727a2588be49605cb45b3020",
+          "started_utc": "2026-11-15T02:45:29.273778+00:00",
+          "finished_utc": "2026-11-15T02:45:40.779395+00:00",
+          "raw_results_sha256": "ec2caab196509719c51d86ca52cd685e9a86d83ca37dc64b99cec95aab3ccc46",
+          "configs": {
+            "napa-m22-auto": {
+              "min_tag_px": 22,
+              "split_touching": "auto",
+              "max_detections": 2048
+            },
+            "napa-m22-split": {
+              "min_tag_px": 22,
+              "split_touching": true,
+              "max_detections": 2048
+            }
+          },
+          "metrics": {
+            "napa-m22-auto": {
+              "frames": 67.0,
+              "outputs": 6924.0,
+              "expected": 6877.0,
+              "found": 6877.0,
+              "false": 0.0,
+              "ms_p50": 10.362468,
+              "ms_p95": 13.5073093,
+              "ms_p99": 13.828114200000002,
+              "ms_mean": 10.580394850746268,
+              "corner_p50": 0.01746424919666776,
+              "corner_p95": 0.06500615239035576,
+              "corner_max": 0.2610938528576535,
+              "by_size": {
+                "32-48": [
+                  465,
+                  465
+                ],
+                "48-64": [
+                  1863,
+                  1863
+                ],
+                "64+": [
+                  4549,
+                  4549
+                ]
+              }
+            },
+            "napa-m22-split": {
+              "frames": 67.0,
+              "outputs": 6924.0,
+              "expected": 6877.0,
+              "found": 6877.0,
+              "false": 0.0,
+              "ms_p50": 11.008799,
+              "ms_p95": 14.369945399999999,
+              "ms_p99": 15.644725340000006,
+              "ms_mean": 11.173151701492536,
+              "corner_p50": 0.01746424919666776,
+              "corner_p95": 0.06500615239035576,
+              "corner_max": 0.2610938528576535,
+              "by_size": {
+                "32-48": [
+                  465,
+                  465
+                ],
+                "48-64": [
+                  1863,
+                  1863
+                ],
+                "64+": [
+                  4549,
+                  4549
+                ]
+              }
+            }
+          }
+        },
+        "indoor": {
+          "frames": 268,
+          "step": 1,
+          "cpu": "2",
+          "core_source_sha256": "b176874f0a7417eb715408ba8a18c99f0a7b526aeaf4b18735909f9db4277d99",
+          "core_binary_sha256": "ee15e270447f6983039ea358699770496f9ac2af727a2588be49605cb45b3020",
+          "started_utc": "2026-11-15T02:45:14.095658+00:00",
+          "finished_utc": "2026-11-15T02:45:16.948625+00:00",
+          "raw_results_sha256": "ee94abb787fa2caae49042fd6c7440c659861f7ff4aae0870a569c891eae6bb8",
+          "configs": {
+            "napa-m22-auto": {
+              "min_tag_px": 22,
+              "split_touching": "auto",
+              "max_detections": 2048
+            },
+            "napa-m22-split": {
+              "min_tag_px": 22,
+              "split_touching": true,
+              "max_detections": 2048
+            }
+          },
+          "metrics": {
+            "napa-m22-auto": {
+              "frames": 268.0,
+              "outputs": 0.0,
+              "false": 0.0,
+              "frames_with_false": 0.0,
+              "ms_p50": 0.1746475,
+              "ms_p95": 1.2048514999999975,
+              "ms_p99": 3.17550767,
+              "ms_mean": 0.3282238059701492
+            },
+            "napa-m22-split": {
+              "frames": 268.0,
+              "outputs": 0.0,
+              "false": 0.0,
+              "frames_with_false": 0.0,
+              "ms_p50": 0.253379,
+              "ms_p95": 1.7248200999999994,
+              "ms_p99": 4.106285279999988,
+              "ms_mean": 0.4587479626865672
+            }
+          }
+        },
+        "locus": {
+          "frames": 200,
+          "step": 1,
+          "cpu": "2",
+          "core_source_sha256": "b176874f0a7417eb715408ba8a18c99f0a7b526aeaf4b18735909f9db4277d99",
+          "core_binary_sha256": "ee15e270447f6983039ea358699770496f9ac2af727a2588be49605cb45b3020",
+          "started_utc": "2026-11-15T02:45:18.096667+00:00",
+          "finished_utc": "2026-11-15T02:45:44.091866+00:00",
+          "raw_results_sha256": "a3f1b15f3490fd7f2cf79f3b037bda19eec3cbebd0ab1fadb979a9c25472567f",
+          "configs": {
+            "napa-m22-auto": {
+              "min_tag_px": 22,
+              "split_touching": "auto",
+              "max_detections": 2048
+            },
+            "napa-m22-split": {
+              "min_tag_px": 22,
+              "split_touching": true,
+              "max_detections": 2048
+            }
+          },
+          "metrics": {
+            "napa-m22-auto": {
+              "frames": 200.0,
+              "outputs": 2785.0,
+              "expected": 2916.0,
+              "found": 2768.0,
+              "false": 14.0,
+              "ms_p50": 5.7426215,
+              "ms_p95": 26.73549529999999,
+              "ms_p99": 38.8447586399999,
+              "ms_mean": 9.103056944999999,
+              "corner_p50": 0.03512717521511786,
+              "corner_p95": 0.2949853488287571,
+              "corner_max": 12.534950267514082,
+              "by_size": {
+                "16-20": [
+                  12,
+                  36
+                ],
+                "20-24": [
+                  32,
+                  89
+                ],
+                "24-32": [
+                  117,
+                  127
+                ],
+                "32-48": [
+                  328,
+                  330
+                ],
+                "48-64": [
+                  267,
+                  289
+                ],
+                "64+": [
+                  2012,
+                  2045
+                ]
+              }
+            },
+            "napa-m22-split": {
+              "frames": 200.0,
+              "outputs": 2785.0,
+              "expected": 2916.0,
+              "found": 2768.0,
+              "false": 14.0,
+              "ms_p50": 6.268434,
+              "ms_p95": 21.951359799999995,
+              "ms_p99": 30.27232126999993,
+              "ms_mean": 8.097260644999999,
+              "corner_p50": 0.03512717521511786,
+              "corner_p95": 0.2949853488287571,
+              "corner_max": 12.534950267514082,
+              "by_size": {
+                "16-20": [
+                  12,
+                  36
+                ],
+                "20-24": [
+                  32,
+                  89
+                ],
+                "24-32": [
+                  117,
+                  127
+                ],
+                "32-48": [
+                  328,
+                  330
+                ],
+                "48-64": [
+                  267,
+                  289
+                ],
+                "64+": [
+                  2012,
+                  2045
+                ]
+              }
+            }
+          }
+        },
+        "real": {
+          "frames": 188,
+          "step": 1,
+          "cpu": "2",
+          "core_source_sha256": "b176874f0a7417eb715408ba8a18c99f0a7b526aeaf4b18735909f9db4277d99",
+          "core_binary_sha256": "ee15e270447f6983039ea358699770496f9ac2af727a2588be49605cb45b3020",
+          "started_utc": "2026-11-15T02:44:43.781641+00:00",
+          "finished_utc": "2026-11-15T02:44:51.885561+00:00",
+          "raw_results_sha256": "69d159fd5ff96ab1b2f864bb1b9709bd4f5eb518eddfc54963be82ca71d58661",
+          "configs": {
+            "napa-m22-auto": {
+              "min_tag_px": 22,
+              "split_touching": "auto",
+              "max_detections": 2048
+            },
+            "napa-m22-split": {
+              "min_tag_px": 22,
+              "split_touching": true,
+              "max_detections": 2048
+            }
+          },
+          "metrics": {
+            "napa-m22-auto": {
+              "frames": 188.0,
+              "outputs": 346.0,
+              "consensus_tags": 350.0,
+              "consensus_found": 346.0,
+              "unconfirmed": 0.0,
+              "ms_p50": 1.6675135,
+              "ms_p95": 2.95368535,
+              "ms_p99": 3.6719635499999974,
+              "ms_mean": 1.6000406595744683
+            },
+            "napa-m22-split": {
+              "frames": 188.0,
+              "outputs": 350.0,
+              "consensus_tags": 346.0,
+              "consensus_found": 346.0,
+              "unconfirmed": 4.0,
+              "ms_p50": 2.0818000000000003,
+              "ms_p95": 3.768566700000001,
+              "ms_p99": 5.365923819999998,
+              "ms_mean": 1.994064920212766
+            }
+          }
+        },
+        "rf-test": {
+          "frames": 258,
+          "step": 1,
+          "cpu": "2",
+          "core_source_sha256": "b176874f0a7417eb715408ba8a18c99f0a7b526aeaf4b18735909f9db4277d99",
+          "core_binary_sha256": "ee15e270447f6983039ea358699770496f9ac2af727a2588be49605cb45b3020",
+          "started_utc": "2026-11-15T02:44:56.485278+00:00",
+          "finished_utc": "2026-11-15T02:44:59.029758+00:00",
+          "raw_results_sha256": "c4189807ec6bad2e53a498e8a088463e3ccb5a62609545ea94e901cb915b5ba0",
+          "configs": {
+            "napa-m22-auto": {
+              "min_tag_px": 22,
+              "split_touching": "auto",
+              "max_detections": 2048
+            },
+            "napa-m22-split": {
+              "min_tag_px": 22,
+              "split_touching": true,
+              "max_detections": 2048
+            }
+          },
+          "metrics": {
+            "napa-m22-auto": {
+              "frames": 258.0,
+              "outputs": 434.0,
+              "boxes": 1039.0,
+              "box_matched": 434.0,
+              "box_unmatched": 0.0,
+              "ms_p50": 0.4099615,
+              "ms_p95": 0.7543079999999999,
+              "ms_p99": 0.9169913000000006,
+              "ms_mean": 0.42670921317829463
+            },
+            "napa-m22-split": {
+              "frames": 258.0,
+              "outputs": 437.0,
+              "boxes": 1039.0,
+              "box_matched": 437.0,
+              "box_unmatched": 0.0,
+              "ms_p50": 0.5082395,
+              "ms_p95": 0.9106916499999997,
+              "ms_p99": 1.0783552000000003,
+              "ms_mean": 0.5361272441860465
+            }
+          }
+        },
+        "rf-valid": {
+          "frames": 259,
+          "step": 1,
+          "cpu": "2",
+          "core_source_sha256": "b176874f0a7417eb715408ba8a18c99f0a7b526aeaf4b18735909f9db4277d99",
+          "core_binary_sha256": "ee15e270447f6983039ea358699770496f9ac2af727a2588be49605cb45b3020",
+          "started_utc": "2026-11-15T02:44:52.927453+00:00",
+          "finished_utc": "2026-11-15T02:44:55.435401+00:00",
+          "raw_results_sha256": "92e6f9d86dcd1706847fcc75e9bcd29e1afc1a0ff9667e531238289564e90829",
+          "configs": {
+            "napa-m22-auto": {
+              "min_tag_px": 22,
+              "split_touching": "auto",
+              "max_detections": 2048
+            },
+            "napa-m22-split": {
+              "min_tag_px": 22,
+              "split_touching": true,
+              "max_detections": 2048
+            }
+          },
+          "metrics": {
+            "napa-m22-auto": {
+              "frames": 259.0,
+              "outputs": 387.0,
+              "boxes": 1069.0,
+              "box_matched": 384.0,
+              "box_unmatched": 3.0,
+              "ms_p50": 0.397647,
+              "ms_p95": 0.7265971999999998,
+              "ms_p99": 0.8887687599999996,
+              "ms_mean": 0.41272261003861005
+            },
+            "napa-m22-split": {
+              "frames": 259.0,
+              "outputs": 387.0,
+              "boxes": 1069.0,
+              "box_matched": 384.0,
+              "box_unmatched": 3.0,
+              "ms_p50": 0.512499,
+              "ms_p95": 0.8634729999999999,
+              "ms_p99": 1.0164605399999997,
+              "ms_mean": 0.5218938918918918
+            }
+          }
+        }
+      }
+    }
+  },
+  "earlier_peer_comparison": {
+    "date": "2026-11-11",
+    "source": "benchmarks/results/2026-11-11_full_benchmark/scores/pi-scores.json",
+    "source_sha256": "7a0139e6b17287e815ad3d63e24d37aa42f84e3e62b3ad8619399db78398e3d3",
+    "frames": 297,
+    "core_source_sha256": "9f9fe2881ba4847fbc5bb0b92c10b869f3c4ab677fd006abc62b274d5c8ff63a",
+    "settings": {
+      "napa-preset": {
+        "min_tag_px": 16,
+        "split_touching": true,
+        "recover_shadows": true,
+        "shadow_min_tag_px": 24,
+        "max_detections": 2048
+      },
+      "apriltag3-d2": {
+        "library": "AprilTag 3 (AprilRobotics/apriltag, C library via a ctypes shim)",
+        "commit": null,
+        "build": "CMake Release (-O3 -DNDEBUG -std=gnu99), shared",
+        "family": "tag36h11",
+        "bits_corrected": 2,
+        "effective_nthreads": 1.0,
+        "effective_quad_decimate": 2.0,
+        "effective_quad_sigma": 0.0,
+        "effective_refine_edges": 1.0,
+        "effective_decode_sharpening": 0.25,
+        "effective_min_cluster_pixels": 24.0,
+        "effective_min_white_black_diff": 5.0,
+        "effective_max_line_fit_mse": 10.0,
+        "effective_critical_rad": 0.0,
+        "effective_deglitch": 0.0,
+        "corner_refinement": "refine_edges (on)",
+        "threads": 1,
+        "pixel_offset_applied": -0.5,
+        "tuning": "default (quad_decimate=2)"
+      },
+      "apriltag3-d1": {
+        "library": "AprilTag 3 (AprilRobotics/apriltag, C library via a ctypes shim)",
+        "commit": null,
+        "build": "CMake Release (-O3 -DNDEBUG -std=gnu99), shared",
+        "family": "tag36h11",
+        "bits_corrected": 2,
+        "effective_nthreads": 1.0,
+        "effective_quad_decimate": 1.0,
+        "effective_quad_sigma": 0.0,
+        "effective_refine_edges": 1.0,
+        "effective_decode_sharpening": 0.25,
+        "effective_min_cluster_pixels": 24.0,
+        "effective_min_white_black_diff": 5.0,
+        "effective_max_line_fit_mse": 10.0,
+        "effective_critical_rad": 0.0,
+        "effective_deglitch": 0.0,
+        "corner_refinement": "refine_edges (on)",
+        "threads": 1,
+        "pixel_offset_applied": -0.5,
+        "tuning": "tuned: quad_decimate=1 (full resolution)"
+      },
+      "wpilib-d2": {
+        "library": "AprilTag 3, WPILib build (robotpy-apriltag)",
+        "version": "2026.2.2",
+        "family": "tag36h11",
+        "bits_corrected": 2,
+        "effective_numThreads": 1,
+        "effective_quadDecimate": 2.0,
+        "effective_quadSigma": 0.0,
+        "effective_refineEdges": true,
+        "effective_decodeSharpening": 0.25,
+        "effective_quad_minClusterPixels": 300,
+        "effective_quad_criticalAngle": 0.7853981633974483,
+        "effective_quad_maxLineFitMSE": 10.0,
+        "effective_quad_minWhiteBlackDiff": 5,
+        "effective_quad_deglitch": false,
+        "corner_refinement": "refineEdges (on)",
+        "threads": 1,
+        "pixel_offset_applied": -0.5,
+        "tuning": "WPILib's defaults (quad_decimate=2, min cluster 300 px, critical angle 45 degrees)"
+      },
+      "aruco-nano": {
+        "library": "ArUco Nano (rmsalinas/aruco_nano, header-only C++ via a ctypes shim)",
+        "commit": null,
+        "opencv": "4.14.0",
+        "build": "g++ -O3 -std=c++17 against OpenCV 4.14.0 (Release, IPP-ICV, pthreads, baseline SSE3 + dispatch)",
+        "dictionary": "DICT_APRILTAG_36h11 only",
+        "effective_boxFilterSize": 15.0,
+        "effective_thres": 3.0,
+        "effective_minSize": 10.0,
+        "effective_maxAttemptsPerCandidate": 5.0,
+        "effective_maxTimesRevisited": 0.05000000074505806,
+        "effective_errorCorrectionRate": 0.0,
+        "effective_maxErroneousBitsInBorderRate": 0.0,
+        "effective_detectInvertedMarker": 0.0,
+        "effective_dictionaries": 1.0,
+        "effective_ArucoNanoVersion": 10.0,
+        "effective_opencv_threads": 1.0,
+        "corner_refinement": "always: line fit per side (refineCornersEdges)",
+        "threads": 1,
+        "pixel_offset_applied": 0.0,
+        "tuning": "default (36h11 dictionary only)"
+      }
+    },
+    "metrics": {
+      "napa-preset": {
+        "frames": 297.0,
+        "outputs": 708.0,
+        "consensus_tags": 709.0,
+        "consensus_found": 707.0,
+        "unconfirmed": 1.0,
+        "ms_p50": 6.63101,
+        "ms_p95": 7.2987246,
+        "ms_p99": 7.8101648,
+        "ms_mean": 6.521808265993267
+      },
+      "apriltag3-d2": {
+        "frames": 297.0,
+        "outputs": 634.0,
+        "consensus_tags": 709.0,
+        "consensus_found": 632.0,
+        "unconfirmed": 2.0,
+        "ms_p50": 16.715535,
+        "ms_p95": 18.4651652,
+        "ms_p99": 19.014556840000004,
+        "ms_mean": 16.973730303030305
+      },
+      "apriltag3-d1": {
+        "frames": 297.0,
+        "outputs": 652.0,
+        "consensus_tags": 709.0,
+        "consensus_found": 652.0,
+        "unconfirmed": 0.0,
+        "ms_p50": 57.467504,
+        "ms_p95": 61.1707026,
+        "ms_p99": 62.64287276,
+        "ms_mean": 58.23079482491582
+      },
+      "wpilib-d2": {
+        "frames": 297.0,
+        "outputs": 79.0,
+        "consensus_tags": 709.0,
+        "consensus_found": 79.0,
+        "unconfirmed": 0.0,
+        "ms_p50": 13.808744,
+        "ms_p95": 15.137564,
+        "ms_p99": 15.71023416,
+        "ms_mean": 13.92932791245791
+      },
+      "aruco-nano": {
+        "frames": 297.0,
+        "outputs": 619.0,
+        "consensus_tags": 709.0,
+        "consensus_found": 619.0,
+        "unconfirmed": 0.0,
+        "ms_p50": 14.646391,
+        "ms_p95": 15.116522400000001,
+        "ms_p99": 15.310113160000002,
+        "ms_mean": 14.607879343434345
+      }
+    }
+  }
+}

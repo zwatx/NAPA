@@ -45,44 +45,44 @@ from napa_vision.compat import Detector  # was: from pupil_apriltags import Dete
 
 ## How it compares
 
-The [benchmark](benchmarks/README.md) runs every detector on the same 3,000 rendered frames (5,521 tags at 640x480,
-1280x720, and 1920x1080, with exact ground truth), single-threaded on one core of an Intel i7-12700H. NAPA ran at
-`min_tag_px=32`, the default when this was measured. The current default is 22, which finds smaller tags and costs
-about 1.2x as much time. See [Choosing settings](docs/detection.md#choosing-settings).
+The latest saved [automatic-splitting check](benchmarks/results/2026-11-14_auto_split/report.md) was run on November 14
+with `min_tag_px=22`, `split_touching="auto"`, no shadow pass, and `max_detections=2048` so calibration boards were not
+capped at the public default of 64. On one Raspberry Pi 5 core:
 
-| Detector | Speed vs WPILib defaults (median frame) | Tags found | Worst-corner error (median) | Wrong IDs |
-| --- | ---: | ---: | ---: | ---: |
-| NAPA, `min_tag_px=32` | 25x | 99.9% | 0.020 px | 1 |
-| AprilTag, WPILib defaults | 1x | 86.2% | 0.099 px | 0 |
-| AprilTag, decimate 2 | 0.79x | 99.7% | 0.043 px | 3 |
-| AprilTag, full resolution | 0.21x | 99.9% | 0.042 px | 3 |
-| Locus | 1.3x | 97.7% | 0.044 px | 1 |
-| Locus, decimate 2 | 2.4x | 98.2% | 0.044 px | 1 |
-| OpenCV ArUco, subpixel | 0.55x | 99.4% | 0.289 px | 1 |
-| ArUco3 | 1.2x | 97.8% | 0.986 px | 1 |
-| ArUco3, tags over 64 px | 3.1x | 80.0% | 0.282 px | 0 |
-| ArUco3, tags over 32 px | 2.2x | 96.1% | 0.284 px | 1 |
-| ArUco Nano | 4.8x | 99.9% | 0.044 px | 0 |
-| RapidTag, subpixel | 2.0x | 75.5% | 0.294 px | 19 |
+| Dataset | Frames | Matched tags / labels, or outputs | Median ms, one Pi 5 core |
+| --- | --- | --- | --- |
+| Robot-camera captures | 297 | 684 outputs (no hand truth) | 1.226 |
+| FRC footage | 188 | 346 outputs (no hand truth) | 1.668 |
+| Locus AprilGrid renders | 200 | 2,768 / 2,916 | 5.743 |
+| ICRA forward renders | 50 | 4,258 / 7,700 | 9.882 |
 
-Notes on the table: NAPA was fastest on all 3,000 frames (smallest lead over ArUco Nano: 1.8x on one frame). Its one
-wrong ID was a random-pattern decoy. The lead grows with resolution: 18x at 640x480, 36x at 1280x720, 74x at 1920x1080
-against WPILib defaults.
+The camera/FRC rows count outputs, not recall: those frames have no hand-labelled truth. The rendered-board rows use
+corner annotations. The Pi uses smaller subsets than the laptop; their frame counts are shown explicitly.
 
-Range: NAPA at `min_tag_px=32` found every tag from 22 px up, vs 80 px for WPILib defaults and 14 px for AprilTag at
-full resolution. Same camera, about 3.6x the range of WPILib defaults. At `min_tag_px=16` it found everything down to
-12 px, at ~3x the cost.
+On a laptop P-core, the same saved build found 10,952/10,998 tags in the 4,500-frame fixed synthetic corpus, with 1
+wrong ID. Its median/p95 worst-corner error was 0.017/0.089 px, measured on detected tags. This corpus includes the
+3,000 main frames plus 600 stress and 900 range frames; it is broader than the old main-only headline.
 
-Corners: within 0.09 px on 95% of tags. Heavy motion blur is the exception (worst 3.4 px vs 2.2 px for full-resolution
-AprilTag).
+The earlier November 11 run compared the recall preset and other detectors on the same 297 robot-camera frames, on one
+Pi 5 core. This is a separate run and build from the auto-setting table above:
 
-Also in the [benchmark guide](benchmarks/README.md): 96-100% found on 600 stress frames, and tag16h5 results where
-AprilTag's default correction produced 581 wrong IDs to NAPA's zero.
+| Detector / setting | Median ms, one Pi 5 core | p99 ms |
+| --- | --- | --- |
+| NAPA recall preset (16, split, shadows 24) | 6.631 | 7.810 |
+| AprilTag 3, decimate 2 | 16.716 | 19.015 |
+| AprilTag 3, full resolution | 57.468 | 62.643 |
+| AprilTag, WPILib defaults | 13.809 | 15.710 |
+| ArUco Nano | 14.646 | 15.310 |
 
-The frames are synthetic and the timings come from one laptop CPU. Before you rely on any number here,
-[score NAPA on your own footage](docs/measuring.md). The
-[full report](benchmarks/results/2026-10-30_cpu_full_corpus/report.md) has every configuration's settings, latency
-percentiles, and per-scene tables.
+For other detectors, the [November 11 full comparison](benchmarks/results/2026-11-11_full_benchmark/report.md) contains
+the saved laptop and Pi results for AprilTag 3, WPILib, Locus, ArUco, ArUco Nano and RapidTag, with their measured
+settings. It predates automatic splitting. The [October 30 fixed-corpus
+comparison](benchmarks/results/2026-10-30_cpu_full_corpus/report.md) remains the historical `min_tag_px=32` head-to-head
+run.
+
+These saved measurements predate the final consolidated frame-edge merge; they are not a rerun of this branch. See the
+[benchmark guide](benchmarks/README.md#latest-results) for scope and scoring, and [score your own
+footage](docs/measuring.md) before relying on these results.
 
 ## How it works
 

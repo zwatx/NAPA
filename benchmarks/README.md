@@ -9,9 +9,10 @@ Two scripts compare NAPA with other detectors on the same generated frames:
 
 Both time detector calls only. Camera delivery, colour conversion, and pose solving sit outside the timed region.
 
-The headline results come from the [2026-10-30 run](results/2026-10-30_cpu_full_corpus/report.md), which ran NAPA and
-13 configurations of other detectors on the same 3,000 frames. Per-scene numbers are in that run's
-`matrix.json` and `matrix.csv`, next to the report.
+The latest saved automatic-splitting results are from [November 14](results/2026-11-14_auto_split/report.md). The
+[November 11 full comparison](results/2026-11-11_full_benchmark/report.md) covers laptop and Pi settings across rendered
+and real footage. The older October 30 main/stress/range tables remain below with their original builds and scope; no
+new measurement run is used here.
 
 For scoring NAPA on your own camera footage instead, see
 [Measuring on your own footage](../docs/measuring.md).
@@ -83,8 +84,8 @@ Two sweeps sit beside the main corpus:
 
 ## Timing
 
-Backends take turns on each frame in a shuffled order: ten timed calls each, after one untimed warm-up call. The
-report gives every backend's latency percentiles per scenario and resolution.
+In the October 30 fixed-corpus run, backends take turns on each frame in a shuffled order: ten timed calls each, after
+one untimed warm-up call. The report gives every backend's latency percentiles per scenario and resolution.
 
 It also gives NAPA's speedup per frame: the other detector's median time on a frame divided by NAPA's median time on
 the same frame. "Worst frame" is the smallest of those ratios. That way a single slow frame cannot hide behind a
@@ -120,6 +121,31 @@ The script prints summary tables and writes two files:
 
 ## Latest results
 
+The completed [November 14 auto-splitting check](results/2026-11-14_auto_split/report.md) uses `min_tag_px=22`,
+`split_touching="auto"`, no shadows and `max_detections=2048`. The capacity is raised from the API default of 64 for
+dense boards. These are saved results from before the final consolidated frame-edge merge, not new measurements.
+
+| Dataset | Frames | Matched tags / labels, or outputs | Median ms, one Pi 5 core |
+| --- | --- | --- | --- |
+| Robot-camera captures | 297 | 684 outputs (no hand truth) | 1.226 |
+| FRC footage | 188 | 346 outputs (no hand truth) | 1.668 |
+| Locus AprilGrid renders | 200 | 2,768 / 2,916 | 5.743 |
+| ICRA forward renders | 50 | 4,258 / 7,700 | 9.882 |
+
+The rendered rows are matched against corner labels; unlabelled FRC/robot footage reports outputs only. The Pi uses
+reduced board subsets; see the explicit frame counts. The [saved summary](results/2026-11-14_auto_split/summary.json)
+retains all 25 laptop and 12 Pi sets, settings, source hashes, timings and scoring details.
+
+On the full 4,500-frame fixed corpus (main + stress + range), the laptop auto setting found 10,952/10,998 tags with one
+wrong ID. Median/p95 worst-corner error was 0.017/0.089 px on detected tags. The separate 900-frame range pack found
+893/900 tags; the 600-frame stress pack found 4,540/4,577. Those subsets overlap the 4,500-frame corpus.
+
+For peer detector comparisons, use the [November 11 report](results/2026-11-11_full_benchmark/report.md), including its
+follow-up no-shadow rows and independent-reference tables. It predates auto splitting. Its tables distinguish synthetic
+truth, box matches, consensus and surveyed-ID sightings.
+
+## Historical fixed-corpus comparison (2026-10-30)
+
 The [2026-10-30 run](results/2026-10-30_cpu_full_corpus/report.md) gave every detector the same 3,000 frames: 50 per
 scene at each resolution, one warm-up and ten timed calls per frame in shuffled order, on one performance core of an
 Intel i7-12700H. "NAPA" there is `min_tag_px=32`, the default when it ran. The current default is `min_tag_px=22`
@@ -131,9 +157,8 @@ RapidTag refine corners only in their subpixel rows. The two limited ArUco3 rows
 smallest tag they can find.
 
 The report has the full picture. Every configuration's exact settings, latency percentiles, recall and corner quality
-per scene and resolution, and NAPA's corners against each detector's on the tags both found. The root
-[README](../README.md#how-it-compares) carries the summary table. Two results from the same run are worth keeping
-here:
+per scene and resolution, and NAPA's corners against each detector's on the tags both found. Two historical
+results from that run are retained here:
 
 **Stress frames.** A separate 600 frames hold tags under 32 px, noise at sigma 15 to 30, 30 to 80 tags per frame, and
 noisy clutter:
@@ -159,6 +184,8 @@ noisy clutter:
 No detector reported the same tag twice on the main corpus.
 
 ## Range
+
+The following table is the historical October 30 run at `min_tag_px=32`, not the November 14 auto build.
 
 Tags found out of 50 at each black-square size, from the same run. 900 frames at 640x480, with light noise and up to 15
 degrees of tilt:
@@ -221,9 +248,9 @@ family's correction.
 - Corner error is the worst corner's distance from the truth, for each tag found, after each detector's corner order is
   aligned to the truth. AprilTag's and Locus's corners are shifted by -0.5 px into the pixel-centre convention, as their
   sources document. Compare errors on tags both detectors found, so a detector cannot improve its score by missing hard
-  tags. The [current report](results/2026-10-30_cpu_full_corpus/report.md#corner-quality-on-the-main-corpus) gives median,
+  tags. The [October 30 report](results/2026-10-30_cpu_full_corpus/report.md#corner-quality-on-the-main-corpus) gives median,
   p95, and maximum errors separately. OpenCV and RapidTag do not refine corners by default.
-- Wrong IDs and duplicate detections are counted separately. There were no duplicates in the full main-corpus comparison.
+- Wrong IDs and duplicate detections are counted separately. There were no duplicates in the October 30 main-corpus comparison.
 - Recall in `small-tags` and `steep-angle` depends on apparent size. A steeply tilted tag can look narrower than
   `min_tag_px` even when its long side is well above it.
 - The frames are synthetic and the timings come from one laptop CPU. Measure on your own camera and hardware before you
