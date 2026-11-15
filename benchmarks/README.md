@@ -55,6 +55,23 @@ the frame (48 to 170 px at 480 lines). Every scenario except `noise-free` adds a
 about 1.5 grey levels), as a real sensor would. The default run renders 50 frames per scenario at each of 640x480,
 1280x720, and 1920x1080: 3,000 frames in all.
 
+The [published fixed corpus](https://huggingface.co/datasets/zwatx/napa-apriltag-benchmark) can also carry per-tag
+projection metadata. Each tag uses an independent virtual pinhole camera; there is no shared image-wide camera
+calibration. Translation is measured in black-square tag widths, with a unit square centred at the tag origin.
+
+To backfill a local copy of the original dataset's manifest and metadata files, run from the hash-pinned renderer
+checkout using the original NumPy/OpenCV versions:
+
+```bash
+python benchmarks/export_projection_metadata.py --existing /path/to/original-dataset \
+  --output work/projection-metadata --source-revision <original-hugging-face-commit>
+```
+
+The output directory must be new. The exporter preserves existing annotation fields, checks every replayed image's
+full published pixel hash and exact corners, and verifies each camera pose and homography against those corners.
+It writes updated metadata and a completion manifest, without writing or replacing PNGs. The dataset card documents
+the per-tag camera matrices, coordinate conventions, and the frozen source checkout used for reproduction.
+
 Two sweeps sit beside the main corpus:
 
 - **Obstruction.** One tag per frame, partly hidden by a white or grey patch over the payload centre, along one
