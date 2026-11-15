@@ -132,8 +132,8 @@ distorted tags. Given the calibration, it fits each side as a straight line thro
 corners in the frame's own pixels. The image is never remapped.
 
 ```python
-detector = NapaDetector(camera=calibration)                             # a CameraCalibration
-detector = NapaDetector(camera=(camera_matrix, distortion))             # OpenCV's standard model
+detector = NapaDetector(camera=calibration)  # a CameraCalibration
+detector = NapaDetector(camera=(camera_matrix, distortion))  # OpenCV's standard model
 detector = NapaDetector(camera=(camera_matrix, distortion, "fisheye"))  # cv2.fisheye's model
 ```
 
