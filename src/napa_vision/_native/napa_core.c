@@ -49,6 +49,159 @@
 #include "napa_core.h"
 #include "families.h"
 
+/* ---------------------------------------------------------------- worker threads */
+
+/* Optional workers for one detector (napa_set_threads). A job is n independent indices; the caller takes
+ * indices too and returns once every index has run. Work is split so results never depend on which thread
+ * ran an index, so outputs are identical at every thread count. */
+#if defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#undef near /* legacy 16-bit pointer qualifiers that windows.h still defines; the core uses these names */
+#undef far
+typedef HANDLE napa_thread_t;
+typedef SRWLOCK napa_mutex_t;
+typedef CONDITION_VARIABLE napa_cond_t;
+#define napa_mutex_init(m) InitializeSRWLock(m)
+#define napa_mutex_destroy(m) ((void)0)
+#define napa_mutex_lock(m) AcquireSRWLockExclusive(m)
+#define napa_mutex_trylock(m) (TryAcquireSRWLockExclusive(m) != 0)
+#define napa_mutex_unlock(m) ReleaseSRWLockExclusive(m)
+#define napa_cond_init(c) InitializeConditionVariable(c)
+#define napa_cond_destroy(c) ((void)0)
+#define napa_cond_wait(c, m) SleepConditionVariableSRW(c, m, INFINITE, 0)
+#define napa_cond_broadcast(c) WakeAllConditionVariable(c)
+#else
+#include <pthread.h>
+typedef pthread_t napa_thread_t;
+typedef pthread_mutex_t napa_mutex_t;
+typedef pthread_cond_t napa_cond_t;
+#define napa_mutex_init(m) pthread_mutex_init(m, NULL)
+#define napa_mutex_destroy(m) pthread_mutex_destroy(m)
+#define napa_mutex_lock(m) pthread_mutex_lock(m)
+#define napa_mutex_trylock(m) (pthread_mutex_trylock(m) == 0)
+#define napa_mutex_unlock(m) pthread_mutex_unlock(m)
+#define napa_cond_init(c) pthread_cond_init(c, NULL)
+#define napa_cond_destroy(c) pthread_cond_destroy(c)
+#define napa_cond_wait(c, m) pthread_cond_wait(c, m)
+#define napa_cond_broadcast(c) pthread_cond_broadcast(c)
+#endif
+
+#define NAPA_MAX_THREADS 16
+#define NAPA_MAX_SIDE 30000 /* the largest image width or height accepted */
+
+typedef struct napa_pool {
+    int workers; /* threads besides the caller */
+    napa_thread_t thread[NAPA_MAX_THREADS];
+    napa_mutex_t lock;
+    napa_mutex_t owner; /* held by the one caller using the workers */
+    napa_cond_t work, done_cond;
+    void (*fn)(void *ctx, int index);
+    void *ctx;
+    int jobs, next, done, stop;
+    unsigned generation;
+} napa_pool;
+
+/* Run indices of the current job until none are left. Called with the lock held; returns with it held. */
+static void pool_drain(napa_pool *pool) {
+    while (pool->next < pool->jobs) {
+        int index = pool->next++;
+        void (*fn)(void *, int) = pool->fn;
+        void *ctx = pool->ctx;
+        napa_mutex_unlock(&pool->lock);
+        fn(ctx, index);
+        napa_mutex_lock(&pool->lock);
+        if (++pool->done == pool->jobs) napa_cond_broadcast(&pool->done_cond);
+    }
+}
+
+#if defined(_WIN32)
+static DWORD WINAPI pool_worker(LPVOID arg) {
+#else
+static void *pool_worker(void *arg) {
+#endif
+    napa_pool *pool = (napa_pool *)arg;
+    unsigned seen = 0;
+    napa_mutex_lock(&pool->lock);
+    for (;;) {
+        while (!pool->stop && pool->generation == seen) napa_cond_wait(&pool->work, &pool->lock);
+        if (pool->stop) break;
+        seen = pool->generation;
+        pool_drain(pool);
+    }
+    napa_mutex_unlock(&pool->lock);
+    return 0;
+}
+
+static void pool_destroy(napa_pool *pool) {
+    if (pool == NULL) return;
+    napa_mutex_lock(&pool->lock);
+    pool->stop = 1;
+    napa_cond_broadcast(&pool->work);
+    napa_mutex_unlock(&pool->lock);
+    for (int i = 0; i < pool->workers; i++) {
+#if defined(_WIN32)
+        WaitForSingleObject(pool->thread[i], INFINITE);
+        CloseHandle(pool->thread[i]);
+#else
+        pthread_join(pool->thread[i], NULL);
+#endif
+    }
+    napa_cond_destroy(&pool->work);
+    napa_cond_destroy(&pool->done_cond);
+    napa_mutex_destroy(&pool->lock);
+    napa_mutex_destroy(&pool->owner);
+    free(pool);
+}
+
+/* A pool with `workers` threads besides the caller, or NULL if threads can't be started. */
+static napa_pool *pool_create(int workers) {
+    napa_pool *pool = (napa_pool *)calloc(1, sizeof(napa_pool));
+    if (pool == NULL) return NULL;
+    napa_mutex_init(&pool->lock);
+    napa_mutex_init(&pool->owner);
+    napa_cond_init(&pool->work);
+    napa_cond_init(&pool->done_cond);
+    for (int i = 0; i < workers; i++) {
+#if defined(_WIN32)
+        pool->thread[i] = CreateThread(NULL, 0, pool_worker, pool, 0, NULL);
+        int failed = pool->thread[i] == NULL;
+#else
+        int failed = pthread_create(&pool->thread[i], NULL, pool_worker, pool) != 0;
+#endif
+        if (failed) {
+            pool_destroy(pool); /* joins the ones already started */
+            return NULL;
+        }
+        pool->workers = i + 1;
+    }
+    return pool;
+}
+
+/* fn(ctx, i) for every i in [0, n), across the pool and the calling thread; serial without a pool. A detector
+ * must not be used from two threads at once (its scratch is shared), but if it is, the second caller runs its
+ * job alone rather than taking over the workers mid-job, which could otherwise wait forever. */
+static void pool_run(napa_pool *pool, void (*fn)(void *, int), void *ctx, int n) {
+    if (pool == NULL || n <= 1 || !napa_mutex_trylock(&pool->owner)) {
+        for (int i = 0; i < n; i++) fn(ctx, i);
+        return;
+    }
+    napa_mutex_lock(&pool->lock);
+    pool->fn = fn, pool->ctx = ctx;
+    pool->jobs = n, pool->next = 0, pool->done = 0;
+    pool->generation++;
+    napa_cond_broadcast(&pool->work);
+    pool_drain(pool);
+    while (pool->done < pool->jobs) napa_cond_wait(&pool->done_cond, &pool->lock);
+    napa_mutex_unlock(&pool->lock);
+    napa_mutex_unlock(&pool->owner);
+}
+
 /* The builtin is one instruction on ARM64 and x86 with POPCNT, but a library call on baseline x86-64. */
 #if (defined(__GNUC__) || defined(__clang__)) && (defined(__POPCNT__) || !(defined(__x86_64__) || defined(__i386__)))
 #define napa_popcount64(x) __builtin_popcountll(x)
@@ -61,9 +214,12 @@ static int napa_popcount64(uint64_t x) {
 }
 #endif
 
-/* A horizontal run of dark samples in one level row, and a blob's sample count and bounding box. */
+/* A horizontal run of dark samples in one level row, and a blob's sample count and bounding box.
+ * Ordinary labelling (no split, no shadow) stores row-pair runs instead (see label_row_pair): samples
+ * x0..x1 where row y or row y + 1 is dark, and rows says which: bit 0 row y, bit 1 row y + 1. Split and
+ * shadow labelling leave rows unset. */
 typedef struct {
-    uint16_t x0, x1, y, pad;
+    uint16_t x0, x1, y, rows;
 } napa_run;
 
 typedef struct {
@@ -77,6 +233,9 @@ typedef struct {
     int ext[16][2]; /* extreme points along the 16 directions of comp_dirs, in angular order */
     int extv[16];
     int row_y, row_x0, row_x1; /* the blob's current row: its leftmost and rightmost dark sample */
+    /* With row-pair runs: the current pair's top row and its two rows' extents (x0 -1: no sample yet; a
+     * negative x1 is -x1 - 1 of a union run whose last dark sample in that row is still to find). */
+    int pair_y, top_x0, top_x1, bot_x0, bot_x1;
     /* Spent once the extrema are flushed; napa_detect then reuses row_y for how far the blob got and
      * row_x1 for how many split pieces it has. */
 } component;
@@ -127,6 +286,49 @@ typedef struct {
     double x, y;
 } vec2;
 
+/* A calibrated camera's lens (napa_set_lens), OpenCV's conventions: pixel centres at integers, normalized coordinates
+ * x = X/Z, y = Y/Z. Brown-Conrady k: k1 k2 p1 p2 k3 k4 k5 k6 s1 s2 s3 s4; fisheye (Kannala-Brandt) k: k1 k2 k3 k4. */
+typedef struct lens_memo lens_memo;
+typedef struct {
+    int model; /* NAPA_LENS_* */
+    double fx, fy, cx, cy, skew;
+    double k[12];
+    int rational, prism; /* Brown-Conrady: whether k4-k6 or s1-s4 are in use */
+    lens_memo *memo;     /* the detector's cache of the view it last worked out for a tag, updated even through a
+                          * const napa_lens */
+} napa_lens;
+
+/* One tag's view through the lens: the plane square to the ray through the tag's middle, where every straight edge of the
+ * tag is a straight line, scaled to about one unit per pixel there. Plane x follows the image's x. */
+typedef struct {
+    const napa_lens *L;
+    double e[3][3]; /* plane x, plane y, view axis */
+    double scale, inv_scale;
+} lens_frame;
+
+/* A candidate's fits and bias readings each start from the corners the step before returned, so the detector keeps the
+ * last tag view it worked out: the corners it was asked for (key), where they lie in the plane, and how far the lens bows
+ * the sides between them. A lens fit leaves its own result as `next`, already in the same plane. */
+struct lens_memo {
+    int valid, chained;
+    vec2 key[4], plane[4], next[4], next_plane[4];
+    double bow, departure; /* departure: quad_map_init's, -1 until asked */
+    lens_frame f;
+};
+
+/* What labelling a level (threshold_rows) writes besides its runs and the level's dark bits: row and tile
+ * scratch. The detector has one; each band of banded labelling has its own (napa_band). */
+typedef struct {
+    uint8_t *row_min, *row_max, *row_thr; /* one level row's tile extrema and thresholds, expanded to samples */
+    uint8_t *nb_lo, *nb_hi, *nb_t, *nb_f; /* one tile row's neighbourhood min, max, threshold and floor */
+    uint64_t *row_bits; /* one row's dark bits, or row-pair labelling's boundary windows */
+    uint16_t *row_edges; /* row-pair labelling: a pair's run edges, in order */
+    int32_t *pair_rank;  /* row-pair labelling: two pairs' touchable runs in left-to-right order, then a scratch list */
+    size_t row_capacity;
+    uint8_t *tile_min, *tile_max; /* tile extrema: the level's, or a band's tile rows and one on each side */
+    size_t tile_capacity;
+} label_scratch;
+
 /* A decode attempt worth a second look by the soft decoder. `order` keeps the first of exact duplicates. */
 typedef struct {
     float quad[8], black, white, grid[64];
@@ -137,15 +339,30 @@ typedef struct soft_tables soft_tables;
 
 struct napa_detector {
     family_layout fam;
+    int threads;      /* napa_set_threads: 1 (the default) runs on the calling thread only */
+    napa_pool *pool;  /* threads - 1 workers, started when threads > 1 */
+    struct napa_band *bands; /* banded labelling buffers, one set per band */
+    uint32_t (*floor_hist)[64]; /* contrast_floors: each region row's histogram */
+    size_t floor_hist_rows;
+    int band_count;
     int tag_shape;        /* NAPA_TAG_SHAPE_*: the ordinary pass samples twice as far apart down (tall) or across (wide) */
+    int32_t *regrow_stack; /* regrow_small's fill stack and marks, NAPA_REGROW_WINDOW squared each, made on first use */
+    uint16_t *regrow_mark; /* a window pixel is marked when it holds regrow_stamp */
+    uint16_t regrow_stamp;
+    int regrow_left;       /* regrowths this pass may still make (NAPA_REGROW_BUDGET) */
+    int regrow_small_tags; /* napa_set_regrow_small_tags: 0 (the default) never regrows */
     uint8_t *shrunk;      /* the frame halved that way, area-averaged */
     size_t shrunk_capacity;
     int has_camera_gamma;
+    napa_lens lens; /* model NAPA_LENS_NONE unless napa_set_lens gave one */
+    lens_memo lens_cache; /* lens.memo points here */
     uint8_t linearize[256]; /* undoes the camera's tone curve; used only while refining a tag */
     uint8_t *linear_frame;  /* frame-sized so a tag keeps its coordinates; only each tag's own rectangle is ever filled */
     size_t linear_capacity;
     soft_tables *soft;
     int align_corners; /* during napa_detect_options: pull corners onto each blurred tag's own picture */
+    int touching_seen; /* split_touching 2: the last ordinary pass decoded a tag touching dark shapes at its corners */
+    int split_from_necks; /* split_touching 2's second pass: tags are known to touch, so split necks from the start */
     soft_candidate *blocked_candidates, *grid_probe; /* probe: where a decode attempt copies its samples */
     size_t blocked_count, blocked_capacity;
     uint64_t *blocked_codes; /* every rotated code as a 6x6 bitboard, row by row */
@@ -165,23 +382,15 @@ struct napa_detector {
     int extrema_wanted, extrema_ready;
     int saved_boxed[32]; /* whether that level was replaced by box averages */
     uint8_t level_contrast_min;
-    uint8_t *tile_min;
-    uint8_t *tile_max;
-    uint8_t *nb_lo; /* one band's tile neighbourhood min, max, and threshold (row buffers) */
-    uint8_t *nb_hi;
-    uint8_t *nb_t;
-    uint8_t *nb_f;
+    label_scratch scratch;
     napa_run *runs;
     int32_t *parent; /* backward union links, then -dense component index - 1 after aggregation */
     blob_box *boxes; /* packed components, in first-run raster order */
     int32_t *slot;   /* dense component -> candidate index, or -1 */
     component *cands;
     size_t cand_capacity;
-    uint64_t *row_bits;
-    uint8_t *row_min;
-    uint8_t *row_max;
-    uint8_t *row_thr;
-    size_t row_capacity;
+    uint64_t *level_bits; /* row-pair labelling: every labelled row's dark bits, (lw + 63) / 64 + 1 words a row */
+    size_t level_bits_capacity;
     size_t run_capacity;
     size_t level_capacity;
     uint8_t *floors; /* tile contrast floor of each noise region, row-major */
@@ -189,8 +398,9 @@ struct napa_detector {
     int floor_cols, floor_rows, floor_uniform; /* uniform: every region has the same floor */
     uint16_t *box_rows; /* the averaging rake's two scratch rows */
     size_t box_capacity;
-    size_t tile_capacity;
     failed_quad *failed; /* this frame's failed candidates, for skipping the same blob at a coarser level */
+    struct cand_memo *memo; /* threads: each candidate's rough quad, screen and first fit, worked out in parallel per level */
+    size_t memo_capacity;
     size_t failed_n, failed_capacity;
     /* split_touching: run pairs of this level that touch only at a corner, or through a one-sample neck
      * (then their pieces); each neck pair's pieces' roots once the necks are joined; and each piece
@@ -214,6 +424,15 @@ struct napa_detector {
     uint8_t *fates; /* before necks are split: each level's candidates' and pieces' fates, for redoing it */
     size_t fate_capacity;
 };
+
+/* The fewest samples a level (or frame) must have before its labelling, noise floors, row gathering or colour
+ * conversion is split across threads: below it, handing work to the threads costs more than it saves. */
+#define NAPA_THREAD_MIN_SAMPLES (96 * 1024)
+
+/* The detector's thread pool for work over `samples` samples, or NULL to run it on the calling thread. */
+static napa_pool *pool_for(const napa_detector *det, size_t samples) {
+    return samples >= NAPA_THREAD_MIN_SAMPLES ? det->pool : NULL;
+}
 
 /* ---------------------------------------------------------------- family */
 
@@ -458,6 +677,7 @@ napa_detector *napa_create_family(const char *family) {
             napa_destroy(det);
             return NULL;
         }
+        det->threads = 1;
 #ifdef NAPA_SSSE3_DISPATCH
         __builtin_cpu_init();
         det->ssse3 = __builtin_cpu_supports("ssse3") != 0;
@@ -466,13 +686,21 @@ napa_detector *napa_create_family(const char *family) {
     return det;
 }
 
+static void band_free(napa_detector *det);
+static void scratch_free(label_scratch *s);
 void napa_destroy(napa_detector *det) {
     if (det == NULL) {
         return;
     }
+    pool_destroy(det->pool);
+    band_free(det);
+    free(det->floor_hist);
     for (int i = 0; i < 32; i++) free(det->saved_extrema[i]);
     free(det->level);
     free(det->failed);
+    free(det->memo);
+    free(det->regrow_stack);
+    free(det->regrow_mark);
     free(det->tone_blur);
     free(det->blocked_candidates);
     free(det->blocked_codes);
@@ -481,12 +709,6 @@ void napa_destroy(napa_detector *det) {
     free(det->soft);
     free(det->soft_candidates);
     free_family(&det->fam);
-    free(det->tile_min);
-    free(det->tile_max);
-    free(det->nb_lo);
-    free(det->nb_hi);
-    free(det->nb_t);
-    free(det->nb_f);
     free(det->runs);
     free(det->parent);
     free(det->boxes);
@@ -506,16 +728,68 @@ void napa_destroy(napa_detector *det) {
     free(det->out_centers);
     free(det->piece_centers);
     free(det->fates);
-    free(det->row_bits);
+    free(det->level_bits);
+    scratch_free(&det->scratch);
     free(det->floors);
     free(det->box_rows);
-    free(det->row_min);
-    free(det->row_max);
-    free(det->row_thr);
     free(det);
 }
 
+/* Grows s for level rows of up to `row` samples and up to `tiles` tiles. */
+static int scratch_reserve(label_scratch *s, size_t row, size_t tiles) {
+    if (row > s->row_capacity) {
+        /* Row buffers run 128 bytes past the row: whole tiles plus whole 64-sample mask words. Tile rows:
+         * row / 4 + 1 tiles plus one padding tile at each end. */
+        uint8_t **bytes[3] = {&s->row_min, &s->row_max, &s->row_thr}, **tile_rows[4] = {&s->nb_lo, &s->nb_hi, &s->nb_t, &s->nb_f};
+        for (int k = 0; k < 3; k++) {
+            uint8_t *p = (uint8_t *)realloc(*bytes[k], row + 128);
+            if (p == NULL) return -1;
+            *bytes[k] = p;
+        }
+        for (int k = 0; k < 4; k++) {
+            uint8_t *p = (uint8_t *)realloc(*tile_rows[k], row / 4 + 3);
+            if (p == NULL) return -1;
+            *tile_rows[k] = p;
+        }
+        uint64_t *bits = (uint64_t *)realloc(s->row_bits, (row / 64 + 2) * sizeof(uint64_t));
+        if (bits == NULL) return -1;
+        s->row_bits = bits;
+        /* Every edge of a row (row + 1 at most) plus decode_edges' eight spare entries. */
+        uint16_t *edges = (uint16_t *)realloc(s->row_edges, (row + 16) * sizeof(uint16_t));
+        if (edges == NULL) return -1;
+        s->row_edges = edges;
+        int32_t *rank = (int32_t *)realloc(s->pair_rank, 3 * (row / 2 + 2) * sizeof(int32_t));
+        if (rank == NULL) return -1;
+        s->pair_rank = rank;
+        s->row_capacity = row;
+    }
+    if (tiles > s->tile_capacity) {
+        uint8_t *p;
+        if ((p = (uint8_t *)realloc(s->tile_min, tiles)) == NULL) return -1;
+        s->tile_min = p;
+        if ((p = (uint8_t *)realloc(s->tile_max, tiles)) == NULL) return -1;
+        s->tile_max = p;
+        s->tile_capacity = tiles;
+    }
+    return 0;
+}
+
+static void scratch_free(label_scratch *s) {
+    free(s->row_min), free(s->row_max), free(s->row_thr);
+    free(s->nb_lo), free(s->nb_hi), free(s->nb_t), free(s->nb_f);
+    free(s->row_bits), free(s->row_edges), free(s->pair_rank);
+    free(s->tile_min), free(s->tile_max);
+}
+
 static int ensure_buffers(napa_detector *det, size_t pixels, size_t tiles, size_t row, size_t max_runs) {
+    /* pixels / row rows of at least (row + 63) / 64 + 1 words. */
+    const size_t bit_words = (row ? pixels / row : 0) * (row / 64 + 2);
+    if (bit_words > det->level_bits_capacity) {
+        uint64_t *p = (uint64_t *)realloc(det->level_bits, bit_words * sizeof(uint64_t));
+        if (p == NULL) return -1;
+        det->level_bits = p;
+        det->level_bits_capacity = bit_words;
+    }
     if (max_runs > det->run_capacity) {
         void *p;
         if ((p = realloc(det->runs, max_runs * sizeof(napa_run))) == NULL) return -1;
@@ -528,43 +802,13 @@ static int ensure_buffers(napa_detector *det, size_t pixels, size_t tiles, size_
         det->slot = (int32_t *)p;
         det->run_capacity = max_runs;
     }
-    if (row > det->row_capacity) {
-        uint8_t *p;
-        /* Row buffers run 128 bytes past the row: whole tiles plus whole 64-sample mask words. */
-        if ((p = (uint8_t *)realloc(det->row_min, row + 128)) == NULL) return -1;
-        det->row_min = p;
-        if ((p = (uint8_t *)realloc(det->row_max, row + 128)) == NULL) return -1;
-        det->row_max = p;
-        if ((p = (uint8_t *)realloc(det->row_thr, row + 128)) == NULL) return -1;
-        det->row_thr = p;
-        /* Tile rows: row / 4 + 1 tiles plus one padding tile at each end. */
-        if ((p = (uint8_t *)realloc(det->nb_lo, row / 4 + 3)) == NULL) return -1;
-        det->nb_lo = p;
-        if ((p = (uint8_t *)realloc(det->nb_hi, row / 4 + 3)) == NULL) return -1;
-        det->nb_hi = p;
-        if ((p = (uint8_t *)realloc(det->nb_t, row / 4 + 3)) == NULL) return -1;
-        det->nb_t = p;
-        if ((p = (uint8_t *)realloc(det->nb_f, row / 4 + 3)) == NULL) return -1;
-        det->nb_f = p;
-        uint64_t *bits = (uint64_t *)realloc(det->row_bits, (row / 64 + 2) * sizeof(uint64_t));
-        if (bits == NULL) return -1;
-        det->row_bits = bits;
-        det->row_capacity = row;
-    }
+    if (scratch_reserve(&det->scratch, row, tiles) != 0) return -1;
     if (pixels > det->level_capacity) {
         /* 64 spare bytes: the last row's SIMD compares read up to 63 samples past its end. */
         uint8_t *level = (uint8_t *)realloc(det->level, pixels + 64);
         if (level == NULL) return -1;
         det->level = level;
         det->level_capacity = pixels;
-    }
-    if (tiles > det->tile_capacity) {
-        uint8_t *p;
-        if ((p = (uint8_t *)realloc(det->tile_min, tiles)) == NULL) return -1;
-        det->tile_min = p;
-        if ((p = (uint8_t *)realloc(det->tile_max, tiles)) == NULL) return -1;
-        det->tile_max = p;
-        det->tile_capacity = tiles;
     }
     return 0;
 }
@@ -576,6 +820,7 @@ static int ensure_buffers(napa_detector *det, size_t pixels, size_t tiles, size_
 typedef struct {
     const uint8_t *p;
     int w, h, stride, invert;
+    const napa_lens *lens; /* NULL: fit straight sides in pixels */
 } image_view;
 
 /* Exact integer-to-double values for scalar byte samples and signed differences. */
@@ -717,6 +962,16 @@ static inline double sample_bilinear(const image_view *im, double x, double y) {
 #define NAPA_LENS_MIN_KAPPA 0.02
 #define NAPA_LENS_MIN_GAIN 0.3
 #define NAPA_LENS_MAX_EXCESS 1.5
+/* The constants above are for a lens estimated from one tag's own bowed sides; those below, for the calibrated lens
+ * given by napa_set_lens. With one, tags whose sides it bows less than this (pixels, at the middle) are fitted in
+ * pixels. */
+#define NAPA_LENS_STRAIGHT_PX 0.02
+#define NAPA_LENS_STRAIGHT_COARSE_PX 0.25 /* the same for the coarse passes, which only have to converge */
+#define NAPA_LENS_KNOT_PX 20.0 /* spacing of exact lens evaluations along a side */
+/* The border and payload bias readings read the tag's cells through the lens only where it moves them at least this much
+ * (pixels) from the plain grid. */
+#define NAPA_LENS_BIAS_STRAIGHT_PX 0.05
+#define NAPA_LENS_MEMO_NEAR_PX 1.0 /* corners that moved less keep a far-straighter-than-asked verdict */
 /* Blur shifts a tag's apparent edges by an amount set by the tone curve. After decoding, the tag's own picture gives its
  * blur and tone, and these limits say when to trust that: smallest tag side in pixels, fit quality, how clearly curved
  * the tone must be, the least blur (in cells) on a side, and the edge width below which a tag is too sharp to bother. */
@@ -873,10 +1128,16 @@ NAPA_API int napa_profile_read(uint64_t *out, int max) {
 
 #if defined(__GNUC__) || defined(__clang__)
 #define napa_ctz64(x) __builtin_ctzll(x)
+#define napa_clz64(x) __builtin_clzll(x)
 #else
 static int napa_ctz64(uint64_t x) {
     int n = 0;
     while (!(x & 1)) x >>= 1, n++;
+    return n;
+}
+static int napa_clz64(uint64_t x) {
+    int n = 0;
+    while (!(x >> 63)) x <<= 1, n++;
     return n;
 }
 #endif
@@ -1100,6 +1361,20 @@ static void dark_bits(const uint8_t *row, const uint8_t *thr, int lw, uint64_t *
             __m128i ge = _mm_cmpeq_epi8(_mm_max_epu8(a, b), a); /* a >= b, unsigned */
             word |= (uint64_t)(uint16_t)~_mm_movemask_epi8(ge) << (16 * k);
         }
+#elif defined(__aarch64__) && defined(__ARM_NEON) && !defined(NAPA_NO_SIMD) && \
+      defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+        /* Fold all four comparisons together: each final byte holds eight consecutive bits.
+         * Disjoint weights keep every pairwise sum exact in an unsigned byte. The lane-to-word
+         * cast is little-endian; other NEON targets use the path below. */
+        static const uint8_t weights[16] = {1, 2, 4, 8, 16, 32, 64, 128, 1, 2, 4, 8, 16, 32, 64, 128};
+        const uint8x16_t wv = vld1q_u8(weights);
+        uint8x16_t a = vandq_u8(vcltq_u8(vld1q_u8(r), vld1q_u8(t)), wv);
+        uint8x16_t b = vandq_u8(vcltq_u8(vld1q_u8(r + 16), vld1q_u8(t + 16)), wv);
+        uint8x16_t c = vandq_u8(vcltq_u8(vld1q_u8(r + 32), vld1q_u8(t + 32)), wv);
+        uint8x16_t d = vandq_u8(vcltq_u8(vld1q_u8(r + 48), vld1q_u8(t + 48)), wv);
+        uint8x16_t pairs = vpaddq_u8(vpaddq_u8(a, b), vpaddq_u8(c, d));
+        uint8x16_t octets = vpaddq_u8(pairs, pairs);
+        word = vget_lane_u64(vreinterpret_u64_u8(vget_low_u8(octets)), 0);
 #elif defined(__ARM_NEON) && !defined(NAPA_NO_SIMD)
         static const uint8_t weights[16] = {1, 2, 4, 8, 16, 32, 64, 128, 1, 2, 4, 8, 16, 32, 64, 128};
         const uint8x16_t wv = vld1q_u8(weights);
@@ -1187,6 +1462,14 @@ static inline int32_t find_root(int32_t *P, int32_t i) {
     return i;
 }
 
+/* Join the components of runs a and b, linking the larger root under the smaller, so that a component's root
+ * is always its earliest run, whatever order the joins come in. */
+static NAPA_FORCE_INLINE void union_roots(int32_t *P, int32_t a, int32_t b) {
+    const int32_t ra = find_root(P, a), rb = find_root(P, b);
+    if (ra < rb) P[rb] = ra;
+    else if (rb < ra) P[ra] = rb;
+}
+
 /* Require filled support beyond both corners before separating a diagonal contact.
  * A binary 2x2 saddle alone cannot distinguish a thin stroke from touching objects. */
 static NAPA_FORCE_INLINE int filled_corner_contact(const uint8_t *L, int w, int h, int y, int x, int upper_left_dark, int floor) {
@@ -1210,13 +1493,12 @@ static NAPA_FORCE_INLINE int filled_corner_contact(const uint8_t *L, int w, int 
            L[(size_t)(y + 1) * w + bx + db] <= limit;
 }
 
-/* Both paths must omit the same edges, including across regional noise-floor boundaries. */
-static NAPA_NOINLINE int separate_corner_contact(const napa_detector *det, int lw, int lh, int factor, int a, int b) {
-    const napa_run *R = det->runs;
-    if (R[a].x1 <= R[a].x0 || R[b].x1 <= R[b].x0) return 0;
-    int left = R[a].x1 + 1 == R[b].x0;
-    int x = left ? R[b].x0 - 1 : R[b].x1;
-    int y = R[b].y, floor = det->floors[0];
+/* The corner rule at the diagonal between columns x and x + 1 of rows y - 1 and y, upper-left and
+ * lower-right dark when left is set (else upper-right and lower-left), against the larger noise floor
+ * of the regions around it. Both runs must already span two samples. */
+static NAPA_FORCE_INLINE int corner_contact_at(const napa_detector *det, int lw, int lh, int factor, int x, int y,
+                                               int left) {
+    int floor = det->floors[0];
     if (!det->floor_uniform) {
         int cols = det->floor_cols, rows = det->floor_rows;
         int x0 = (x / TILE) * TILE * factor / NAPA_REGION;
@@ -1234,6 +1516,27 @@ static NAPA_NOINLINE int separate_corner_contact(const napa_detector *det, int l
         if (dn[x1] > floor) floor = dn[x1];
     }
     return filled_corner_contact(det->level_view ? det->level_view : det->level, lw, lh, y, x, left, floor);
+}
+
+/* Both paths must omit the same edges, including across regional noise-floor boundaries. Run a lies in
+ * the row above run b, and they touch only diagonally. */
+static NAPA_NOINLINE int separate_corner_contact(const napa_detector *det, int lw, int lh, int factor, int a, int b) {
+    const napa_run *R = det->runs;
+    if (R[a].x1 <= R[a].x0 || R[b].x1 <= R[b].x0) return 0;
+    int left = R[a].x1 + 1 == R[b].x0;
+    return corner_contact_at(det, lw, lh, factor, left ? R[b].x0 - 1 : R[b].x1, R[b].y, left);
+}
+
+static NAPA_FORCE_INLINE int bit_at(const uint64_t *bits, int x) { return (int)(bits[x >> 6] >> (x & 63)) & 1; }
+
+/* separate_corner_contact for dark bit rows: upper and lower (row y) touch only diagonally between
+ * columns x and x + 1, upper dark at x when left is set. The run ending at x and the run starting at
+ * x + 1 must each span two samples. */
+static NAPA_NOINLINE int separate_bit_contact(const napa_detector *det, int lw, int lh, int factor,
+                                              const uint64_t *upper, const uint64_t *lower, int x, int y, int left) {
+    const uint64_t *ends = left ? upper : lower, *starts = left ? lower : upper;
+    if (x < 1 || x + 2 >= lw || !bit_at(ends, x - 1) || !bit_at(starts, x + 2)) return 0;
+    return corner_contact_at(det, lw, lh, factor, x, y, left);
 }
 
 /* Join adjacent rows for optional splitting. Supported filled-corner contacts stay separate, as in
@@ -1264,27 +1567,18 @@ static NAPA_FORCE_INLINE void join_rows(napa_detector *det, const napa_run *R, i
             /* A run of this row that touches nothing yet is a singleton (runs of one row
              * join only through the row above): hang it under a's parent, which still
              * precedes it. Runs whose parents match are already joined. */
-            if (P[b] == b) {
-                P[b] = P[a];
-            } else if (P[b] != P[a]) {
-                int32_t ra = find_root(P, a), rb = find_root(P, b);
-                if (ra < rb) P[rb] = ra;
-                else if (rb < ra) P[ra] = rb;
-            }
+            if (P[b] == b) P[b] = P[a];
+            else if (P[b] != P[a]) union_roots(P, a, b);
             if (R[a].x1 < R[b].x1) a++;
             else b++;
         }
     }
 }
 
-/* Threshold the level and label its dark samples as runs joined by union-find. Adjacent-row runs
- * connect within one sample, except supported filled-corner contacts in ordinary detection. Returns
- * the run count, or -1 when out of memory. Optional splitting defers the remaining corner contacts
- * (split 1), or also one-sample necks (split 2), in det->diag / det->neck for split_pieces. */
 /* Exact 4x4 tile extrema, with short bands and the final partial tile repeated at their edges.
  * Adapted with sampling/median and edge indexing from PR23,
  * 7735f7a2e41b40584cd48a7f07c0bd947c4993c2 (same project/license).
- * Single-row runs, split-piece ordering and restart bookkeeping remain the existing representation. */
+ * Split-piece ordering and restart bookkeeping keep the existing representation. */
 static void tile_row_minmax(const uint8_t *L, size_t lstride, int lw, int lh, int ty, int tw, uint8_t *vmin,
                             uint8_t *vmax, uint8_t *tmin, uint8_t *tmax) {
     int y0 = ty * TILE;
@@ -1314,6 +1608,24 @@ static void tile_row_minmax(const uint8_t *L, size_t lstride, int lw, int lh, in
                          _mm_packus_epi16(_mm_packs_epi32(lo[0], lo[1]), _mm_packs_epi32(lo[2], lo[3])));
         _mm_storeu_si128((__m128i *)(tmax + x / 4),
                          _mm_packus_epi16(_mm_packs_epi32(hi[0], hi[1]), _mm_packs_epi32(hi[2], hi[3])));
+    }
+    if (x >= lw) return;
+#elif defined(__aarch64__) && defined(__ARM_NEON) && !defined(NAPA_NO_SIMD)
+    /* Whole 64-sample blocks: each sample's min and max over the band's rows (a short band repeats
+     * its first row), then three pairwise min/max steps leave each 4-sample tile in one byte, in order. */
+    const uint8_t *row[TILE];
+    for (int k = 0; k < TILE; k++) row[k] = L + (size_t)(y0 + (y0 + k < y1 ? k : 0)) * lstride;
+    for (; x + 64 <= lw; x += 64) {
+        uint8x16_t mn[4], mx[4];
+        for (int c = 0; c < 4; c++) {
+            const int at = x + 16 * c;
+            uint8x16_t a = vld1q_u8(row[0] + at), b = vld1q_u8(row[1] + at);
+            uint8x16_t d = vld1q_u8(row[2] + at), e = vld1q_u8(row[3] + at);
+            mn[c] = vminq_u8(vminq_u8(a, b), vminq_u8(d, e));
+            mx[c] = vmaxq_u8(vmaxq_u8(a, b), vmaxq_u8(d, e));
+        }
+        vst1q_u8(tmin + x / 4, vpminq_u8(vpminq_u8(mn[0], mn[1]), vpminq_u8(mn[2], mn[3])));
+        vst1q_u8(tmax + x / 4, vpmaxq_u8(vpmaxq_u8(mx[0], mx[1]), vpmaxq_u8(mx[2], mx[3])));
     }
     if (x >= lw) return;
 #endif
@@ -1359,11 +1671,39 @@ static void min3_max3(uint8_t *NAPA_RESTRICT lo, uint8_t *NAPA_RESTRICT hi, cons
     }
 }
 
+/* A population count for the labelling loops, which are compiled twice on x86: hw is a constant 1 in the copy
+ * built for the POPCNT instruction (threshold_index_popcnt) and 0 elsewhere. */
 #ifdef NAPA_SSSE3_DISPATCH
 #define INDEX_POPCOUNT(hw, x) ((hw) ? __builtin_popcountll(x) : napa_popcount64(x))
 #else
-#define INDEX_POPCOUNT(hw, x) napa_popcount64(x)
+#define INDEX_POPCOUNT(hw, x) ((void)(hw), napa_popcount64(x))
 #endif
+/* Words of a row's edge index (index_edges): one per 64 samples, the word holding sample lw + 1, and a spare. */
+enum { INDEX_WORDS = (NAPA_MAX_SIDE + 63) / 64 + 2 };
+
+/* Edges of the runs of a | b: starts and the samples after ends, alternating. prefix counts them
+ * through each word; word `words` is empty, for edges_before. */
+static NAPA_FORCE_INLINE void index_edges(const uint64_t *a, const uint64_t *b, int words, uint64_t *mask,
+                                          int32_t *prefix, const int hw) {
+    uint64_t carry = 0;
+    int count = 0;
+    for (int w = 0; w < words; w++) {
+        uint64_t x = a[w] | b[w], e = x ^ ((x << 1) | carry);
+        carry = x >> 63;
+        mask[w] = e;
+        count += INDEX_POPCOUNT(hw, e);
+        prefix[w] = count;
+    }
+    mask[words] = 0;
+    prefix[words] = count;
+}
+
+/* Edges before q, for 0 <= q <= lw + 1. Halved and rounded down: runs ending before q - 1; rounded
+ * up: runs starting before q. */
+static NAPA_FORCE_INLINE int edges_before(const uint64_t *mask, const int32_t *prefix, int q, const int hw) {
+    return prefix[q >> 6] - INDEX_POPCOUNT(hw, mask[q >> 6] >> (q & 63));
+}
+
 /* Label one complete run using the row's original ranks and union order.
  * Its complete record is already stored when contact checks inspect it.
  * Edges alternate start/end+1. Inclusive word counts minus the suffix from q give
@@ -1375,23 +1715,15 @@ static NAPA_FORCE_INLINE void label_indexed_run(napa_detector *det, int lw, int 
                                   int b, int prev_start, const uint64_t *mask, const int32_t *prefix, int shadow, int hw) {
     napa_run *R = det->runs;
     int32_t *P = det->parent;
-    (void)hw;
-    int q = R[b].x0;
-    int f = prev_start + ((prefix[q >> 6] - INDEX_POPCOUNT(hw, mask[q >> 6] >> (q & 63))) >> 1);
-    q = R[b].x1 + 2;
-    int g = prev_start + ((prefix[q >> 6] - INDEX_POPCOUNT(hw, mask[q >> 6] >> (q & 63)) + 1) >> 1);
+    int f = prev_start + (edges_before(mask, prefix, R[b].x0, hw) >> 1);
+    int g = prev_start + ((edges_before(mask, prefix, R[b].x1 + 2, hw) + 1) >> 1);
     if (!shadow && f < g) {
         if (R[f].x1 + 1 == R[b].x0 && separate_corner_contact(det, lw, lh, factor, f, b)) f++;
         if (f < g && R[g - 1].x0 == R[b].x1 + 1 && separate_corner_contact(det, lw, lh, factor, g - 1, b)) g--;
     }
     P[b] = f < g ? P[f] : b;
-    for (int a = f + 1; a < g; a++) {
-        if (P[b] != P[a]) {
-            int32_t ra = find_root(P, a), rb = find_root(P, b);
-            if (ra < rb) P[rb] = ra;
-            else if (rb < ra) P[ra] = rb;
-        }
-    }
+    for (int a = f + 1; a < g; a++)
+        if (P[b] != P[a]) union_roots(P, a, b);
 }
 
 static NAPA_FORCE_INLINE int extract_labeled_runs(napa_detector *det, const uint64_t *bits,
@@ -1421,49 +1753,350 @@ static NAPA_FORCE_INLINE int extract_labeled_runs(napa_detector *det, const uint
     return n;
 }
 
-static NAPA_FORCE_INLINE int threshold_index_impl(napa_detector *det, int lw, int lh, int factor, const int split, int shadow, const int hw) {
+/* Row y's dark bits. Borrowed input need not have the owned level's 64 padding bytes: for narrow
+ * images, rounded word loads can cross the array before the final row. */
+static NAPA_FORCE_INLINE void level_row_bits(const napa_detector *det, const uint8_t *L, int lw, int lh, int y,
+                                             const uint8_t *trow, uint64_t *bits) {
+    if (det->level_view && (size_t)(lh - y) * lw < ((size_t)lw + 63) / 64 * 64) {
+        int whole = lw & ~63;
+        uint8_t tail[64] = {0};
+        memcpy(tail, L + (size_t)y * lw + whole, (size_t)(lw - whole));
+        dark_bits(L + (size_t)y * lw, trow, whole, bits);
+        dark_bits(tail, trow + whole, 64, bits + whole / 64);
+    } else dark_bits(L + (size_t)y * lw, trow, lw, bits);
+}
+
+/* ---- Row-pair labelling: ordinary detection (no split, no shadow).
+ * Labelling runs of each row pair's union follows PR23's row-pair scan,
+ * 7735f7a2e41b40584cd48a7f07c0bd947c4993c2 (same project/license), extended to keep corner contacts exact.
+ *
+ * Rows go in pairs from each tile row's first row, so a pair's top row y is even; a level's odd last row
+ * is a pair alone. A run of the pair's union (samples where either row is dark) is one 8-connected
+ * piece of the two rows, unless the rows meet inside it only diagonally at a corner that single-row
+ * labelling keeps apart (separate_corner_contact). A pair without such a corner is labelled as its
+ * union runs (napa_run.rows 1, 2 or 3), about half as many union-find nodes as single rows. A pair
+ * with one (a few percent of pairs) keeps its single-row runs, top row first (rows 1, y their own
+ * row), joined exactly as single-row labelling joins them. Either way the runs the next pair can
+ * touch (all union runs, or the bottom row's runs) are disjoint and separated by columns where the
+ * pair's bottom row is empty, which makes the window test in join_above exact.
+ *
+ * Runs are stored in the order single-row labelling first meets them, so union by smaller index keeps
+ * each blob's root, and the blobs' numbering, as single-row labelling has them. napa_detect's resolve
+ * and extremes passes (comp_add_pair_run) read the rows' extents and counts from det->level_bits. */
+
+/* Append the runs whose edges index_edges found, as row y's runs (rows 1). */
+static NAPA_FORCE_INLINE int runs_from_edges(const uint64_t *mask, int lw, int words, int y, napa_run *R, int n) {
+    int open = 0, x0 = 0;
+    for (int w = 0; w < words; w++) {
+        for (uint64_t e = mask[w]; e; e &= e - 1) {
+            int x = 64 * w + napa_ctz64(e);
+            if (!open) {
+                x0 = x, open = 1;
+            } else {
+                R[n].x0 = (uint16_t)x0, R[n].x1 = (uint16_t)(x - 1), R[n].y = (uint16_t)y, R[n].rows = 1;
+                n++, open = 0;
+            }
+        }
+    }
+    if (open) {
+        R[n].x0 = (uint16_t)x0, R[n].x1 = (uint16_t)(lw - 1), R[n].y = (uint16_t)y, R[n].rows = 1;
+        n++;
+    }
+    return n;
+}
+
+/* Whether bits lo..hi (lo <= hi) hold a set bit. */
+static NAPA_FORCE_INLINE int bits_any(const uint64_t *b, int lo, int hi) {
+    int w = lo >> 6, last = hi >> 6;
+    uint64_t v = b[w] & (~(uint64_t)0 << (lo & 63));
+    while (w < last && !v) v = b[++w];
+    if (w == last) v &= ~(uint64_t)0 >> (63 - (hi & 63));
+    return v != 0;
+}
+
+/* Word w of the windows where rows up (y - 1) and dn (y) touch as single-row labelling joins them;
+ * carry holds the rows' bits 63 of word w - 1 (bit 0 up, bit 1 dn). Window x holds samples x - 1 and
+ * x of both rows, so at most one run of each row there, and the rows touch through it when both are
+ * dark in it. A window dark only at opposite corners holds a diagonal contact, which the corner rule
+ * may keep apart; any other holds an overlap. */
+static NAPA_FORCE_INLINE uint64_t boundary_word(const napa_detector *det, int lw, int lh, int factor,
+                                                const uint64_t *up, const uint64_t *dn, int w, int y, int *carry) {
+    const uint64_t u = up[w], d = dn[w], ul = u << 1 | (uint64_t)(*carry & 1), dl = d << 1 | (uint64_t)(*carry >> 1);
+    *carry = (int)(u >> 63) | (int)(d >> 63) << 1;
+    uint64_t win = (u | ul) & (d | dl);
+    for (uint64_t diag = win & ((ul & ~u & d & ~dl) | (dl & ~d & u & ~ul)); diag; diag &= diag - 1) {
+        const int x = 64 * w + napa_ctz64(diag);
+        if (separate_bit_contact(det, lw, lh, factor, up, dn, x - 1, y, (int)(ul >> (x & 63)) & 1))
+            win &= ~((uint64_t)1 << (x & 63));
+    }
+    return win;
+}
+
+/* All the boundary windows. Window lw (in the padding word) is left empty: it holds only column
+ * lw - 1, which window lw - 1 holds too. */
+static NAPA_FORCE_INLINE void boundary_windows(const napa_detector *det, int lw, int lh, int factor,
+                                               const uint64_t *up, const uint64_t *dn, int words, int y,
+                                               uint64_t *junction) {
+    int carry = 0;
+    for (int w = 0; w < words; w++) junction[w] = boundary_word(det, lw, lh, factor, up, dn, w, y, &carry);
+    junction[words] = 0;
+}
+
+/* One pass over a pair's words (has_bottom: whether row y + 1 is in it): its union's run edges, as
+ * index_edges; at each run's end + 1, whether the run holds top-row (ft) or bottom-row (fb) samples (a
+ * row's dark bits lie inside the union's runs, so adding them to the union carries out of exactly the
+ * runs holding one); and, given the row above (up), the boundary windows, as boundary_windows. Returns
+ * 0 when the pair's rows meet only diagonally somewhere single-row labelling keeps apart: the pair then
+ * keeps single rows, and the windows are incomplete. */
+static NAPA_FORCE_INLINE int index_pair(const napa_detector *det, int lw, int lh, int factor, const uint64_t *up,
+                                        const uint64_t *top, const uint64_t *bot, int has_bottom, int words, int y,
+                                        uint64_t *mask, int32_t *prefix, uint64_t *ft, uint64_t *fb,
+                                        uint64_t *junction, const int hw) {
+    uint64_t carry = 0, ct = 0, cb = 0;
+    int count = 0, boundary = 0;
+    for (int w = 0; w < words; w++) {
+        const uint64_t t = top[w], b = has_bottom ? bot[w] : 0, x = t | b;
+        /* Bit x: the rows meet only diagonally between columns x and x + 1 (a row's word past its end
+         * is the zero padding word). */
+        const uint64_t tn = t >> 1 | top[w + 1] << 63, bn = has_bottom ? b >> 1 | bot[w + 1] << 63 : 0;
+        for (uint64_t d = (t & ~b & bn & ~tn) | (b & ~t & tn & ~bn); d; d &= d - 1) {
+            const int at = 64 * w + napa_ctz64(d);
+            if (separate_bit_contact(det, lw, lh, factor, top, bot, at, y + 1, (int)(t >> (at & 63)) & 1)) return 0;
+        }
+        const uint64_t e = x ^ (x << 1 | carry);
+        carry = x >> 63;
+        mask[w] = e;
+        count += INDEX_POPCOUNT(hw, e);
+        prefix[w] = count;
+        uint64_t sum = x + t, v = sum + ct;
+        ct = (uint64_t)((sum < x) | (v < sum));
+        ft[w] = v & ~x;
+        sum = x + b, v = sum + cb;
+        cb = (uint64_t)((sum < x) | (v < sum));
+        fb[w] = v & ~x;
+        if (up) junction[w] = boundary_word(det, lw, lh, factor, up, top, w, y, &boundary);
+    }
+    mask[words] = 0, prefix[words] = count;
+    ft[words] = ct, fb[words] = cb;
+    if (up) junction[words] = 0;
+    return 1;
+}
+
+/* The positions of mask's set bits (index_edges' edges), in order, without a branch per edge: eight
+ * at a time, bit 63 stopping count-trailing-zeros on an exhausted word (the spare entries it writes
+ * past the edges are overwritten or unused). Returns how many. */
+static NAPA_FORCE_INLINE int decode_edges(const uint64_t *mask, int words, uint16_t *edge, const int hw) {
+    const uint64_t stop = (uint64_t)1 << 63;
+    int ne = 0;
+    for (int w = 0; w < words; w++) {
+        uint64_t e = mask[w];
+        if (!e) continue;
+        uint16_t *o = edge + ne;
+        ne += INDEX_POPCOUNT(hw, e);
+        do {
+            for (int k = 0; k < 8; k++) {
+                o[k] = (uint16_t)(64 * w + napa_ctz64(e | stop));
+                e &= e - 1;
+            }
+            o += 8;
+        } while (e);
+    }
+    return ne;
+}
+
+/* Join run c (dark in this pair's top row) to the runs of the pair above it touches. That pair's
+ * touchable runs, left to right, are prank[0...], and their edges pmask / pprefix. Windows
+ * max(x0)..min(x1) + 1 of two such runs belong to those two runs, because their rows are empty beside
+ * them. A run touches nothing earlier in its own pair, so the first touching run's parent, which
+ * precedes it, takes it. */
+static NAPA_FORCE_INLINE void join_above(napa_detector *det, int c, const int32_t *prank, const uint64_t *pmask,
+                                         const int32_t *pprefix, const uint64_t *junction, const int hw) {
+    napa_run *R = det->runs;
+    int32_t *P = det->parent;
+    const int f = edges_before(pmask, pprefix, R[c].x0, hw) >> 1;
+    const int g = (edges_before(pmask, pprefix, R[c].x1 + 2, hw) + 1) >> 1;
+    for (int k = f; k < g; k++) {
+        const int a = prank[k];
+        int lo = R[a].x0 > R[c].x0 ? R[a].x0 : R[c].x0;
+        int hi = (R[a].x1 < R[c].x1 ? R[a].x1 : R[c].x1) + 1;
+        if (!bits_any(junction, lo, hi)) continue;
+        if (P[c] == c) P[c] = P[a];
+        else if (P[c] != P[a]) union_roots(P, a, c);
+    }
+}
+
+/* Label row pair y (has_bottom: whether row y + 1 is in it), whose dark bits are in det->level_bits, against
+ * the pair above's touchable runs (prank, edges pmask / pprefix; prank NULL when the rows are not
+ * adjacent). Runs are stored in the order single-row labelling meets them first: those dark in the top
+ * row, left to right, then the rest, left to right. Union by smaller index then keeps each blob's root
+ * at its first sample in raster order. This pair's touchable runs go to rank, left to right, and their
+ * edges to mask / prefix. The scratch rows hold the union's run flags and a single-row pair's top-row
+ * edges; det->scratch.row_bits holds the boundary windows. */
+static NAPA_FORCE_INLINE int label_row_pair(napa_detector *det, int lw, int lh, int factor, int y, int has_bottom, int n,
+                                            const int32_t *prank, const uint64_t *pmask, const int32_t *pprefix,
+                                            int32_t *rank, uint64_t *mask, int32_t *prefix, uint64_t *scratch[3],
+                                            int32_t *tprefix, const int hw) {
+    napa_run *R = det->runs;
+    int32_t *P = det->parent;
+    const int words = (lw + 63) / 64, stride = words + 1, start = n;
+    const uint64_t *top = det->level_bits + (size_t)y * stride, *bot = top + stride;
+    const uint64_t *up = prank ? top - stride : NULL;
+    uint64_t *junction = det->scratch.row_bits, *ft = scratch[0], *fb = scratch[1];
+    if (index_pair(det, lw, lh, factor, up, top, bot, has_bottom, words, y, mask, prefix, ft, fb, junction, hw)) {
+        uint16_t *edge = det->scratch.row_edges;
+        int32_t *later = det->scratch.pair_rank + 2 * (size_t)(lw / 2 + 2);
+        int ne = decode_edges(mask, words, edge, hw), nlater = 0;
+        if (ne & 1) edge[ne++] = (uint16_t)lw; /* a run still open at the end of a whole last word */
+        for (int k = 0; k < ne; k += 2) {
+            const int x0 = edge[k], end = edge[k + 1];
+            if (!((ft[end >> 6] >> (end & 63)) & 1)) {
+                /* Dark in the bottom row only: stored after the rest. Its edges move down to entry
+                 * 2 * nlater, already read. */
+                edge[2 * nlater] = (uint16_t)x0, edge[2 * nlater + 1] = (uint16_t)end;
+                later[nlater++] = k >> 1;
+                continue;
+            }
+            R[n].x0 = (uint16_t)x0, R[n].x1 = (uint16_t)(end - 1), R[n].y = (uint16_t)y;
+            R[n].rows = (uint16_t)(1 | ((fb[end >> 6] >> (end & 63)) & 1) << 1);
+            P[n] = n;
+            rank[k >> 1] = n;
+            if (prank) join_above(det, n, prank, pmask, pprefix, junction, hw);
+            n++;
+        }
+        for (int j = 0; j < nlater; j++, n++) {
+            R[n].x0 = edge[2 * j], R[n].x1 = (uint16_t)(edge[2 * j + 1] - 1), R[n].y = (uint16_t)y, R[n].rows = 2;
+            P[n] = n;
+            rank[later[j]] = n;
+        }
+    } else {
+        uint64_t *tmask = scratch[2];
+        if (prank) boundary_windows(det, lw, lh, factor, up, top, words, y, junction);
+        index_edges(top, top, words, tmask, tprefix, hw);
+        n = runs_from_edges(tmask, lw, words, y, R, n);
+        for (int c = start; c < n; c++) {
+            P[c] = c;
+            if (prank) join_above(det, c, prank, pmask, pprefix, junction, hw);
+        }
+        const int mid = n;
+        index_edges(bot, bot, words, mask, prefix, hw);
+        n = runs_from_edges(mask, lw, words, y + 1, R, n);
+        for (int b = mid; b < n; b++) {
+            label_indexed_run(det, lw, lh, factor, b, start, tmask, tprefix, 0, hw);
+            rank[b - mid] = b;
+        }
+    }
+    return n;
+}
+
+/* Join the first pair of a band (threshold_banded), whose runs are c..end - 1 and whose top row y is even, to
+ * the pair above it (top row y - 2), the last of the band before, whose runs end at c. That pair's touchable
+ * runs and their edges are rebuilt from the dark bits, and each run of the band's first pair that is dark in
+ * row y joins them as label_row_pair would have: through join_above, with the same windows. */
+static void join_band_pairs(napa_detector *det, int lw, int lh, int factor, int y, int c, int end) {
+    uint64_t mask[INDEX_WORDS];
+    int32_t prefix[INDEX_WORDS];
+    const napa_run *R = det->runs;
+    const int words = (lw + 63) / 64, stride = words + 1;
+    int above = c;
+    while (above > 0 && R[above - 1].y >= y - 2) above--;
+    if (above == c || c == end || R[c].y != y || !(R[c].rows & 1)) return; /* nothing labelled to join on one side */
+    const uint64_t *top = det->level_bits + (size_t)(y - 2) * stride, *bot = top + stride;
+    /* A pair kept as single rows stores its bottom row's runs last; they are its touchable runs. */
+    const int single = R[c - 1].y == y - 1;
+    int32_t *prank = det->scratch.pair_rank;
+    index_edges(single ? bot : top, bot, words, mask, prefix, 0);
+    for (int a = above; a < c; a++)
+        if (!single || R[a].y == y - 1) prank[edges_before(mask, prefix, R[a].x0, 0) >> 1] = a;
+    boundary_windows(det, lw, lh, factor, bot, bot + stride, words, y, det->scratch.row_bits);
+    for (; c < end && R[c].y == y && (R[c].rows & 1); c++) join_above(det, c, prank, mask, prefix, det->scratch.row_bits, 0);
+}
+
+/* Join the first row y of a band (threshold_banded) of shadow labelling, whose runs are c..end - 1, to row
+ * y - 1, the last of the band before, whose runs end at c, as label_indexed_run would have: for each run, left
+ * is the first run above whose end reaches its left neighbour, right the first that starts past its right
+ * one. Shadow labelling keeps corner contacts, so every run in left..right - 1 joins. */
+static void join_band_rows(napa_detector *det, int y, int c, int end) {
+    const napa_run *R = det->runs;
+    int32_t *P = det->parent;
+    const int first = c; /* the band's first run: row y - 1's runs end here */
+    int above = first;
+    while (above > 0 && R[above - 1].y == y - 1) above--;
+    if (above == first) return; /* nothing labelled in row y - 1 */
+    int left = above, right = above;
+    for (; c < end && R[c].y == y; c++) {
+        while (left < first && R[left].x1 + 1 < R[c].x0) left++;
+        if (right < left) right = left;
+        while (right < first && R[right].x0 <= R[c].x1 + 1) right++;
+        for (int a = left; a < right; a++) union_roots(P, a, c);
+    }
+}
+
+/* Threshold the level and label its dark samples as runs joined by union-find. Adjacent-row runs
+ * connect within one sample, except supported filled-corner contacts in ordinary detection. Returns
+ * the run count, or -1 when out of memory. Optional splitting defers the remaining corner contacts
+ * (split 1), or also one-sample necks (split 2), in det->diag / det->neck for split_pieces. */
+/* Works over tile rows [ty0, ty1) of the level. Tile extrema come from level_extrema_in when saved; otherwise they are
+ * computed here one tile row ahead, into det->scratch.tile_min and tile_max, which hold tile rows from `base`
+ * on (a band keeps only its own rows and the one on each side). */
+static NAPA_FORCE_INLINE int threshold_index_impl(napa_detector *det, int lw, int lh, int factor, const int split, int shadow, const int hw,
+                                                  int ty0, int ty1, int base) {
     const uint8_t *L = det->level_view ? det->level_view : det->level;
     napa_run *R = det->runs;
     int32_t *P = det->parent;
-    /* Image dimensions are validated at <= 30000; q may reach lw + 1. */
-    enum { INDEX_WORDS = (30000 + 63) / 64 + 2 };
-    uint64_t masks[2][INDEX_WORDS];
-    int32_t prefixes[2][INDEX_WORDS];
-    (void)hw; /* portable builds use the generic population count */
+    /* Run edges of the previous and current row (row pairs: also a fallback pair's top row). */
+    uint64_t masks[3][INDEX_WORDS];
+    int32_t prefixes[3][INDEX_WORDS];
+    uint64_t flags[2][INDEX_WORDS]; /* row pairs: which rows each union run holds */
+    uint64_t *pair_scratch[3] = {flags[0], flags[1], masks[2]};
+    const int paired = !split && !shadow;
     int n = 0, prev_y = -2, prev_start = 0, prev_end = 0;
     det->diag_n = det->neck_n = 0;
     int tw = (lw + TILE - 1) / TILE;
     int th = (lh + TILE - 1) / TILE;
-    uint8_t *vmin = det->row_min, *vmax = det->row_max, *trow = det->row_thr;
+    uint8_t *vmin = det->scratch.row_min, *vmax = det->scratch.row_max, *trow = det->scratch.row_thr;
 
     /* 3x3 tile neighbourhood, separably and without branches so the loops vectorise: vertically
      * into a row padded by one tile at each end (repeating the edge tile), then horizontally. */
-    uint8_t *nlo = det->nb_lo, *nhi = det->nb_hi, *tt = det->nb_t, *fl = det->nb_f;
+    uint8_t *nlo = det->scratch.nb_lo, *nhi = det->scratch.nb_hi, *tt = det->scratch.nb_t, *fl = det->scratch.nb_f;
     const uint8_t contrast_min = det->level_contrast_min;
     /* A tile spans 4 * factor samples of the grid where the floors were measured. */
     int rows = det->floor_rows, cols = det->floor_cols;
     if (det->floor_uniform) memset(fl, det->floors[0], (size_t)tw);
+    int floor_row = -1;
     const uint8_t *saved = det->level_extrema_in;
     const size_t tile_count = (size_t)tw * th;
-    const uint8_t *tile_min = saved ? saved : det->tile_min;
-    const uint8_t *tile_max = saved ? saved + tile_count : det->tile_max;
-    if (!saved) tile_row_minmax(L, lw, lw, lh, 0, tw, vmin, vmax, det->tile_min, det->tile_max);
-    for (int ty = 0; ty < th; ty++) {
+    if (saved) base = 0;
+    const uint8_t *tile_min = saved ? saved : det->scratch.tile_min;
+    const uint8_t *tile_max = saved ? saved + tile_count : det->scratch.tile_max;
+    if (!saved)
+        for (int r = ty0 > 0 ? ty0 - 1 : 0; r <= ty0 && r < th; r++)
+            tile_row_minmax(L, lw, lw, lh, r, tw, vmin, vmax, det->scratch.tile_min + (size_t)(r - base) * tw,
+                            det->scratch.tile_max + (size_t)(r - base) * tw);
+    for (int ty = ty0; ty < ty1; ty++) {
         if (!saved && ty + 1 < th)
             tile_row_minmax(L, lw, lw, lh, ty + 1, tw, vmin, vmax,
-                            det->tile_min + (size_t)(ty + 1) * tw, det->tile_max + (size_t)(ty + 1) * tw);
+                            det->scratch.tile_min + (size_t)(ty + 1 - base) * tw, det->scratch.tile_max + (size_t)(ty + 1 - base) * tw);
         int ry = ty * TILE * factor / NAPA_REGION;
-        const uint8_t *frow = det->floors + (size_t)(ry < rows ? ry : rows - 1) * cols;
-        for (int tx = 0; tx < tw && !det->floor_uniform; tx++) {
-            int rx = tx * TILE * factor / NAPA_REGION;
-            fl[tx] = frow[rx < cols ? rx : cols - 1];
+        ry = ry < rows ? ry : rows - 1;
+        if (!det->floor_uniform && ry != floor_row) {
+            /* Each floor region covers a run of whole tiles: fill the row's floors run by run,
+             * and only when the tile row enters a new region row. */
+            const uint8_t *frow = det->floors + (size_t)ry * cols;
+            floor_row = ry;
+            for (int tx = 0; tx < tw;) {
+                int rx = tx * TILE * factor / NAPA_REGION;
+                int end = ((rx + 1) * NAPA_REGION + TILE * factor - 1) / (TILE * factor);
+                if (end > tw || rx >= cols - 1) end = tw;
+                memset(fl + tx, frow[rx < cols ? rx : cols - 1], (size_t)(end - tx));
+                tx = end;
+            }
         }
-        const uint8_t *lo_up = tile_min + (size_t)(ty > 0 ? ty - 1 : ty) * tw;
-        const uint8_t *lo_mid = tile_min + (size_t)ty * tw;
-        const uint8_t *lo_dn = tile_min + (size_t)(ty + 1 < th ? ty + 1 : ty) * tw;
-        const uint8_t *hi_up = tile_max + (size_t)(ty > 0 ? ty - 1 : ty) * tw;
-        const uint8_t *hi_mid = tile_max + (size_t)ty * tw;
-        const uint8_t *hi_dn = tile_max + (size_t)(ty + 1 < th ? ty + 1 : ty) * tw;
+        const uint8_t *lo_up = tile_min + (size_t)((ty > 0 ? ty - 1 : ty) - base) * tw;
+        const uint8_t *lo_mid = tile_min + (size_t)(ty - base) * tw;
+        const uint8_t *lo_dn = tile_min + (size_t)((ty + 1 < th ? ty + 1 : ty) - base) * tw;
+        const uint8_t *hi_up = tile_max + (size_t)((ty > 0 ? ty - 1 : ty) - base) * tw;
+        const uint8_t *hi_mid = tile_max + (size_t)(ty - base) * tw;
+        const uint8_t *hi_dn = tile_max + (size_t)((ty + 1 < th ? ty + 1 : ty) - base) * tw;
         min3_max3(nlo + 1, nhi + 1, lo_up, lo_mid, lo_dn, hi_up, hi_mid, hi_dn, tw);
         nlo[0] = nlo[1], nhi[0] = nhi[1], nlo[tw + 1] = nlo[tw], nhi[tw + 1] = nhi[tw];
         uint8_t any = 0;
@@ -1481,39 +2114,39 @@ static NAPA_FORCE_INLINE int threshold_index_impl(napa_detector *det, int lw, in
         }
         int y0 = ty * TILE;
         int y1 = y0 + TILE < lh ? y0 + TILE : lh;
-        if (!any) continue; /* no contrast anywhere in this band: no dark samples, no runs */
+        if (!any) continue; /* no contrast anywhere in this tile row: no dark samples, no runs */
         expand4(trow, tt, tw);
         memset(trow + lw, 0, (size_t)(4 * tw + 64 - lw)); /* nothing past the row is dark */
-        uint64_t *bits = det->row_bits;
-        for (int y = y0; y < y1; y++) {
-            if (det->level_view && (size_t)(lh - y) * lw < ((size_t)lw + 63) / 64 * 64) {
-                /* Borrowed input need not have the owned level's 64 padding bytes. For narrow
-                 * images, rounded word loads can cross the array before the final row. */
-                int whole = lw & ~63;
-                uint8_t tail[64] = {0};
-                memcpy(tail, L + (size_t)y * lw + whole, (size_t)(lw - whole));
-                dark_bits(L + (size_t)y * lw, trow, whole, bits);
-                dark_bits(tail, trow + whole, 64, bits + whole / 64);
-            } else dark_bits(L + (size_t)y * lw, trow, lw, bits);
-            if (!split) {
-                uint64_t carry = 0;
-                int count = 0, words = (lw + 63) / 64;
-                for (int w = 0; w < words; w++) {
-                    uint64_t x = bits[w], e = x ^ ((x << 1) | carry);
-                    carry = x >> 63;
-                    masks[y & 1][w] = e;
-                    count += INDEX_POPCOUNT(hw, e);
-                    prefixes[y & 1][w] = count; /* through this word */
+        if (paired) {
+            const int words = (lw + 63) / 64, stride = words + 1;
+            for (int y = y0; y < y1; y += 2) {
+                const int has_bottom = y + 1 < y1, side = (y >> 1) & 1;
+                uint64_t *top = det->level_bits + (size_t)y * stride;
+                level_row_bits(det, L, lw, lh, y, trow, top);
+                top[words] = 0;
+                if (has_bottom) {
+                    level_row_bits(det, L, lw, lh, y + 1, trow, top + stride);
+                    top[stride + words] = 0;
                 }
-                masks[y & 1][words] = 0;
-                prefixes[y & 1][words] = count;
+                int32_t *rank = det->scratch.pair_rank + (size_t)side * (lw / 2 + 2);
+                const int32_t *prank = prev_y == y - 1 ? det->scratch.pair_rank + (size_t)(side ^ 1) * (lw / 2 + 2) : NULL;
+                n = label_row_pair(det, lw, lh, factor, y, has_bottom, n, prank, masks[side ^ 1], prefixes[side ^ 1], rank,
+                                   masks[side], prefixes[side], pair_scratch, prefixes[2], hw);
+                prev_y = y + has_bottom;
             }
+            continue;
+        }
+        uint64_t *bits = det->scratch.row_bits;
+        for (int y = y0; y < y1; y++) {
+            level_row_bits(det, L, lw, lh, y, trow, bits);
+            /* Shadow labelling labels each run as it is emitted, against the row above's edge index; split
+             * labelling stores the rows' runs unlabelled and joins them below (join_rows). */
+            if (!split) index_edges(bits, bits, (lw + 63) / 64, masks[y & 1], prefixes[y & 1], hw);
             int start = n;
             if (!split && prev_y == y - 1 && prev_start < prev_end)
                 n = extract_labeled_runs(det, bits, lw, lh, factor, y, n, prev_start,
                                         masks[(y & 1) ^ 1], prefixes[(y & 1) ^ 1], shadow, hw);
             else n = extract_runs(bits, lw, y, R, n);
-            /* Adjacent ordinary runs were labeled during emission; other paths keep their setup. */
             if (split || prev_y != y - 1 || prev_start == prev_end)
                 for (int i = start; i < n; i++) P[i] = i;
             if (prev_y == y - 1 && split) {
@@ -1544,28 +2177,156 @@ static NAPA_FORCE_INLINE int threshold_index_impl(napa_detector *det, int lw, in
         }
     }
     if (det->level_extrema_out) {
-        memcpy(det->level_extrema_out, det->tile_min, tile_count);
-        memcpy(det->level_extrema_out + tile_count, det->tile_max, tile_count);
+        memcpy(det->level_extrema_out, det->scratch.tile_min, tile_count);
+        memcpy(det->level_extrema_out + tile_count, det->scratch.tile_max, tile_count);
     }
     return n;
 }
-static int threshold_index_generic(napa_detector *det, int lw, int lh, int factor, int split, int shadow) {
+static int threshold_index_generic(napa_detector *det, int lw, int lh, int factor, int split, int shadow, int ty0, int ty1, int base) {
     /* Keep the common ordinary loop free of recovery-mode branches. */
-    if (!split && !shadow) return threshold_index_impl(det, lw, lh, factor, 0, 0, 0);
-    return threshold_index_impl(det, lw, lh, factor, split, shadow, 0);
+    if (!split && !shadow) return threshold_index_impl(det, lw, lh, factor, 0, 0, 0, ty0, ty1, base);
+    return threshold_index_impl(det, lw, lh, factor, split, shadow, 0, ty0, ty1, base);
 }
 #ifdef NAPA_SSSE3_DISPATCH
-__attribute__((target("popcnt"))) static int threshold_index_popcnt(napa_detector *det, int lw, int lh, int factor, int split, int shadow) {
+__attribute__((target("popcnt"))) static int threshold_index_popcnt(napa_detector *det, int lw, int lh, int factor, int split, int shadow, int ty0, int ty1, int base) {
     /* Keep the common ordinary loop free of recovery-mode branches. */
-    if (!split && !shadow) return threshold_index_impl(det, lw, lh, factor, 0, 0, 1);
-    return threshold_index_impl(det, lw, lh, factor, split, shadow, 1);
+    if (!split && !shadow) return threshold_index_impl(det, lw, lh, factor, 0, 0, 1, ty0, ty1, base);
+    return threshold_index_impl(det, lw, lh, factor, split, shadow, 1, ty0, ty1, base);
 }
 #endif
+static int threshold_rows(napa_detector *det, int lw, int lh, int factor, int split, int shadow, int ty0, int ty1, int base) {
+#ifdef NAPA_SSSE3_DISPATCH
+    if (__builtin_cpu_supports("popcnt")) return threshold_index_popcnt(det, lw, lh, factor, split, shadow, ty0, ty1, base);
+#endif
+    return threshold_index_generic(det, lw, lh, factor, split, shadow, ty0, ty1, base);
+}
+
+/* ---------------------------------------------------------------- banded labelling */
+
+/* Banded labelling (napa_set_threads). The level's tile rows are cut into contiguous bands; each band is
+ * thresholded and labelled on its own, into its own runs, exactly as the serial pass would, except that its
+ * first row has no row above. The bands' runs are then concatenated in raster order and each band's first
+ * row is joined to the row above it with the same contact rule. Every union links the larger root to the
+ * smaller, so a component's root is always its first run: the components, their raster order and every
+ * later stage are identical to the serial pass. Only ordinary and shadow labelling are banded; split
+ * labelling defers contacts in order and stays serial. Ordinary labelling's row pairs start on each tile
+ * row's first row, so a band (whole tile rows) starts on a pair, and join_band_pairs joins it to the pair
+ * above; each band writes only its own rows of the shared dark bits (level_bits). */
+
+typedef struct napa_band napa_band;
+struct napa_band {
+    napa_run *runs;
+    int32_t *parent;
+    size_t run_capacity;
+    label_scratch scratch; /* the level's dark bits (level_bits) are shared: each band writes only its own rows */
+    int ty0, ty1, n, offset; /* offset: where the band's runs go in the level's runs */
+};
+
+typedef struct {
+    napa_detector *det;
+    int lw, lh, factor, shadow, tw, th;
+} band_job;
+
+static int band_reserve(napa_band *b, size_t runs, size_t row, size_t tiles) {
+    if (runs > b->run_capacity) {
+        void *p;
+        if ((p = realloc(b->runs, runs * sizeof(napa_run))) == NULL) return -1;
+        b->runs = (napa_run *)p;
+        if ((p = realloc(b->parent, runs * sizeof(int32_t))) == NULL) return -1;
+        b->parent = (int32_t *)p;
+        b->run_capacity = runs;
+    }
+    return scratch_reserve(&b->scratch, row, tiles);
+}
+
+static void band_free(napa_detector *det) {
+    for (int i = 0; i < det->band_count; i++) {
+        napa_band *b = &det->bands[i];
+        free(b->runs), free(b->parent);
+        scratch_free(&b->scratch);
+    }
+    free(det->bands);
+    det->bands = NULL, det->band_count = 0;
+}
+
+/* Band k's runs, labelled within the band, through a shallow copy of the detector that points at the band's
+ * runs and scratch. Bands run at once, so the copy relies on what labelling ordinary and shadow rows touches:
+ * it writes only the runs, the scratch, diag_n and neck_n (all the copy's own), its band's rows of the
+ * shared level_bits and, below, its band's rows of the shared level_extrema_out; it reads the level, floors
+ * and saved extrema, which nothing writes meanwhile. Split
+ * labelling, which grows shared arrays, is never banded, and the copy's pool must not be used. A labelling
+ * change that writes another detector field must give each band its own. */
+static void band_label(void *arg, int k) {
+    band_job *job = (band_job *)arg;
+    napa_band *b = &job->det->bands[k];
+    napa_detector local = *job->det;
+    local.runs = b->runs, local.parent = b->parent;
+    local.scratch = b->scratch;
+    local.level_extrema_out = NULL;
+    const int base = b->ty0 > 0 ? b->ty0 - 1 : 0;
+    b->n = threshold_rows(&local, job->lw, job->lh, job->factor, 0, job->shadow, b->ty0, b->ty1, base);
+    uint8_t *out = job->det->level_extrema_out;
+    if (out != NULL) { /* the band's own rows, saved for a later pass over this level (never set with saved input) */
+        const size_t at = (size_t)b->ty0 * job->tw, count = (size_t)(b->ty1 - b->ty0) * job->tw;
+        const size_t skip = (size_t)(b->ty0 - base) * job->tw, tile_count = (size_t)job->tw * job->th;
+        memcpy(out + at, b->scratch.tile_min + skip, count);
+        memcpy(out + tile_count + at, b->scratch.tile_max + skip, count);
+    }
+}
+
+/* Band k's runs into the level's arrays at its offset, parents shifted with them. */
+static void band_place(void *arg, int k) {
+    band_job *job = (band_job *)arg;
+    napa_detector *det = job->det;
+    const napa_band *b = &det->bands[k];
+    memcpy(det->runs + b->offset, b->runs, (size_t)b->n * sizeof(napa_run));
+    int32_t *P = det->parent + b->offset;
+    for (int i = 0; i < b->n; i++) P[i] = b->parent[i] + b->offset;
+}
+
+static int threshold_banded(napa_detector *det, int lw, int lh, int factor, int shadow) {
+    const int tw = (lw + TILE - 1) / TILE, th = (lh + TILE - 1) / TILE;
+    /* A few bands per thread even out uneven rows; each keeps at least four tile rows. */
+    int bands = det->threads * 3;
+    if (bands > th / 4) bands = th / 4;
+    if (bands < 2) return threshold_rows(det, lw, lh, factor, 0, shadow, 0, th, 0);
+    if (bands > det->band_count) {
+        napa_band *p = (napa_band *)realloc(det->bands, (size_t)bands * sizeof(napa_band));
+        if (p == NULL) return -1;
+        memset(p + det->band_count, 0, (size_t)(bands - det->band_count) * sizeof(napa_band));
+        det->bands = p, det->band_count = bands;
+    }
+    for (int k = 0; k < bands; k++) {
+        napa_band *b = &det->bands[k];
+        b->ty0 = (int)((long long)th * k / bands), b->ty1 = (int)((long long)th * (k + 1) / bands);
+        int rows = (b->ty1 - b->ty0) * TILE;
+        if (band_reserve(b, (size_t)rows * ((size_t)lw / 2 + 1) + 1, (size_t)lw, (size_t)(b->ty1 - b->ty0 + 2) * tw) != 0) return -1;
+    }
+    band_job job = {det, lw, lh, factor, shadow, tw, th};
+    pool_run(det->pool, band_label, &job, bands);
+
+    int n = 0;
+    det->diag_n = det->neck_n = 0;
+    for (int k = 0; k < bands; k++) {
+        if (det->bands[k].n < 0) return -1;
+        det->bands[k].offset = n;
+        n += det->bands[k].n;
+    }
+    pool_run(det->pool, band_place, &job, bands);
+    n = 0;
+    for (int k = 0; k < bands; k++) {
+        const napa_band *b = &det->bands[k];
+        const int y = b->ty0 * TILE;
+        if (k > 0 && !shadow) join_band_pairs(det, lw, lh, factor, y, n, n + b->n);
+        else if (k > 0) join_band_rows(det, y, n, n + b->n);
+        n += b->n;
+    }
+    return n;
+}
+
 static int threshold_level(napa_detector *det, int lw, int lh, int factor, int split, int shadow) {
-#ifdef NAPA_SSSE3_DISPATCH
-    if (__builtin_cpu_supports("popcnt")) return threshold_index_popcnt(det, lw, lh, factor, split, shadow);
-#endif
-    return threshold_index_generic(det, lw, lh, factor, split, shadow);
+    if (!split && pool_for(det, (size_t)lw * lh)) return threshold_banded(det, lw, lh, factor, shadow);
+    return threshold_rows(det, lw, lh, factor, split, shadow, 0, (lh + TILE - 1) / TILE, 0);
 }
 
 
@@ -2095,9 +2856,342 @@ static int fit_side_line_soft(const double px[], const double py[], const double
     return 1;
 }
 
+/* ---------------------------------------------------------------- lens */
+
+/* Brown-Conrady distortion of the normalized point (a, b): the distorted point (x, y) and, with J, its derivatives
+ * (J[0]: dx/da, dx/db; J[1]: dy/da, dy/db). Returns 0 where the rational terms' denominator isn't positive.
+ * The flags only skip work: napa_set_lens sets rational or prism whenever those coefficients aren't all zero,
+ * so the Jacobian's prism terms, left ungated, are zero without them. */
+static NAPA_FORCE_INLINE int bc_distort(const napa_lens *L, double a, double b, double *x, double *y, double J[2][2]) {
+    const double *k = L->k, r2 = a * a + b * b;
+    double num = 1 + r2 * (k[0] + r2 * (k[1] + r2 * k[4])), den = 1, radial = num;
+    if (L->rational) den = 1 + r2 * (k[5] + r2 * (k[6] + r2 * k[7])), radial = num / den;
+    *x = a * radial + 2 * k[2] * a * b + k[3] * (r2 + 2 * a * a);
+    *y = b * radial + k[2] * (r2 + 2 * b * b) + 2 * k[3] * a * b;
+    if (L->prism) *x += r2 * (k[8] + r2 * k[9]), *y += r2 * (k[10] + r2 * k[11]);
+    if (J != NULL) {
+        const double dnum = k[0] + r2 * (2 * k[1] + 3 * r2 * k[4]), dden = k[5] + r2 * (2 * k[6] + 3 * r2 * k[7]);
+        const double dR = L->rational ? (dnum * den - num * dden) / (den * den) : dnum; /* d radial / d r2 */
+        const double dsu = k[8] + 2 * r2 * k[9], dsv = k[10] + 2 * r2 * k[11];
+        J[0][0] = radial + 2 * a * a * dR + 2 * k[2] * b + 6 * k[3] * a + 2 * a * dsu;
+        J[0][1] = 2 * a * b * dR + 2 * k[2] * a + 2 * k[3] * b + 2 * b * dsu;
+        J[1][0] = 2 * a * b * dR + 2 * k[2] * a + 2 * k[3] * b + 2 * a * dsv;
+        J[1][1] = radial + 2 * b * b * dR + 6 * k[2] * b + 2 * k[3] * a + 2 * b * dsv;
+    }
+    return den > 0;
+}
+
+/* The pixel where the lens images a camera ray (any length, pointing into the scene); 0 if it can't. With D, also the
+ * pixel's derivatives by the ray (d pixel x / d r, then d pixel y / d r). */
+static NAPA_FORCE_INLINE int lens_project_d(const napa_lens *L, const double r[3], vec2 *p, double D[2][3]) {
+    const double *k = L->k;
+    double x = 0, y = 0;
+    if (L->model == NAPA_LENS_FISHEYE) {
+        const double rho = sqrt(r[0] * r[0] + r[1] * r[1]);
+        double g, dg[3];
+        if (D != NULL && r[2] > 0 && rho < 1e-4 * r[2]) {
+            /* Near the axis, g = td / rho = (1 + (k1 - 1/3) rho^2 / z^2) / z to within (rho / z)^4. */
+            const double iz = 1 / r[2], c1 = k[0] - 1.0 / 3, u = rho * rho * iz * iz;
+            g = iz * (1 + c1 * u);
+            dg[0] = 2 * c1 * r[0] * iz * iz * iz, dg[1] = 2 * c1 * r[1] * iz * iz * iz, dg[2] = -iz * iz * (1 + 3 * c1 * u);
+        } else if (rho > 0) {
+            const double t = atan2(rho, r[2]), t2 = t * t;
+            const double td = t * (1 + t2 * (k[0] + t2 * (k[1] + t2 * (k[2] + t2 * k[3]))));
+            g = td / rho;
+            if (D != NULL) {
+                /* theta = atan2(rho, z): d theta = (z d rho - rho dz) / (rho^2 + z^2) */
+                const double dtd = 1 + t2 * (3 * k[0] + t2 * (5 * k[1] + t2 * (7 * k[2] + t2 * 9 * k[3])));
+                const double n2 = rho * rho + r[2] * r[2], a = dtd / (rho * rho * n2), c = td / (rho * rho * rho);
+                dg[0] = r[0] * (a * r[2] - c), dg[1] = r[1] * (a * r[2] - c), dg[2] = -a * rho * rho;
+            }
+        } else if (!(r[2] > 0) || D != NULL) {
+            return 0;
+        } else {
+            g = 0, dg[0] = dg[1] = dg[2] = 0;
+        }
+        x = g * r[0], y = g * r[1];
+        if (D != NULL)
+            for (int j = 0; j < 3; j++) {
+                const double dx = r[0] * dg[j] + (j == 0 ? g : 0), dy = r[1] * dg[j] + (j == 1 ? g : 0);
+                D[0][j] = L->fx * dx + L->skew * dy, D[1][j] = L->fy * dy;
+            }
+    } else {
+        if (!(r[2] > 0)) return 0;
+        const double iz = 1 / r[2], a = r[0] * iz, b = r[1] * iz;
+        if (!(a * a + b * b < 1e12)) return 0;
+        double J[2][2];
+        /* Projection keeps OpenCV's value even where the rational terms' denominator isn't positive; only lens_ray,
+         * inverting the lens, rejects such points. */
+        (void)bc_distort(L, a, b, &x, &y, D != NULL ? J : NULL);
+        if (D != NULL) {
+            /* The derivatives by (a, b), then (a, b) by the ray. */
+            const double px_a = L->fx * J[0][0] + L->skew * J[1][0], px_b = L->fx * J[0][1] + L->skew * J[1][1];
+            const double py_a = L->fy * J[1][0], py_b = L->fy * J[1][1];
+            D[0][0] = px_a * iz, D[0][1] = px_b * iz, D[0][2] = -(px_a * a + px_b * b) * iz;
+            D[1][0] = py_a * iz, D[1][1] = py_b * iz, D[1][2] = -(py_a * a + py_b * b) * iz;
+        }
+    }
+    p->x = L->fx * x + L->skew * y + L->cx, p->y = L->fy * y + L->cy;
+    return isfinite(p->x) && isfinite(p->y);
+}
+
+static int lens_project(const napa_lens *L, const double r[3], vec2 *p) { return lens_project_d(L, r, p, NULL); }
+
+/* The camera ray a pixel sees, by Newton's method from the distorted point; 0 if it doesn't settle or the lens folds there. */
+static int lens_ray(const napa_lens *L, vec2 p, double r[3]) {
+    const double *k = L->k, yd = (p.y - L->cy) / L->fy, xd = (p.x - L->cx - L->skew * yd) / L->fx;
+    if (L->model == NAPA_LENS_FISHEYE) {
+        const double td = hypot(xd, yd);
+        double t = td < 3.0 ? td : 3.0, f = 0;
+        if (!(td > 1e-12)) {
+            r[0] = 0, r[1] = 0, r[2] = 1;
+            return td >= 0;
+        }
+        for (int i = 0; i < 30; i++) {
+            const double t2 = t * t;
+            f = t * (1 + t2 * (k[0] + t2 * (k[1] + t2 * (k[2] + t2 * k[3])))) - td;
+            const double g = 1 + t2 * (3 * k[0] + t2 * (5 * k[1] + t2 * (7 * k[2] + t2 * 9 * k[3])));
+            if (!(g > 0)) return 0;
+            const double step = f / g;
+            t -= step;
+            if (!(t > 0 && t < 3.14159265358979)) return 0;
+            if (fabs(step) < 1e-14) break;
+        }
+        if (!(fabs(f) < 1e-9)) return 0;
+        const double s = sin(t) / td;
+        r[0] = xd * s, r[1] = yd * s, r[2] = cos(t);
+        return 1;
+    }
+    double x = xd, y = yd;
+    for (int i = 0; i < 30; i++) {
+        double u, v, J[2][2];
+        if (!bc_distort(L, x, y, &u, &v, J)) return 0;
+        u -= xd, v -= yd;
+        const double ux = J[0][0], uy = J[0][1], vx = J[1][0], vy = J[1][1], det = ux * vy - uy * vx;
+        if (!(det > 0)) return 0;
+        const double sx = (u * vy - v * uy) / det, sy = (v * ux - u * vx) / det;
+        x -= sx, y -= sy;
+        if (!isfinite(x) || !isfinite(y)) return 0;
+        if (fabs(sx) + fabs(sy) < 1e-14) break;
+        if (i == 29 && !(fabs(u) + fabs(v) < 1e-9)) return 0;
+    }
+    r[0] = x, r[1] = y, r[2] = 1;
+    return 1;
+}
+
+static int lens_to_plane(const lens_frame *f, const double r[3], vec2 *q) {
+    const double z = r[0] * f->e[2][0] + r[1] * f->e[2][1] + r[2] * f->e[2][2];
+    if (!(z > 0.05 * sqrt(r[0] * r[0] + r[1] * r[1] + r[2] * r[2]))) return 0;
+    q->x = f->scale * (r[0] * f->e[0][0] + r[1] * f->e[0][1] + r[2] * f->e[0][2]) / z;
+    q->y = f->scale * (r[0] * f->e[1][0] + r[1] * f->e[1][1] + r[2] * f->e[1][2]) / z;
+    return 1;
+}
+
+static int lens_from_plane(const lens_frame *f, double x, double y, vec2 *p) {
+    double r[3];
+    for (int i = 0; i < 3; i++) r[i] = f->e[2][i] + (x * f->e[0][i] + y * f->e[1][i]) * f->inv_scale;
+    return lens_project(f->L, r, p);
+}
+
+/* The same with the pixel's derivatives by the plane: x by x, x by y, y by x, y by y. */
+static int lens_from_plane_d(const lens_frame *f, double x, double y, vec2 *p, double J[4]) {
+    double r[3], D[2][3];
+    for (int i = 0; i < 3; i++) r[i] = f->e[2][i] + (x * f->e[0][i] + y * f->e[1][i]) * f->inv_scale;
+    if (!lens_project_d(f->L, r, p, D)) return 0;
+    for (int i = 0; i < 2; i++) {
+        J[2 * i] = (D[i][0] * f->e[0][0] + D[i][1] * f->e[0][1] + D[i][2] * f->e[0][2]) * f->inv_scale;
+        J[2 * i + 1] = (D[i][0] * f->e[1][0] + D[i][1] * f->e[1][1] + D[i][2] * f->e[1][2]) * f->inv_scale;
+    }
+    return 1;
+}
+
+static int lens_frame_build(const napa_lens *L, const vec2 in[4], lens_frame *f, vec2 plane[4]) {
+    double ray[4][3], m[3] = {0, 0, 0};
+    for (int k = 0; k < 4; k++) {
+        if (!lens_ray(L, in[k], ray[k])) return 0;
+        const double n = sqrt(ray[k][0] * ray[k][0] + ray[k][1] * ray[k][1] + ray[k][2] * ray[k][2]);
+        for (int i = 0; i < 3; i++) m[i] += ray[k][i] / n;
+    }
+    double n = sqrt(m[0] * m[0] + m[1] * m[1] + m[2] * m[2]);
+    if (!(n > 0)) return 0;
+    for (int i = 0; i < 3; i++) f->e[2][i] = m[i] / n;
+    const double *z = f->e[2];
+    double x[3] = {1 - z[0] * z[0], -z[0] * z[1], -z[0] * z[2]};
+    n = sqrt(x[0] * x[0] + x[1] * x[1] + x[2] * x[2]);
+    if (!(n > 0.1)) return 0;
+    for (int i = 0; i < 3; i++) f->e[0][i] = x[i] / n;
+    f->e[1][0] = z[1] * f->e[0][2] - z[2] * f->e[0][1];
+    f->e[1][1] = z[2] * f->e[0][0] - z[0] * f->e[0][2];
+    f->e[1][2] = z[0] * f->e[0][1] - z[1] * f->e[0][0];
+    f->L = L, f->scale = 1, f->inv_scale = 1;
+    vec2 c;
+    double J[4];
+    if (!lens_from_plane_d(f, 0, 0, &c, J)) return 0;
+    const double area = J[0] * J[3] - J[1] * J[2];
+    if (!(area > 0)) return 0;
+    f->scale = sqrt(area), f->inv_scale = 1 / f->scale;
+    for (int k = 0; k < 4; k++)
+        if (!lens_to_plane(f, ray[k], &plane[k])) return 0;
+    return 1;
+}
+
+/* How far the lens bows the sides between the corners `in` (pixels, at the middle of the side); -1 if it can't image one. */
+static double lens_bow(const lens_frame *f, const vec2 in[4], const vec2 plane[4]) {
+    double bow = 0;
+    for (int k = 0; k < 4; k++) {
+        const vec2 a = plane[k], b = plane[(k + 1) & 3];
+        vec2 m;
+        if (!lens_from_plane(f, 0.5 * (a.x + b.x), 0.5 * (a.y + b.y), &m)) return -1;
+        const double d = hypot(m.x - 0.5 * (in[k].x + in[(k + 1) & 3].x), m.y - 0.5 * (in[k].y + in[(k + 1) & 3].y));
+        if (d > bow) bow = d;
+    }
+    return bow;
+}
+
+static int same_corners(const vec2 a[4], const vec2 b[4]) { return memcmp(a, b, 4 * sizeof(vec2)) == 0; }
+
+/* The tag view for corners `in`, with their places in its plane. Returns 0 where the lens leaves every side straight to
+ * within `straight` pixels: pixels serve as well there and cost less. The detector's memo answers the questions a
+ * candidate's steps ask in turn: the same corners again, the corners the last lens fit returned (already in its plane),
+ * and nearly the same corners where the sides were far straighter than this asks. */
+static int lens_frame_init(const napa_lens *L, const vec2 in[4], lens_frame *f, vec2 plane[4], double straight) {
+    lens_memo *m = L->memo;
+    if (m != NULL && m->valid) {
+        if (same_corners(in, m->key)) {
+            if (!(m->bow >= straight)) return 0;
+            *f = m->f;
+            memcpy(plane, m->plane, sizeof m->plane);
+            return 1;
+        }
+        if (m->chained && same_corners(in, m->next)) {
+            const double bow = lens_bow(&m->f, in, m->next_plane);
+            if (bow < 0) {
+                m->valid = 0;
+                return 0;
+            }
+            /* The fit's result becomes the memo's key, in the same view; quad_map_init's departure is redone. */
+            memcpy(m->key, in, sizeof m->key);
+            memcpy(m->plane, m->next_plane, sizeof m->plane);
+            m->bow = bow;
+            m->chained = 0;
+            m->departure = -1;
+            if (!(bow >= straight)) return 0;
+            *f = m->f;
+            memcpy(plane, m->plane, sizeof m->plane);
+            return 1;
+        }
+        if (m->bow < 0.5 * straight) {
+            double moved = 0;
+            for (int k = 0; k < 4; k++) moved = fmax(moved, fabs(in[k].x - m->key[k].x) + fabs(in[k].y - m->key[k].y));
+            if (moved < NAPA_LENS_MEMO_NEAR_PX) return 0;
+        }
+    }
+    lens_frame g;
+    vec2 q[4];
+    const int built = lens_frame_build(L, in, &g, q);
+    const double bow = built ? lens_bow(&g, in, q) : -1;
+    if (m != NULL) {
+        m->valid = bow >= 0;
+        m->chained = 0;
+        if (m->valid) {
+            memcpy(m->key, in, sizeof m->key);
+            memcpy(m->plane, q, sizeof q);
+            m->bow = bow;
+            m->f = g;
+            m->departure = -1;
+        }
+    }
+    if (!(bow >= straight)) return 0;
+    *f = g;
+    memcpy(plane, q, sizeof q);
+    return 1;
+}
+
+/* After a lens fit from corners `in` in view f: its result, already in f's plane, for the next step to start from. */
+static void lens_memo_chain(const lens_frame *f, const vec2 in[4], const vec2 out[4], const vec2 plane_out[4]) {
+    lens_memo *m = f->L->memo;
+    if (m == NULL || !m->valid || !same_corners(in, m->key)) return;
+    memcpy(m->next, out, sizeof m->next);
+    memcpy(m->next_plane, plane_out, sizeof m->next_plane);
+    m->chained = 1;
+}
+
+/* One side as the lens draws it: at knots about NAPA_LENS_KNOT_PX apart, the pixel, its rate along the side, the side's
+ * pixel normal there (oriented like the caller's), and the plane offset per pixel moved along that normal. Profiles
+ * between knots interpolate them (cubic Hermite for the position), which costs far less than projecting every profile and
+ * is exact to well under a thousandth of a pixel. */
+enum { NAPA_LENS_KNOTS = 33 };
+typedef struct {
+    int m;
+    vec2 p[NAPA_LENS_KNOTS], dp[NAPA_LENS_KNOTS];
+    double n[NAPA_LENS_KNOTS][4]; /* normal x, y; plane offset x, y per pixel along it */
+    unsigned char ok[NAPA_LENS_KNOTS]; /* 0 where the lens folds */
+    double sx, sy;                /* the side's unit direction in the plane */
+} lens_side;
+
+static NAPA_NOINLINE int lens_side_init(const lens_frame *f, vec2 a, vec2 b, double pixel_len, double cnx, double cny, lens_side *ls) {
+    const double ex = b.x - a.x, ey = b.y - a.y, len = hypot(ex, ey);
+    int m = (int)(pixel_len / NAPA_LENS_KNOT_PX) + 2;
+    if (m > NAPA_LENS_KNOTS) m = NAPA_LENS_KNOTS;
+    if (!(len > 0)) return 0;
+    ls->m = m, ls->sx = ex / len, ls->sy = ey / len;
+    for (int i = 0; i < m; i++) {
+        const double t = (double)i / (m - 1);
+        double J[4];
+        if (!lens_from_plane_d(f, a.x + ex * t, a.y + ey * t, &ls->p[i], J)) return 0;
+        ls->dp[i].x = J[0] * ex + J[1] * ey, ls->dp[i].y = J[2] * ex + J[3] * ey;
+        /* Square to the drawn side, and back to the plane through the inverse of J. */
+        const double det = J[0] * J[3] - J[1] * J[2], tx = J[0] * ls->sx + J[1] * ls->sy, ty = J[2] * ls->sx + J[3] * ls->sy;
+        const double tl = sqrt(tx * tx + ty * ty);
+        ls->ok[i] = det > 0 && tl > 0;
+        if (!ls->ok[i]) continue;
+        double mx = -ty / tl, my = tx / tl;
+        if (mx * cnx + my * cny < 0) mx = -mx, my = -my;
+        ls->n[i][0] = mx, ls->n[i][1] = my, ls->n[i][2] = (J[3] * mx - J[1] * my) / det, ls->n[i][3] = (J[0] * my - J[2] * mx) / det;
+    }
+    return 1;
+}
+
+/* A profile across the side at t (0 to 1 along it): the pixel there, the side's pixel normal there, and the plane offset
+ * per pixel moved along that normal. */
+static inline int lens_profile(const lens_side *ls, double t, vec2 *b, double *nx, double *ny, double *back_x, double *back_y) {
+    const double g = t * (ls->m - 1);
+    int i = (int)g;
+    if (i < 0) i = 0;
+    if (i > ls->m - 2) i = ls->m - 2;
+    if (!ls->ok[i] || !ls->ok[i + 1]) return 0;
+    const double s = g - i, step = 1.0 / (ls->m - 1), s2 = s * s, s3 = s2 * s;
+    const double h00 = 2 * s3 - 3 * s2 + 1, h10 = (s3 - 2 * s2 + s) * step, h01 = 3 * s2 - 2 * s3, h11 = (s3 - s2) * step;
+    b->x = h00 * ls->p[i].x + h10 * ls->dp[i].x + h01 * ls->p[i + 1].x + h11 * ls->dp[i + 1].x;
+    b->y = h00 * ls->p[i].y + h10 * ls->dp[i].y + h01 * ls->p[i + 1].y + h11 * ls->dp[i + 1].y;
+    const double *u = ls->n[i], *v = ls->n[i + 1];
+    *nx = u[0] + s * (v[0] - u[0]), *ny = u[1] + s * (v[1] - u[1]);
+    *back_x = u[2] + s * (v[2] - u[2]), *back_y = u[3] + s * (v[3] - u[3]);
+    return 1;
+}
+
+/* Every profile of one pass along a side, worked out before its samples are read: where it crosses the side in the plane
+ * (q) and in pixels (b), its pixel normal, the plane offset per pixel along it, and its 16.16 fixed-point step. */
+typedef struct {
+    vec2 q[NAPA_SIDE_SAMPLES], b[NAPA_SIDE_SAMPLES], n[NAPA_SIDE_SAMPLES], back[NAPA_SIDE_SAMPLES];
+    int32_t ix[NAPA_SIDE_SAMPLES], iy[NAPA_SIDE_SAMPLES];
+    unsigned char ok[NAPA_SIDE_SAMPLES];
+} lens_profile_set;
+
+static NAPA_NOINLINE void lens_profiles(const lens_side *ls, vec2 a, vec2 b, double margin, double dt, int np, double step, lens_profile_set *set) {
+    for (int i = 0; i < np; i++) {
+        const double t = margin + dt * (i + 0.5);
+        set->q[i].x = a.x + (b.x - a.x) * t, set->q[i].y = a.y + (b.y - a.y) * t;
+        set->ok[i] = (unsigned char)lens_profile(ls, t, &set->b[i], &set->n[i].x, &set->n[i].y, &set->back[i].x, &set->back[i].y);
+        if (!set->ok[i]) continue;
+        const double sx = set->n[i].x * step * 65536.0, sy = set->n[i].y * step * 65536.0;
+        set->ix[i] = (int32_t)(sx < 0 ? sx - 0.5 : sx + 0.5), set->iy[i] = (int32_t)(sy < 0 ? sy - 0.5 : sy + 0.5);
+    }
+}
+
 static inline double fade(double x, double lo, double hi);
 static NAPA_FORCE_INLINE int fit_sides_impl(const image_view *im, const vec2 in[4], vec2 out[4], double r_out, double r_in, int min_edge,
-                     int outermost, int max_points, double *edge_width, edge_levels *levels, double cells, vec2 alternate[4], vec2 curved[4], vec2 lens[4], int *lens_ok, double *width_ratio, initial_capture *capture) {
+                     int outermost, int max_points, double *edge_width, edge_levels *levels, double cells, vec2 alternate[4], vec2 curved[4], vec2 est_lens[4], int *est_ok, double *width_ratio, initial_capture *capture) {
     const uint8_t *img = im->p;
     const int w = im->w, h = im->h, stride = im->stride;
     double width_sum = 0;
@@ -2116,6 +3210,11 @@ static NAPA_FORCE_INLINE int fit_sides_impl(const image_view *im, const vec2 in[
     double alx[4], aly[4], adx[4], ady[4];
     int any_alternate = 0;
     curve_side curves[4];
+    /* Through a known lens the sides are fitted where they are straight: in the plane facing the tag (lens_frame). */
+    lens_frame lens_view;
+    vec2 plane[4], plane_out[4];
+    const int use_lens = im->lens != NULL && !outermost && capture == NULL && lens_frame_init(im->lens, in, &lens_view, plane,
+                                                        max_points > 24 ? NAPA_LENS_STRAIGHT_PX : NAPA_LENS_STRAIGHT_COARSE_PX);
     side_samples samples;
     double side_width[4] = {0, 0, 0, 0};
     int side_widths[4] = {0, 0, 0, 0};
@@ -2130,6 +3229,17 @@ static NAPA_FORCE_INLINE int fit_sides_impl(const image_view *im, const vec2 in[
         if ((cen.x - a.x) * nx + (cen.y - a.y) * ny < 0) {
             nx = -nx;
             ny = -ny;
+        }
+        /* The side's own frame for the samples (fit_*): the pixels, or through a lens the plane. Three normals
+         * follow: nx, ny the side's in pixels; pnx, pny each profile's in pixels (through a lens, square to the
+         * side where the lens draws it); fit_nx, fit_ny the side's in the fit frame. */
+        vec2 fit_a = a;
+        double fit_ex = ex, fit_ey = ey, fit_nx = nx, fit_ny = ny;
+        lens_side lside;
+        lens_profile_set lprof;
+        if (use_lens) {
+            if (!lens_side_init(&lens_view, plane[k], plane[(k + 1) & 3], len, nx, ny, &lside)) return 0;
+            fit_a = plane[k], fit_ex = lside.sx, fit_ey = lside.sy, fit_nx = -fit_ey, fit_ny = fit_ex;
         }
         /* Dense passes (max_points > 24) take a profile every 1.5 px, averaging down sensor noise. */
         int np = (int)(len / (max_points > 24 ? 1.5 : 4.0));
@@ -2157,14 +3267,25 @@ static NAPA_FORCE_INLINE int fit_sides_impl(const image_view *im, const vec2 in[
         const double kept_width_sum = width_sum, kept_side_width = side_width[k];
         const int kept_width_n = width_n, kept_side_widths = side_widths[k];
 retake:
+        if (use_lens) lens_profiles(&lside, fit_a, plane[(k + 1) & 3], margin, dt, np, step, &lprof);
         for (int i = 0; i < np && good + (np - i) >= 3; i++) { /* stop once 3 edge points are out of reach */
             double t = margin + dt * (i + 0.5);
             const int z = t < NAPA_SIDE_MARGIN ? 1 : t > 1 - NAPA_SIDE_MARGIN ? 2 : 0;
             tried[z]++;
-            double bx = a.x + (b.x - a.x) * t, by = a.y + (b.y - a.y) * t;
+            double bx, by, pnx = nx, pny = ny, back_x = 0, back_y = 0;
+            int32_t pixp = ixp, piyp = iyp;
+            vec2 q = {0, 0};
+            if (use_lens) {
+                /* The profile crosses the side where the lens draws it, square to it there. */
+                if (!lprof.ok[i]) continue;
+                q = lprof.q[i], bx = lprof.b[i].x, by = lprof.b[i].y, pnx = lprof.n[i].x, pny = lprof.n[i].y;
+                back_x = lprof.back[i].x, back_y = lprof.back[i].y, pixp = lprof.ix[i], piyp = lprof.iy[i];
+            } else {
+                bx = a.x + (b.x - a.x) * t, by = a.y + (b.y - a.y) * t;
+            }
             int64_t prof[(KMAX + 3) & ~3]; /* grey levels in 40.24 fixed point */
-            double sx0 = bx - nx * r_out, sy0 = by - ny * r_out;
-            double sx1 = bx + nx * r_in, sy1 = by + ny * r_in;
+            double sx0 = bx - pnx * r_out, sy0 = by - pny * r_out;
+            double sx1 = bx + pnx * r_in, sy1 = by + pny * r_in;
             /* Whole profile inside the image: skip per-sample clamping, and step in 16.16 fixed point
              * with 12-bit interpolation weights (1/8192 px); the profile and its gradient stay in fixed
              * point, with no conversion per sample. The fixed-point
@@ -2175,17 +3296,17 @@ retake:
                          sy0 < h - 1 && sy1 < h - 1;
             if (inside) {
                 fxp = (int32_t)(sx0 * 65536.0), fyp = (int32_t)(sy0 * 65536.0);
-                int64_t endx = fxp + (int64_t)(K - 1) * ixp, endy = fyp + (int64_t)(K - 1) * iyp;
+                int64_t endx = fxp + (int64_t)(K - 1) * pixp, endy = fyp + (int64_t)(K - 1) * piyp;
                 inside = endx >= 0 && endy >= 0 && endx < ((int64_t)(w - 1) << 16) && endy < ((int64_t)(h - 1) << 16);
             }
             if (inside) {
-                profile_fixed(img, stride, fxp, fyp, ixp, iyp, K, prof);
+                profile_fixed(img, stride, fxp, fyp, pixp, piyp, K, prof);
                 if (im->invert)
                     for (int j = 0; j < K; j++) prof[j] = ((int64_t)255 << 24) - prof[j];
             } else {
                 for (int j = 0; j < K; j++) {
                     double o = -r_out + j * step;
-                    prof[j] = (int64_t)(sample_bilinear(im, bx + nx * o, by + ny * o) * 16777216.0 + 0.5);
+                    prof[j] = (int64_t)(sample_bilinear(im, bx + pnx * o, by + pny * o) * 16777216.0 + 0.5);
                 }
             }
             /* outside (white) minus inside (black): the outer border edge is a positive peak. */
@@ -2261,8 +3382,8 @@ retake:
                 double half = len / (2.0 * cells);
                 for (int iter = 0; iter < NAPA_CROSS_ITERS; iter++) {
                     double pos0 = -r_out + cj * step;
-                    double wl = sample_bilinear(im, bx + nx * (pos0 - half), by + ny * (pos0 - half));
-                    double bl = sample_bilinear(im, bx + nx * (pos0 + half), by + ny * (pos0 + half));
+                    double wl = sample_bilinear(im, bx + pnx * (pos0 - half), by + pny * (pos0 - half));
+                    double bl = sample_bilinear(im, bx + pnx * (pos0 + half), by + pny * (pos0 + half));
                     double mid = 0.5 * (wl + bl) * 16777216.0;
                     double best_c = -1, best_d = 1e9;
                     for (int j = jl - 1; j <= jr && j + 1 < K; j++) {
@@ -2283,8 +3404,8 @@ retake:
             width_n++;
             side_width[k] += (jr - jl + 1) * step, side_widths[k]++;
             double pos = -r_out + cj * step;
-            px[good] = bx + nx * pos;
-            py[good] = by + ny * pos;
+            if (use_lens) px[good] = q.x + back_x * pos, py[good] = q.y + back_y * pos;
+            else px[good] = bx + pnx * pos, py[good] = by + pny * pos;
             wt[good] = (double)best * (1.0 / (1 << 24));
             if (alternate != NULL && (alternate_crossing || side_changed)) {
                 if (!side_changed) {
@@ -2293,7 +3414,9 @@ retake:
                     memcpy(awt, wt, (size_t)good * sizeof(double));
                 }
                 double apos = alternate_crossing ? -r_out + acj * step : pos;
-                apx[good] = bx + nx * apos; apy[good] = by + ny * apos; awt[good] = wt[good];
+                if (use_lens) apx[good] = q.x + back_x * apos, apy[good] = q.y + back_y * apos;
+                else apx[good] = bx + pnx * apos, apy[good] = by + pny * apos;
+                awt[good] = wt[good];
                 side_changed |= alternate_crossing;
             }
             zone[good] = (unsigned char)z, got[z]++;
@@ -2307,7 +3430,7 @@ retake:
             double sw = 0, su = 0, sv = 0, suu = 0, suv = 0;
             for (int i = 0; i < good; i++) {
                 if (zone[i]) continue;
-                const double u = (px[i] - a.x) * ex + (py[i] - a.y) * ey, v = (px[i] - a.x) * nx + (py[i] - a.y) * ny;
+                const double u = (px[i] - fit_a.x) * fit_ex + (py[i] - fit_a.y) * fit_ey, v = (px[i] - fit_a.x) * fit_nx + (py[i] - fit_a.y) * fit_ny;
                 sw += wt[i], su += wt[i] * u, sv += wt[i] * v, suu += wt[i] * u * u, suv += wt[i] * u * v;
             }
             const double typical = sw / got[0], den = sw * suu - su * su;
@@ -2318,7 +3441,7 @@ retake:
                 if (reach_px < 0.5) reach_px = 0.5;
                 for (int i = 0; i < good && !broken; i++) {
                     if (!zone[i]) continue;
-                    const double u = (px[i] - a.x) * ex + (py[i] - a.y) * ey, v = (px[i] - a.x) * nx + (py[i] - a.y) * ny;
+                    const double u = (px[i] - fit_a.x) * fit_ex + (py[i] - fit_a.y) * fit_ey, v = (px[i] - fit_a.x) * fit_nx + (py[i] - fit_a.y) * fit_ny;
                     broken = !(wt[i] >= NAPA_SIDE_END_MIN_STRENGTH * typical && wt[i] <= NAPA_SIDE_END_MAX_STRENGTH * typical) ||
                              fabs(v - offset - slope * u) > reach_px;
                 }
@@ -2331,8 +3454,8 @@ retake:
             }
         }
         /* TLS compacts its arrays, so assess curvature from the original weighted samples first. */
-        if (curved != NULL) fit_curve_side(&curves[k], a, b, px, py, wt, good);
-        if (lens != NULL) {
+        if (curved != NULL) fit_curve_side(&curves[k], fit_a, use_lens ? plane[(k + 1) & 3] : b, px, py, wt, good);
+        if (est_lens != NULL && !use_lens) {
             samples.n[k] = good;
             memcpy(samples.x[k], px, (size_t)good * sizeof(double));
             memcpy(samples.y[k], py, (size_t)good * sizeof(double));
@@ -2369,9 +3492,14 @@ retake:
         double t = (ddx * dy[k] - ddy * dx[k]) / cross;
         out[k].x = lx[p] + t * dx[p];
         out[k].y = ly[p] + t * dy[p];
+        if (use_lens) {
+            plane_out[k] = out[k];
+            if (!lens_from_plane(&lens_view, out[k].x, out[k].y, &out[k])) return 0;
+        }
         double mv = fabs(out[k].x - in[k].x) + fabs(out[k].y - in[k].y);
         if (mv > 4.0 * reach + 2.0) return 0;
     }
+    if (use_lens) lens_memo_chain(&lens_view, in, out, plane_out);
     if (alternate != NULL && !any_alternate) memcpy(alternate, out, 4 * sizeof(vec2));
     if (alternate != NULL && any_alternate) {
         int valid = 1;
@@ -2383,6 +3511,7 @@ retake:
             double t = (ddx * ady[k] - ddy * adx[k]) / cross;
             alternate[k].x = alx[p] + t * adx[p];
             alternate[k].y = aly[p] + t * ady[p];
+            if (use_lens && !lens_from_plane(&lens_view, alternate[k].x, alternate[k].y, &alternate[k])) { valid = 0; break; }
             double mv = fabs(alternate[k].x - in[k].x) + fabs(alternate[k].y - in[k].y);
             if (!(mv <= 4.0 * reach + 2.0)) { valid = 0; break; }
         }
@@ -2391,7 +3520,14 @@ retake:
     if (curved != NULL) {
         vec2 proposal[4];
         memcpy(curved, out, 4 * sizeof(vec2));
-        if (intersect_curves(curves, in, out, lx, ly, dx, dy, reach, proposal)) memcpy(curved, proposal, sizeof proposal);
+        if (!use_lens) {
+            if (intersect_curves(curves, in, out, lx, ly, dx, dy, reach, proposal)) memcpy(curved, proposal, sizeof proposal);
+        } else if (intersect_curves(curves, plane, plane_out, lx, ly, dx, dy, reach, proposal)) {
+            /* What bow is left in the plane is the tag's own (a bent sheet), not the lens. */
+            int mapped = 1;
+            for (int k = 0; k < 4 && mapped; k++) mapped = lens_from_plane(&lens_view, proposal[k].x, proposal[k].y, &proposal[k]);
+            if (mapped) memcpy(curved, proposal, sizeof proposal);
+        }
     }
     if (width_ratio != NULL) {
         double narrow = HUGE_VAL, wide = 0;
@@ -2403,14 +3539,15 @@ retake:
         width_ratio[0] = narrow > 0 ? wide / narrow : 1;
         width_ratio[1] = wide;
     }
-    if (lens != NULL) {
+    if (est_lens != NULL && use_lens) *est_ok = 0; /* the lens is already known */
+    else if (est_lens != NULL) {
         int near_frame = 0, corner_clear[4], side_clear[4];
         for (int k = 0; k < 4; k++) {
             corner_clear[k] = inside_frame(im, out[k]) && inside_frame(im, curved[k]);
             near_frame |= !corner_clear[k];
         }
         for (int k = 0; k < 4; k++) side_clear[k] = corner_clear[k] && corner_clear[(k + 1) & 3];
-        *lens_ok = near_frame && shared_lens_quad(im, &samples, side_clear, lens);
+        *est_ok = near_frame && shared_lens_quad(im, &samples, side_clear, est_lens);
     }
     return 1;
 }
@@ -2434,9 +3571,12 @@ static int fit_initial_captured(const image_view *im, const vec2 in[4], vec2 out
     return fit_sides_impl(im,in,out,r_out,r_in,min_edge,1,6,width,NULL,cells,NULL,NULL,NULL,NULL,NULL,capture);
 }
 
+/* fit_sides with the alternatives the final fit weighs. est_lens / est_ok: near the frame and without a calibrated
+ * lens, the corners a radial lens estimated from the tag's own bowed sides would give (shared_lens_quad), and whether
+ * one was found. */
 static int fit_sides_alternate(const image_view *im, const vec2 in[4], vec2 out[4], double r_out, double r_in, int min_edge,
-                     int outermost, int max_points, double *edge_width, edge_levels *levels, double cells, vec2 alternate[4], vec2 curved[4], vec2 lens[4], int *lens_ok, double *width_ratio) {
-    return fit_sides_impl(im, in, out, r_out, r_in, min_edge, outermost, max_points, edge_width, levels, cells, alternate, curved, lens, lens_ok, width_ratio, NULL);
+                     int outermost, int max_points, double *edge_width, edge_levels *levels, double cells, vec2 alternate[4], vec2 curved[4], vec2 est_lens[4], int *est_ok, double *width_ratio) {
+    return fit_sides_impl(im, in, out, r_out, r_in, min_edge, outermost, max_points, edge_width, levels, cells, alternate, curved, est_lens, est_ok, width_ratio, NULL);
 }
 
 /* The shared-white model denoises geometry after a tag already decodes.
@@ -2547,6 +3687,90 @@ static void sample_points(const image_view *im, const double H[9], double *u, do
     sample_points_impl(im, H, u, v, n, out, NULL);
 }
 
+/* A tag's cell grid in the frame: the homography from the unit square, through the lens when the view has one (the
+ * homography then maps to the plane facing the tag, where the grid is straight). */
+typedef struct {
+    double H[9];
+    int lens;
+    lens_frame f;
+} quad_map;
+
+static void quad_map_init(const image_view *im, const vec2 q[4], quad_map *m) {
+    vec2 plane[4];
+    square_to_quad(q, m->H);
+    m->lens = 0;
+    if (im->lens == NULL || !lens_frame_init(im->lens, q, &m->f, plane, NAPA_LENS_STRAIGHT_PX)) return;
+    /* The readings shift the whole tag's edges alike, so they keep the plain grid wherever the lens moves it by too little
+     * to matter. The sides' bow doesn't tell: fisheye views squeeze a tag's middle while leaving its sides straight. */
+    lens_memo *memo = im->lens->memo;
+    double Hp[9], departure = -1;
+    square_to_quad(plane, Hp);
+    if (memo != NULL && memo->valid && same_corners(q, memo->key)) departure = memo->departure;
+    if (departure < 0) {
+        static const double at[5][2] = {{0.5, 0}, {1, 0.5}, {0.5, 1}, {0, 0.5}, {0.5, 0.5}};
+        departure = 0;
+        for (int k = 0; k < 5; k++) {
+            const vec2 a = project(Hp, at[k][0], at[k][1]), b = project(m->H, at[k][0], at[k][1]);
+            vec2 c;
+            if (!lens_from_plane(&m->f, a.x, a.y, &c)) {
+                departure = HUGE_VAL;
+                break;
+            }
+            departure = fmax(departure, hypot(c.x - b.x, c.y - b.y));
+        }
+        if (memo != NULL && memo->valid && same_corners(q, memo->key)) memo->departure = departure;
+    }
+    if (departure < NAPA_LENS_BIAS_STRAIGHT_PX) return;
+    m->lens = 1;
+    memcpy(m->H, Hp, sizeof Hp);
+}
+
+static inline vec2 quad_point(const quad_map *m, double u, double v) {
+    vec2 p = project(m->H, u, v);
+    if (m->lens) {
+        vec2 d = {-1, -1}; /* not imaged: read as the frame's corner pixel, like any point outside it */
+        lens_from_plane(&m->f, p.x, p.y, &d);
+        return d;
+    }
+    return p;
+}
+
+/* Cubic coefficients (power basis in s) through the values at s = 0, 1, 2, 3, for x and y. */
+static void cubic_through(const vec2 node[4], vec2 c[4]) {
+    const vec2 d1 = {node[1].x - node[0].x, node[1].y - node[0].y};
+    const vec2 d2 = {node[2].x - 2 * node[1].x + node[0].x, node[2].y - 2 * node[1].y + node[0].y};
+    const vec2 d3 = {node[3].x - 3 * node[2].x + 3 * node[1].x - node[0].x, node[3].y - 3 * node[2].y + 3 * node[1].y - node[0].y};
+    c[0] = node[0];
+    c[1].x = d1.x - d2.x / 2 + d3.x / 3, c[1].y = d1.y - d2.y / 2 + d3.y / 3;
+    c[2].x = (d2.x - d3.x) / 2, c[2].y = (d2.y - d3.y) / 2;
+    c[3].x = d3.x / 6, c[3].y = d3.y / 6;
+}
+
+/* Sample 4 <= n <= 64 points (u, v) of the square, evenly spaced along one line of it. Through a lens, four of them are projected
+ * and the rest follow the cubic through those, which over the short lines this reads is as good as projecting each. */
+static void quad_sample_line(const image_view *im, const quad_map *m, double *u, double *v, int n, double *out, vec2 *raw) {
+    if (!m->lens) {
+        sample_points_impl(im, m->H, u, v, n, out, raw);
+        return;
+    }
+    vec2 node[4], c[4];
+    for (int k = 0; k < 4; k++) node[k] = quad_point(m, u[0] + (u[n - 1] - u[0]) * k / 3, v[0] + (v[n - 1] - v[0]) * k / 3);
+    cubic_through(node, c);
+    /* The cubic in the sample index (s = 3 i / (n - 1)), stepped by forward differences, then read like a homography's. */
+    const double h = 3.0 / (n - 1), a1x = c[1].x * h, a2x = c[2].x * h * h, a3x = c[3].x * h * h * h;
+    const double a1y = c[1].y * h, a2y = c[2].y * h * h, a3y = c[3].y * h * h * h;
+    double x = c[0].x, y = c[0].y, f1x = a1x + a2x + a3x, f1y = a1y + a2y + a3y, f2x = 2 * a2x + 6 * a3x, f2y = 2 * a2y + 6 * a3y;
+    const double f3x = 6 * a3x, f3y = 6 * a3y;
+    double xs[64], ys[64];
+    for (int i = 0; i < n; i++) {
+        xs[i] = x, ys[i] = y;
+        x += f1x, y += f1y, f1x += f2x, f1y += f2y, f2x += f3x, f2y += f3y;
+    }
+    static const double identity[9] = {1, 0, 0, 0, 1, 0, 0, 0, 1};
+    sample_points_impl(im, identity, xs, ys, n, out, raw);
+}
+
+
 /* Non-mutating median of an even number of finite samples, 2 <= n <= 68.
  * Partition into separate buffers; repeated values occupy the pivot's equal range. */
 static double median_even(const double *v, int n) {
@@ -2618,9 +3842,10 @@ static int border_bias(const family_layout *L, const image_view *im, const vec2 
     enum { N = 33 };
     double cell_d[NAPA_BORDER_CELLS_MAX], mean_cell = 0;
     unsigned char cell_side[NAPA_BORDER_CELLS_MAX];
-    double H[9], sum = 0, side_sum[4] = {0, 0, 0, 0};
+    quad_map M;
+    double sum = 0, side_sum[4] = {0, 0, 0, 0};
     int n = 0, side_n[4] = {0, 0, 0, 0};
-    square_to_quad(q, H);
+    quad_map_init(im, q, &M);
     double mid = 0.5 * (black + white);
     for (int side = 0; side < 4; side++) {
         /* grow_quad moves sides along their normals; measure border widths in those same units.
@@ -2640,7 +3865,7 @@ static int border_bias(const family_layout *L, const image_view *im, const vec2 
     } while (0)
             double u, v;
             UNIT(1.5, u, v);
-            vec2 pc = project(H, u, v);
+            vec2 pc = quad_point(&M, u, v);
             double payload = sample_bilinear(im, pc.x, pc.y);
             if (payload < mid) continue; /* dark payload cell */
             double prof[N], us[N - 1], vs[N - 1];
@@ -2648,7 +3873,7 @@ static int border_bias(const family_layout *L, const image_view *im, const vec2 
             for (int j = 0; j < N - 1; j++) {
                 UNIT(-0.5 + 2.0 * j / (N - 1), us[j], vs[j]);
             }
-            sample_points_impl(im, H, us, vs, N - 1, prof, pts);
+            quad_sample_line(im, &M, us, vs, N - 1, prof, pts);
             pts[N - 1] = pc;
             prof[N - 1] = payload;
             /* Outer edge within half a cell of t = 0, inner edge within half a cell of t = 1. */
@@ -2702,15 +3927,45 @@ static int border_bias(const family_layout *L, const image_view *im, const vec2 
     return n;
 }
 
+/* One line of the square, across fixed and x running along it in cells: (u, v) = (x, across) / cells, or swapped. Through a
+ * lens it is the cubic through four projected points, which over one tag is as good as projecting each point. */
+typedef struct {
+    const quad_map *m;
+    int axis;
+    double across, cells, x0, inv_step;
+    vec2 c[4]; /* the cubic in s = (x - x0) / step */
+} quad_line;
+
+static void quad_line_init(quad_line *l, const quad_map *m, int axis, double across, double cells, double x0, double x1) {
+    const double step = (x1 - x0) / 3;
+    l->m = m, l->axis = axis, l->across = across, l->cells = cells, l->x0 = x0, l->inv_step = 1 / step;
+    if (m->lens) {
+        vec2 node[4];
+        for (int k = 0; k < 4; k++) {
+            const double x = (x0 + k * step) / cells;
+            node[k] = axis ? quad_point(m, across, x) : quad_point(m, x, across);
+        }
+        cubic_through(node, l->c);
+    }
+}
+
+static inline vec2 quad_line_point(const quad_line *l, double x) {
+    if (!l->m->lens) return l->axis ? project(l->m->H, l->across, x / l->cells) : project(l->m->H, x / l->cells, l->across);
+    const double s = (x - l->x0) * l->inv_step;
+    const vec2 p = {l->c[0].x + s * (l->c[1].x + s * (l->c[2].x + s * l->c[3].x)), l->c[0].y + s * (l->c[1].y + s * (l->c[2].y + s * l->c[3].y))};
+    return p;
+}
+
 /* A tone bias (clipping, gamma under blur) moves every black-white edge of the tag alike, payload
  * edges included. A border that simply is not one cell wide moves only its own inner edge. Measure how far the
  * payload's own edges sit from the cell grid, signed so + means black regions are smaller, in pixels per edge.
  * Edges entering and leaving black are averaged separately so a small grid shift cancels. */
 static int payload_bias(const family_layout *L, const image_view *im, const vec2 q[4], double black, double white, double *delta) {
     enum { PER = 3, MAXC = 16 };
-    double H[9], A[2][3][3] = {{{0}}}, B[2][3] = {{0}};
+    quad_map M;
+    double A[2][3][3] = {{{0}}}, B[2][3] = {{0}};
     int n[2] = {0, 0};
-    square_to_quad(q, H);
+    quad_map_init(im, q, &M);
     const double mid = 0.5 * (black + white);
     const int cells = L->cells, steps = (cells - 3) * PER;
     for (int axis = 0; axis < 2; axis++)
@@ -2718,21 +3973,23 @@ static int payload_bias(const family_layout *L, const image_view *im, const vec2
             double prev = 0, xprev = 0, xs[MAXC], px[MAXC];
             int dark_after[MAXC], count = 0;
             const double across = (line + 0.5) / cells;
+            quad_line ln;
+            quad_line_init(&ln, &M, axis, across, cells, 1.0, cells - 1.0);
             for (int j = 0; j <= steps && count < MAXC; j++) {
                 const double x = 1.5 + (double)j / PER;
-                const vec2 p = axis ? project(H, across, x / cells) : project(H, x / cells, across);
+                const vec2 p = quad_line_point(&ln, x);
                 const double val = sample_bilinear(im, p.x, p.y);
                 if (j > 0 && (prev < mid) != (val < mid)) {
                     double xa = xprev, xb = x, va = prev, vb = val;
                     for (int it = 0; it < 5; it++) {
                         const double xm = 0.5 * (xa + xb);
-                        const vec2 pm = axis ? project(H, across, xm / cells) : project(H, xm / cells, across);
+                        const vec2 pm = quad_line_point(&ln, xm);
                         const double vm = sample_bilinear(im, pm.x, pm.y);
                         if ((vm < mid) == (va < mid)) xa = xm, va = vm; else xb = xm, vb = vm;
                     }
                     xs[count] = vb != va ? xa + (mid - va) / (vb - va) * (xb - xa) : 0.5 * (xa + xb);
-                    const vec2 p0 = axis ? project(H, across, (xs[count] - 0.5) / cells) : project(H, (xs[count] - 0.5) / cells, across);
-                    const vec2 p1 = axis ? project(H, across, (xs[count] + 0.5) / cells) : project(H, (xs[count] + 0.5) / cells, across);
+                    const vec2 p0 = quad_line_point(&ln, xs[count] - 0.5);
+                    const vec2 p1 = quad_line_point(&ln, xs[count] + 0.5);
                     px[count] = hypot(p1.x - p0.x, p1.y - p0.y);
                     dark_after[count++] = val < mid;
                 }
@@ -3361,6 +4618,81 @@ static void comp_add_run(component *c, const napa_run *r) {
     c->count += r->x1 - r->x0 + 1;
 }
 
+/* Row-pair runs (label_row_pair). The first dark bit at or after x, and the last at or before x, of a
+ * row known to have one there. */
+static int first_bit(const uint64_t *b, int x) {
+    int w = x >> 6;
+    uint64_t v = b[w] & (~(uint64_t)0 << (x & 63));
+    while (!v) v = b[++w];
+    return 64 * w + napa_ctz64(v);
+}
+
+static int last_bit(const uint64_t *b, int x) {
+    int w = x >> 6;
+    uint64_t v = b[w] & (~(uint64_t)0 >> (63 - (x & 63)));
+    while (!v) v = b[--w];
+    return 64 * w + 63 - napa_clz64(v);
+}
+
+/* Samples x0..x1 dark in both rows a and b. */
+static int bits_count_both(const uint64_t *a, const uint64_t *b, int x0, int x1) {
+    int w = x0 >> 6, last = x1 >> 6, count = 0;
+    uint64_t v = a[w] & b[w] & (~(uint64_t)0 << (x0 & 63));
+    for (; w < last; w++, v = a[w] & b[w]) count += napa_popcount64(v);
+    return count + napa_popcount64(v & (~(uint64_t)0 >> (63 - (x1 & 63))));
+}
+
+/* Fold the pending row pair into the extremes: its top row, then its bottom row, as comp_add_run's
+ * flushes would. A negative x1 is -x1 - 1 of a union run whose last dark sample is still to find. */
+static void comp_flush_pair(component *c, const uint64_t *bits, int stride) {
+    if (c->pair_y < 0) return;
+    const uint64_t *t = bits + (size_t)c->pair_y * stride;
+    if (c->top_x0 >= 0) {
+        c->row_y = c->pair_y, c->row_x0 = c->top_x0;
+        c->row_x1 = c->top_x1 >= 0 ? c->top_x1 : last_bit(t, -c->top_x1 - 1);
+        comp_flush_row(c);
+    }
+    if (c->bot_x0 >= 0) {
+        c->row_y = c->pair_y + 1, c->row_x0 = c->bot_x0;
+        c->row_x1 = c->bot_x1 >= 0 ? c->bot_x1 : last_bit(t + stride, -c->bot_x1 - 1);
+        comp_flush_row(c);
+    }
+}
+
+/* comp_add_run for row-pair runs, which arrive pair by pair: runs dark in the top row left to right,
+ * then the rest left to right (label_row_pair). A union run dark in one row only is exactly that row's
+ * run. One dark in both counts its samples as its length plus the columns dark in both rows, and its
+ * rows' extents come from the dark bits: the top row's last only at the flush. Runs dark in the bottom
+ * row arrive in two sweeps, so its extents take the outermost. */
+static NAPA_FORCE_INLINE void comp_add_pair_run(component *c, const napa_run *r, const uint64_t *bits, int stride) {
+    const int pair_y = r->y & ~1;
+    if (pair_y != c->pair_y) {
+        comp_flush_pair(c, bits, stride);
+        c->pair_y = pair_y, c->top_x0 = c->bot_x0 = -1;
+    }
+    if (r->rows == 3) {
+        const uint64_t *t = bits + (size_t)r->y * stride, *b = t + stride;
+        c->count += r->x1 - r->x0 + 1 + bits_count_both(t, b, r->x0, r->x1);
+        if (c->top_x0 < 0) c->top_x0 = first_bit(t, r->x0);
+        c->top_x1 = -r->x1 - 1;
+        /* The first such run is the leftmost dark in the bottom row so far: only top-row runs came before. */
+        if (c->bot_x0 < 0) c->bot_x0 = first_bit(b, r->x0);
+        c->bot_x1 = -r->x1 - 1;
+        return;
+    }
+    c->count += r->x1 - r->x0 + 1;
+    if (!(r->y & 1) && r->rows == 1) {
+        if (c->top_x0 < 0) c->top_x0 = r->x0;
+        c->top_x1 = r->x1;
+    } else if (c->bot_x0 < 0) {
+        c->bot_x0 = r->x0, c->bot_x1 = r->x1;
+    } else {
+        /* Runs are disjoint: compare with the range of the run holding the current extreme. */
+        if (r->x0 < c->bot_x0) c->bot_x0 = r->x0;
+        if (r->x1 > (c->bot_x1 >= 0 ? c->bot_x1 : -c->bot_x1 - 1)) c->bot_x1 = r->x1;
+    }
+}
+
 static double quad_area_pts(int p[4][2]) {
     double s = 0;
     for (int k = 0; k < 4; k++) {
@@ -3396,8 +4728,9 @@ static int grow_pieces(napa_detector *det, size_t n) {
     return 0;
 }
 
-/* Level coordinates stay below 30000, so a box's minx has a spare top bit: it marks a component seen this stage. */
+/* Level coordinates stay below NAPA_MAX_SIDE, so a box's minx has a spare top bit: it marks a component seen this stage. */
 #define PIECE_SEEN 0x8000u
+typedef char napa_side_fits_15_bits[NAPA_MAX_SIDE < 0x8000 ? 1 : -1]; /* coordinates leave PIECE_SEEN's bit free */
 
 /* Preserve the old box-density decision for existing split-piece dependencies. */
 static int box_is_sparse(int count, int width, int height) {
@@ -3667,6 +5000,66 @@ static void pair_diffs(const uint8_t *row, int n, uint8_t *out) {
     }
 }
 
+typedef struct {
+    napa_detector *det;
+    const uint8_t *L;
+    int lw, lh, cols, min_contrast, cap;
+    double sigmas;
+    uint32_t (*all)[64]; /* per region row: the sum of its regions' histograms */
+} floor_job;
+
+/* The noise floors of region row ry, and that row's share of the frame histogram. */
+static void floor_row_regions(void *arg, int ry) {
+    floor_job *job = (floor_job *)arg;
+    const int lw = job->lw, lh = job->lh, cols = job->cols;
+    uint32_t *all = job->all[ry];
+    memset(all, 0, 64 * sizeof(uint32_t));
+    for (int rx = 0; rx < cols; rx++) {
+        /* Four interleaved histograms: a flat region repeats the same few differences, and
+         * consecutive increments of one counter would wait on each other. */
+        uint32_t h4[4][64], hist[64], n = 0;
+        memset(h4, 0, sizeof h4);
+        int x0 = rx * NAPA_REGION, x1 = x0 + NAPA_REGION < lw ? x0 + NAPA_REGION : lw;
+        int y1 = (ry + 1) * NAPA_REGION < lh ? (ry + 1) * NAPA_REGION : lh;
+        int pairs = (x1 - x0) / 2;
+        for (int y = ry * NAPA_REGION; y < y1; y += 8) {
+            uint8_t d[NAPA_REGION / 2];
+            pair_diffs(job->L + (size_t)y * lw + x0, pairs, d);
+            int k = 0;
+            for (; k + 4 <= pairs; k += 4) {
+                h4[0][d[k]]++;
+                h4[1][d[k + 1]]++;
+                h4[2][d[k + 2]]++;
+                h4[3][d[k + 3]]++;
+            }
+            for (; k < pairs; k++) h4[k & 3][d[k]]++;
+        }
+        for (int k = 0; k < 64; k++) {
+            hist[k] = h4[0][k] + h4[1][k] + h4[2][k] + h4[3][k];
+            n += hist[k], all[k] += hist[k];
+        }
+        job->det->floors[ry * cols + rx] = (uint8_t)(n >= 16 ? floor_from(hist, n, job->min_contrast, job->sigmas, job->cap) : 0);
+    }
+}
+
+static void invert_bytes(uint8_t *p, size_t n);
+typedef struct {
+    napa_detector *det;
+    const uint8_t *img;
+    int stride, lw, lh, s, invert;
+} gather_job;
+
+/* Chunk k (64 rows) of the rows the noise floors skipped (all but every 8th); inverted for reversed families. */
+static void gather_rest(void *arg, int k) {
+    gather_job *job = (gather_job *)arg;
+    const int y1 = (k + 1) * 64 < job->lh ? (k + 1) * 64 : job->lh;
+    for (int y = k * 64; y < y1; y++) {
+        uint8_t *row = job->det->level + (size_t)y * job->lw;
+        if (y & 7) gather_row(row, job->img + (size_t)y * job->s * job->stride, job->lw, job->s, job->det->ssse3);
+        if (job->invert) invert_bytes(row, (size_t)job->lw);
+    }
+}
+
 /* Each region's floor into det->floors (from pairs of samples on every 8th row), at most the frame's,
  * which is returned; a region too small to measure takes the frame's. Returns -1 if out of memory. */
 static int contrast_floors(napa_detector *det, const uint8_t *L, int lw, int lh, int min_contrast, double sigmas, int cap) {
@@ -3677,37 +5070,19 @@ static int contrast_floors(napa_detector *det, const uint8_t *L, int lw, int lh,
         det->floors = p;
         det->floor_alloc = (size_t)cols * rows;
     }
-    det->floor_cols = cols, det->floor_rows = rows;
-    uint32_t all[64] = {0}, n_all = 0;
-    for (int ry = 0; ry < rows; ry++) {
-        for (int rx = 0; rx < cols; rx++) {
-            /* Four interleaved histograms: a flat region repeats the same few differences, and
-             * consecutive increments of one counter would wait on each other. */
-            uint32_t h4[4][64], hist[64], n = 0;
-            memset(h4, 0, sizeof h4);
-            int x0 = rx * NAPA_REGION, x1 = x0 + NAPA_REGION < lw ? x0 + NAPA_REGION : lw;
-            int y1 = (ry + 1) * NAPA_REGION < lh ? (ry + 1) * NAPA_REGION : lh;
-            int pairs = (x1 - x0) / 2;
-            for (int y = ry * NAPA_REGION; y < y1; y += 8) {
-                uint8_t d[NAPA_REGION / 2];
-                pair_diffs(L + (size_t)y * lw + x0, pairs, d);
-                int k = 0;
-                for (; k + 4 <= pairs; k += 4) {
-                    h4[0][d[k]]++;
-                    h4[1][d[k + 1]]++;
-                    h4[2][d[k + 2]]++;
-                    h4[3][d[k + 3]]++;
-                }
-                for (; k < pairs; k++) h4[k & 3][d[k]]++;
-            }
-            for (int k = 0; k < 64; k++) {
-                hist[k] = h4[0][k] + h4[1][k] + h4[2][k] + h4[3][k];
-                n += hist[k], all[k] += hist[k];
-            }
-            n_all += n;
-            det->floors[ry * cols + rx] = (uint8_t)(n >= 16 ? floor_from(hist, n, min_contrast, sigmas, cap) : 0);
-        }
+    if ((size_t)rows > det->floor_hist_rows) {
+        uint32_t (*p)[64] = (uint32_t (*)[64])realloc(det->floor_hist, (size_t)rows * sizeof *p);
+        if (p == NULL) return -1;
+        det->floor_hist = p;
+        det->floor_hist_rows = (size_t)rows;
     }
+    det->floor_cols = cols, det->floor_rows = rows;
+    floor_job job = {det, L, lw, lh, cols, min_contrast, cap, sigmas, det->floor_hist};
+    /* Region rows are independent and the frame histogram is a sum, so threads change nothing. */
+    pool_run(pool_for(det, (size_t)lw * lh), floor_row_regions, &job, rows);
+    uint32_t all[64] = {0}, n_all = 0;
+    for (int ry = 0; ry < rows; ry++)
+        for (int k = 0; k < 64; k++) all[k] += det->floor_hist[ry][k], n_all += det->floor_hist[ry][k];
     int frame = n_all ? floor_from(all, n_all, min_contrast, sigmas, cap) : min_contrast;
     det->floor_uniform = 1;
     for (int i = 0; i < cols * rows; i++) {
@@ -3970,7 +5345,7 @@ static void tone_sweep(const napa_detector *det, const float cells[10][10], cons
         const int su = vary_v ? was_u : b, sv = vary_v ? b : was_v;
         if (!vary_v || b == 0) tone_across(cells, (const float (*)[10])det->tone_blur[su], step, across);
         double c[3];
-        const double sse = tone_fit(y, across, (const float (*)[10])det->tone_blur[sv], step, c);
+        const double sse = tone_fit(y, (const float (*)[30])across, (const float (*)[10])det->tone_blur[sv], step, c);
         if (sse < *best) *best = sse, *u = su, *v = sv, memcpy(tone, c, 3 * sizeof *tone);
     }
 }
@@ -4031,7 +5406,7 @@ static int tone_measure_tag(napa_detector *det, const image_view *view, const na
         tone_sample(view, q, 3, y);
         for (int b = 2; b <= 6; b += 2) {
             double c[3];
-            const double sse = tone_fit(y, across, (const float (*)[10])det->tone_blur[b], 3, c);
+            const double sse = tone_fit(y, (const float (*)[30])across, (const float (*)[10])det->tone_blur[b], 3, c);
             if (sse < best) best = sse, memcpy(tone, c, sizeof tone);
         }
     }
@@ -4052,7 +5427,7 @@ static int tone_measure_tag(napa_detector *det, const image_view *view, const na
     {
         float across[10][30];
         tone_across((const float (*)[10])m->cells, (const float (*)[10])det->tone_blur[u], 1, across);
-        best = tone_fit(y, across, (const float (*)[10])det->tone_blur[v], 1, tone);
+        best = tone_fit(y, (const float (*)[30])across, (const float (*)[10])det->tone_blur[v], 1, tone);
     }
     memcpy(m->tone, tone, sizeof tone);
     m->fit = 1 - best / NAPA_SOFT_AREA;
@@ -4231,24 +5606,247 @@ static int halve_frame(napa_detector *det, const uint8_t *img, int width, int he
     return 0;
 }
 
+/* A tag only a little bigger than the finest level's sampling can come apart there: its thin black border falls
+ * between samples, and the candidate is a fragment of the tag, whose quad fits nothing that reads. Sampling every
+ * pixel keeps the border whole. So when a small candidate's code doesn't read, regrow it at full resolution: threshold
+ * a window around it at the window's own midpoint, follow the dark pixels connected to the fragment, and take that
+ * component's extremes along the 16 directions. Returns 0 when it can't: no contrast, no dark pixel at the fragment,
+ * or a component reaching the window's edge (merged with its surroundings, which a tag's quiet zone prevents). */
+#define NAPA_REGROW_MAX_PX 28.0 /* the largest candidate regrown, in pixels: bigger tags keep their border at the finest level */
+#define NAPA_REGROW_WINDOW 128  /* the largest window side */
+/* Regrowths a pass may make. A frame needs a few to a few dozen; a 4K frame of tiny unreadable shapes can raise
+ * thousands, at a few microseconds each, and the budget keeps that from multiplying its time. */
+#define NAPA_REGROW_BUDGET 32
+
+static int regrow_small(napa_detector *det, const image_view *view, const vec2 rough[4], double side, int min_contrast,
+                        component *c, int *ox, int *oy) {
+    if (det->regrow_left <= 0) return 0;
+    det->regrow_left--;
+    if (det->regrow_stack == NULL) {
+        det->regrow_stack = (int32_t *)malloc(sizeof(int32_t) * NAPA_REGROW_WINDOW * NAPA_REGROW_WINDOW);
+        det->regrow_mark = (uint16_t *)calloc(NAPA_REGROW_WINDOW * NAPA_REGROW_WINDOW, sizeof(uint16_t));
+        if (det->regrow_stack == NULL || det->regrow_mark == NULL) {
+            free(det->regrow_stack), free(det->regrow_mark);
+            det->regrow_stack = NULL, det->regrow_mark = NULL;
+            return 0;
+        }
+    }
+    double cx = 0, cy = 0;
+    for (int k = 0; k < 4; k++) cx += 0.25 * rough[k].x, cy += 0.25 * rough[k].y;
+    const int r = (int)(1.3 * side + 6.0);
+    int x0 = (int)cx - r, y0 = (int)cy - r, x1 = (int)cx + r + 1, y1 = (int)cy + r + 1;
+    x0 = x0 < 0 ? 0 : x0, y0 = y0 < 0 ? 0 : y0;
+    x1 = x1 > view->w ? view->w : x1, y1 = y1 > view->h ? view->h : y1;
+    const int w = x1 - x0, h = y1 - y0;
+    if (w < 8 || h < 8 || w > NAPA_REGROW_WINDOW || h > NAPA_REGROW_WINDOW) return 0;
+    const uint8_t *base = view->p + (size_t)y0 * view->stride + x0;
+    const int flip = view->invert ? 255 : 0; /* reversed families are read inverted */
+    int lo = 255, hi = 0;
+    for (int y = 0; y < h; y += 2) { /* every other row and column: a tag's border and quiet zone are wider */
+        const uint8_t *row = base + (size_t)y * view->stride;
+        for (int x = 0; x < w; x += 2) {
+            const int v = row[x] ^ flip;
+            lo = v < lo ? v : lo, hi = v > hi ? v : hi;
+        }
+    }
+    if (hi - lo < min_contrast) return 0;
+    const int t = (lo + hi + 1) >> 1;
+    uint16_t *mark = det->regrow_mark;
+    int32_t *stack = det->regrow_stack;
+    if (++det->regrow_stamp == 0) { /* the stamp wrapped: clear the old marks */
+        memset(mark, 0, sizeof(uint16_t) * NAPA_REGROW_WINDOW * NAPA_REGROW_WINDOW);
+        det->regrow_stamp = 1;
+    }
+    const uint16_t stamp = det->regrow_stamp;
+    int seed = -1;
+    for (int k = 0; k < 4 && seed < 0; k++) { /* the rough corners are dark samples of the fragment */
+        const int sx = (int)floor(rough[k].x + 0.5) - x0, sy = (int)floor(rough[k].y + 0.5) - y0;
+        for (int dy = -1; dy <= 1 && seed < 0; dy++)
+            for (int dx = -1; dx <= 1 && seed < 0; dx++) {
+                const int x = sx + dx, y = sy + dy;
+                if (x >= 0 && y >= 0 && x < w && y < h && (base[(size_t)y * view->stride + x] ^ flip) < t) seed = y * w + x;
+            }
+    }
+    if (seed < 0) return 0;
+    c->count = 0;
+    c->minx = c->miny = 1 << 30, c->maxx = c->maxy = -1;
+    for (int k = 0; k < 16; k++) c->extv[k] = INT32_MIN;
+    int top = 0;
+    stack[top++] = seed, mark[seed] = stamp;
+    while (top) {
+        const int i = stack[--top], x = i % w, y = i / w;
+        if (x == 0 || y == 0 || x == w - 1 || y == h - 1) return 0;
+        c->count++;
+        c->minx = x < c->minx ? x : c->minx, c->maxx = x > c->maxx ? x : c->maxx;
+        c->miny = y < c->miny ? y : c->miny, c->maxy = y > c->maxy ? y : c->maxy;
+        for (int k = 0; k < 16; k++) {
+            const int v = comp_dirs[k][0] * x + comp_dirs[k][1] * y;
+            if (v > c->extv[k]) c->extv[k] = v, c->ext[k][0] = x, c->ext[k][1] = y;
+        }
+        for (int dy = -1; dy <= 1; dy++)
+            for (int dx = -1; dx <= 1; dx++) {
+                const int j = i + dy * w + dx; /* in the window: x and y aren't on its edge */
+                if (mark[j] != stamp && (base[(size_t)(y + dy) * view->stride + x + dx] ^ flip) < t) mark[j] = stamp, stack[top++] = j;
+            }
+    }
+    *ox = x0, *oy = y0;
+    return 1;
+}
+
+/* The rough quad of a candidate blob, from its extreme points; shared by the candidate loop and its threaded
+ * pre-pass, so both compute it the same way. */
+static NAPA_NOINLINE void rough_pick(const component *comp, int new_small, int pick[4][2]) {
+    /* Rough quad: of the extreme points (in clockwise angular order), the four that span the
+     * largest quadrilateral. Start from the best of the eight axis and diagonal extremes, then
+     * let each vertex move to any of the 16 extremes between its neighbours while the area
+     * grows: axis or diagonal extremes alone slide along a side near 22 and 67 degrees. */
+    /* Twice the area (positive, as the extremes run clockwise with y down) is the sum of
+     * cross(p[t], p[t + 1]), so moving vertex v to point m changes it by a term linear in m:
+     * cross(m, next - prev). Each move is one dot product. */
+    const int(*E)[2] = comp->ext;
+    int idx[4] = {0, 4, 8, 12};
+    int64_t best2 = -1; /* twice the area: (p2 - p0) x (p3 - p1) */
+    for (int i = 0; i < 10; i += 2) {
+        for (int j = i + 2; j < 12; j += 2) {
+            for (int k = j + 2; k < 14; k += 2) {
+                for (int l = k + 2; l < 16; l += 2) {
+                    int64_t a2 = (int64_t)(E[k][0] - E[i][0]) * (E[l][1] - E[j][1]) -
+                                 (int64_t)(E[k][1] - E[i][1]) * (E[l][0] - E[j][0]);
+                    if (a2 > best2) best2 = a2, idx[0] = i, idx[1] = j, idx[2] = k, idx[3] = l;
+                }
+            }
+        }
+    }
+    for (int moved = 1, sweep = 0; moved && sweep < 4; sweep++) {
+        moved = 0;
+        for (int v = 0; v < 4; v++) {
+            int pv = idx[(v + 3) & 3], nv = idx[(v + 1) & 3];
+            int ex = E[nv][0] - E[pv][0], ey = E[nv][1] - E[pv][1];
+            int64_t cur = (int64_t)E[idx[v]][0] * ey - (int64_t)E[idx[v]][1] * ex;
+            for (int m = (pv + 1) & 15; m != nv; m = (m + 1) & 15) {
+                int64_t gain = (int64_t)E[m][0] * ey - (int64_t)E[m][1] * ex;
+                if (gain > cur) cur = gain, idx[v] = m, moved = 1;
+            }
+        }
+    }
+    for (int t = 0; t < 4; t++) pick[t][0] = E[idx[t]][0], pick[t][1] = E[idx[t]][1];
+    if (new_small) complete_small_outline(pick, comp->minx, comp->maxx, comp->miny, comp->maxy);
+}
+
+/* A rough quad's corners in pixels. */
+static NAPA_NOINLINE void rough_corners(int pick[4][2], int s, double sx, double sy, double offx, double offy,
+                                        vec2 rough[4]) {
+    for (int k = 0; k < 4; k++) {
+        rough[k].x = pick[k][0] * (double)s * sx + offx;
+        rough[k].y = pick[k][1] * (double)s * sy + offy;
+    }
+}
+
+/* Sparse paired border samples, before the expensive edge profiles: whether the rough quad (grown by `grow`) has a
+ * quiet zone brighter than its border on three sides, and over all four on average when `strict`. */
+static NAPA_NOINLINE int quiet_zone_passes(const image_view *view, const vec2 rough[4], double grow, double cells,
+                                           int min_contrast, int strict, int shadow) {
+    vec2 q[4];
+    double H[9];
+    grow_quad(rough, grow, q);
+    square_to_quad(q, H);
+    int good_sides = 0;
+    double all_sides = 0;
+    double half_cell = 0.5 / cells;
+    for (int side = 0; side < 4; side++) {
+        double contrast_sum = 0;
+        for (int j = 0; j < 2; j++) {
+            double along = 0.25 + 0.5 * j;
+            double u = side == 1 ? 1.0 : side == 3 ? 0.0 : along;
+            double v = side == 0 ? 0.0 : side == 2 ? 1.0 : along;
+            double du = side == 1 ? half_cell : side == 3 ? -half_cell : 0;
+            double dv = side == 2 ? half_cell : side == 0 ? -half_cell : 0;
+            vec2 white = project(H, u + du, v + dv), black = project(H, u - du, v - dv);
+            contrast_sum += sample_bilinear(view, white.x, white.y) - sample_bilinear(view, black.x, black.y);
+        }
+        good_sides += contrast_sum >= min_contrast * 0.25;
+        all_sides += contrast_sum;
+    }
+    return !(good_sides < 3 || (strict && all_sides < (shadow ? 6.0 : 4.8) * min_contrast));
+}
+
+/* threads: a candidate's rough quad, screen and first fit, for the candidate loop. screen and fit are -1 where the
+ * pre-pass didn't get that far (the loop then works them out itself, if it gets there). */
+typedef struct cand_memo {
+    int pick[4][2];
+    signed char screen, fit;
+    vec2 fine[4];
+    double edge_w;
+    initial_capture capture;
+} cand_memo;
+
+enum { MEMO_CHUNK = 4 };
+
+typedef struct {
+    napa_detector *det;
+    const image_view *view;
+    const napa_params *params;
+    int s, base, lo, last, shadow;
+    double sx, sy, offx, offy, smax, cells;
+    int n;
+} memo_job;
+
+/* One chunk of the pre-pass, for the ordinary candidates (det->cands), as the candidate loop treats them. */
+static void memo_candidates(void *ctx, int chunk) {
+    const memo_job *j = (const memo_job *)ctx;
+    napa_detector *det = j->det;
+    const int end = (chunk + 1) * MEMO_CHUNK < j->n ? (chunk + 1) * MEMO_CHUNK : j->n;
+    for (int ci = chunk * MEMO_CHUNK; ci < end; ci++) {
+        cand_memo *m = &det->memo[ci];
+        const component *comp = &det->cands[ci];
+        m->screen = m->fit = -1;
+        const int bw = comp->maxx - comp->minx + 1, bh = comp->maxy - comp->miny + 1;
+        const int new_small = j->base > 1 && (bw < j->lo || bh < j->lo);
+        rough_pick(comp, new_small, m->pick);
+        if (new_small || dense_whole_is_new(j->base, j->s, j->last, bw, bh)) continue; /* set aside by the loop */
+        double best_area = quad_area_pts(m->pick), perim_q = 0;
+        for (int k = 0; k < 4; k++) {
+            int ex = m->pick[(k + 1) & 3][0] - m->pick[k][0], ey = m->pick[(k + 1) & 3][1] - m->pick[k][1];
+            perim_q += sqrt((double)(ex * ex + ey * ey));
+        }
+        if (comp->count > det->fam.fill_limit * (best_area + 0.5 * perim_q + 1.0)) continue;
+        vec2 rough[4], fine[4];
+        rough_corners(m->pick, j->s, j->sx, j->sy, j->offx, j->offy, rough);
+        const int s = j->s;
+        if ((j->shadow || ((s <= 2 || (s <= 6 && !new_small)) && !j->last)) && j->params->min_border_cells >= 22) {
+            m->screen = (signed char)quiet_zone_passes(j->view, rough, 0.5 * s * j->smax, j->cells, j->params->min_contrast,
+                                                       j->shadow || s <= 2 || (s <= 6 && !new_small), j->shadow);
+            if (!m->screen) continue;
+        }
+        double width = 0;
+        m->fit = (signed char)fit_initial_captured(j->view, rough, fine, 1.5 * s * j->smax + 1.0, 0.5 * s * j->smax + 1.0,
+                                                   j->params->min_contrast, &width, j->cells, &m->capture);
+        memcpy(m->fine, fine, sizeof fine);
+        m->edge_w = width;
+    }
+}
+
 static int detect_pass(napa_detector *det, const uint8_t *img, int width, int height, int stride, const napa_params *params,
                 napa_detection *out, int max_out, int found, int shadow) {
     if (det == NULL || img == NULL || params == NULL) return -1;
     if (stride < width || max_out < 0) return -1;
-    if (width > 30000 || height > 30000) return -1;
+    if (width > NAPA_MAX_SIDE || height > NAPA_MAX_SIDE) return -1;
     if (params->min_tag_px < 8 || params->min_tag_px > 30000 || params->max_hamming < 0 || params->max_hamming > 3 ||
         params->min_contrast < 1 || params->min_contrast > 255 || params->min_border_cells < 0 ||
         params->min_border_cells > 28 || params->sharpening_x100 < 0 || params->sharpening_x100 > 100)
         return -1;
-    if (params->split_touching != 0 && params->split_touching != 1) return -1;
+    if (params->split_touching < 0 || params->split_touching > 2) return -1;
+    det->touching_seen = 0;
     if (width < 16 || height < 16) return 0;
-    const int split = params->split_touching && det->fam.piece_hamming >= 0;
+    const int split = params->split_touching == 1 && det->fam.piece_hamming >= 0;
+    /* split_touching 2: an ordinary pass that notes whether a decoded tag touches dark shapes at its corners. */
+    const int watch = params->split_touching == 2 && !shadow && det->fam.piece_hamming >= 0;
     const int W = det->fam.width;
     const double cells = det->fam.cells;
     /* Reversed families print the square light in a dark frame: read inverted, they look like every other
      * family, a dark square in a light quiet ring. The raked levels are inverted as they're made, and
      * full-resolution reads sample by sample (image_view). */
-    const image_view view = {img, width, height, stride, det->fam.f->reversed};
+    const image_view view = {img, width, height, stride, det->fam.f->reversed, det->lens.model ? &det->lens : NULL};
     /* A tag cell is min_tag_px / W wide, but blur turns its edges grey, so only its core is
      * reliably dark. Sampling every 3/4 cell guarantees a sample inside that core. */
     int base = params->min_tag_px * 3 / (4 * W);
@@ -4272,9 +5870,10 @@ static int detect_pass(napa_detector *det, const uint8_t *img, int width, int he
     /* split_touching splits at corners only until it finds a tag that touches dark shapes at its corners:
      * one-sample necks (anti-aliased corners) cost far more and only pay where tags do touch. Then the frame
      * starts over splitting necks too, and the levels already done (to redone) decode only their new pieces. */
-    int necks = 0, redone = 0, touching = 0;
+    int necks = split && det->split_from_necks, redone = 0, touching = necks;
     size_t fates_kept = 0; /* fates written before the restart */
     det->failed_n = 0;
+    det->regrow_left = det->regrow_small_tags ? NAPA_REGROW_BUDGET : 0;
     /* Size band in level samples. Adjacent levels overlap (7-24 here is 14-48 one level finer),
      * because a blob's measured extent varies by a sample or two with phase, blur and rotation. */
     const int lo = (7 * W + 4) / 8, hi = NAPA_HI * W / 8;
@@ -4328,9 +5927,8 @@ start:;
             int cap = s == 1 && !last ? 255 : NAPA_FLOOR_CAP;
             contrast = contrast_floors(det, gray, lw, lh, params->min_contrast, sigmas, cap);
             if (lazy_rows && !(contrast > NAPA_NOISY_FLOOR && s > 1 && s <= 16)) {
-                for (int y = 0; y < lh; y++)
-                    if (y & 7) gather_row(det->level + (size_t)y * lw, pimg + (size_t)y * s * pstride, lw, s, det->ssse3);
-                if (view.invert) invert_bytes(det->level, pixels);
+                gather_job job = {det, pimg, pstride, lw, lh, s, view.invert};
+                pool_run(pool_for(det, pixels), gather_rest, &job, (lh + 63) / 64);
             }
             /* A noisy frame: rake again, averaging each sample's block, and re-measure the noise. */
             if (contrast > NAPA_NOISY_FLOOR && s > 1 && s <= 16) {
@@ -4381,7 +5979,28 @@ start:;
         int32_t *P = det->parent;
         blob_box *B = det->boxes;
         int32_t nroots = 0;
-        for (int i = 0; i < nruns; i++) {
+        const int paired = !split && !shadow; /* row-pair runs (label_row_pair) */
+        if (paired) {
+            /* Row-pair runs: the same, with each run's rows giving its first and last row. A blob's
+             * first run holds its top row; later runs can end above earlier ones. Splitting alone
+             * reads blob counts. */
+            for (int i = 0; i < nruns; i++) {
+                const uint16_t miny = (uint16_t)(R[i].y + !(R[i].rows & 1)), maxy = (uint16_t)(R[i].y + (R[i].rows >> 1));
+                int32_t r;
+                if (P[i] == i) {
+                    r = nroots++;
+                    B[r].count = 0;
+                    B[r].minx = R[i].x0, B[r].maxx = R[i].x1;
+                    B[r].miny = miny, B[r].maxy = maxy;
+                } else {
+                    r = -P[P[i]] - 1;
+                    B[r].minx = R[i].x0 < B[r].minx ? R[i].x0 : B[r].minx;
+                    B[r].maxx = R[i].x1 > B[r].maxx ? R[i].x1 : B[r].maxx;
+                    B[r].maxy = maxy > B[r].maxy ? maxy : B[r].maxy;
+                }
+                P[i] = -r - 1;
+            }
+        } else for (int i = 0; i < nruns; i++) {
             int32_t r;
             if (P[i] == i) {
                 r = nroots++;
@@ -4443,7 +6062,7 @@ start:;
             component *c = &det->cands[ncand];
             c->count = 0;
             for (int k = 0; k < 16; k++) c->extv[k] = INT32_MIN;
-            c->row_y = -1;
+            c->row_y = c->pair_y = -1;
             c->minx = t_minx, c->maxx = t_maxx, c->miny = t_miny, c->maxy = t_maxy;
             det->slot[i] = ncand++;
         }
@@ -4480,7 +6099,15 @@ start:;
                 if (s > 1 || det->piece_cand[k] < 0) det->slot[det->piece_root[k]] = ncand + k;
             }
         }
-        if (npieces == 0) {
+        if (paired) {
+            const uint64_t *bits = det->level_bits;
+            const int stride = (lw + 63) / 64 + 1;
+            for (int i = 0; i < nruns; i++) {
+                int32_t c = det->slot[-P[i] - 1];
+                if (c >= 0) comp_add_pair_run(&det->cands[c], &R[i], bits, stride);
+            }
+            for (int ci = 0; ci < ncand; ci++) comp_flush_pair(&det->cands[ci], bits, stride);
+        } else if (npieces == 0) {
             for (int i = 0; i < nruns; i++) {
                 int32_t c = det->slot[-P[i] - 1];
                 if (c >= 0) comp_add_run(&det->cands[c], &R[i]);
@@ -4494,7 +6121,7 @@ start:;
             for (int k = 0; k < npieces; k++)
                 if (det->pieces[k].row_y >= 0) comp_flush_row(&det->pieces[k]); /* not: pieces given no runs */
         }
-        for (int ci = 0; ci < ncand; ci++) comp_flush_row(&det->cands[ci]);
+        if (!paired) for (int ci = 0; ci < ncand; ci++) comp_flush_row(&det->cands[ci]);
         if (npieces) {
             /* row_x1 is spent after the flush: it counts each candidate blob's proposed pieces. */
             for (int ci = 0; ci < ncand; ci++) det->cands[ci].row_x1 = 0;
@@ -4510,6 +6137,20 @@ start:;
 
         const int level_stride = s, terminal_level = last;
         const int ordinary_count = ncand + npieces;
+        /* With threads, work out every candidate's rough quad, screen and first fit in parallel first; the loop
+         * below takes them in order as it would have computed them. (A camera's lens memo isn't shared safely.) */
+        int memo_level = 0;
+        if (det->pool != NULL && view.lens == NULL && !redo && ncand >= 2 * MEMO_CHUNK) {
+            if ((size_t)ncand > det->memo_capacity) {
+                cand_memo *m = (cand_memo *)realloc(det->memo, (size_t)ncand * sizeof(cand_memo));
+                if (m != NULL) det->memo = m, det->memo_capacity = (size_t)ncand;
+            }
+            if ((size_t)ncand <= det->memo_capacity) {
+                memo_job job = {det, &view, params, s, base, lo, last, shadow, sx, sy, offx, offy, smax, cells, ncand};
+                pool_run(det->pool, memo_candidates, &job, (ncand + MEMO_CHUNK - 1) / MEMO_CHUNK);
+                memo_level = 1;
+            }
+        }
         if (last && fine_whole_count > (size_t)(INT32_MAX - ordinary_count)) return -2;
         int candidate_count = ordinary_count + (last ? (int)fine_whole_count : 0);
         for (int ci = 0; ci < candidate_count; ci++) {
@@ -4638,42 +6279,10 @@ start:;
                 self->row_y = -5;
                 continue;
             }
-            /* Rough quad: of the extreme points (in clockwise angular order), the four that span the
-             * largest quadrilateral. Start from the best of the eight axis and diagonal extremes, then
-             * let each vertex move to any of the 16 extremes between its neighbours while the area
-             * grows: axis or diagonal extremes alone slide along a side near 22 and 67 degrees. */
-            /* Twice the area (positive, as the extremes run clockwise with y down) is the sum of
-             * cross(p[t], p[t + 1]), so moving vertex v to point m changes it by a term linear in m:
-             * cross(m, next - prev). Each move is one dot product. */
-            int(*E)[2] = comp.ext;
-            int idx[4] = {0, 4, 8, 12};
-            int64_t best2 = -1; /* twice the area: (p2 - p0) x (p3 - p1) */
-            for (int i = 0; i < 10; i += 2) {
-                for (int j = i + 2; j < 12; j += 2) {
-                    for (int k = j + 2; k < 14; k += 2) {
-                        for (int l = k + 2; l < 16; l += 2) {
-                            int64_t a2 = (int64_t)(E[k][0] - E[i][0]) * (E[l][1] - E[j][1]) -
-                                         (int64_t)(E[k][1] - E[i][1]) * (E[l][0] - E[j][0]);
-                            if (a2 > best2) best2 = a2, idx[0] = i, idx[1] = j, idx[2] = k, idx[3] = l;
-                        }
-                    }
-                }
-            }
-            for (int moved = 1, sweep = 0; moved && sweep < 4; sweep++) {
-                moved = 0;
-                for (int v = 0; v < 4; v++) {
-                    int pv = idx[(v + 3) & 3], nv = idx[(v + 1) & 3];
-                    int ex = E[nv][0] - E[pv][0], ey = E[nv][1] - E[pv][1];
-                    int64_t cur = (int64_t)E[idx[v]][0] * ey - (int64_t)E[idx[v]][1] * ex;
-                    for (int m = (pv + 1) & 15; m != nv; m = (m + 1) & 15) {
-                        int64_t gain = (int64_t)E[m][0] * ey - (int64_t)E[m][1] * ex;
-                        if (gain > cur) cur = gain, idx[v] = m, moved = 1;
-                    }
-                }
-            }
+            const cand_memo *mm = memo_level && !piece && !delayed ? &det->memo[ci] : NULL;
             int pick[4][2];
-            for (int t = 0; t < 4; t++) pick[t][0] = E[idx[t]][0], pick[t][1] = E[idx[t]][1];
-            if (new_small) complete_small_outline(pick, comp.minx, comp.maxx, comp.miny, comp.maxy);
+            if (mm) memcpy(pick, mm->pick, sizeof pick);
+            else rough_pick(&comp, new_small, pick);
             double best_area = quad_area_pts(pick);
             /* Every tag36h11 code has at least 10 white payload cells, so at most 54/64 of a tag's
              * square is dark (0.85 measured, against the quad grown by the half sample its corner
@@ -4720,10 +6329,7 @@ start:;
                 decode_params = &strict_border;
             }
             PROF_MARK(PROF_QUAD);
-            for (int k = 0; k < 4; k++) {
-                rough[k].x = pick[k][0] * (double)s * sx + offx;
-                rough[k].y = pick[k][1] * (double)s * sy + offy;
-            }
+            rough_corners(pick, s, sx, sy, offx, offy, rough);
             /* Ordinary rough corners are dark samples. A completed small corner is a
              * geometric hypothesis from the same component bounds, not a new dark sample.
              * Retain the established mostly-outward fit window and final payload validation. */
@@ -4731,30 +6337,12 @@ start:;
              * Permit one weak side and leave terminal proposals unscreened: their ring can have
              * local clutter that a later level would normally resolve. Final decode is unchanged. */
             if ((shadow || piece || ((s <= 2 || (s <= 6 && !new_small)) && !last)) && params->min_border_cells >= 22) {
-                vec2 q[4];
-                double H[9];
-                grow_quad(rough, 0.5 * s * smax, q);
-                square_to_quad(q, H);
-                int good_sides = 0;
-                double all_sides = 0;
-                double half_cell = 0.5 / cells;
-                for (int side = 0; side < 4; side++) {
-                    double contrast_sum = 0;
-                    for (int j = 0; j < 2; j++) {
-                        double along = 0.25 + 0.5 * j;
-                        double u = side == 1 ? 1.0 : side == 3 ? 0.0 : along;
-                        double v = side == 0 ? 0.0 : side == 2 ? 1.0 : along;
-                        double du = side == 1 ? half_cell : side == 3 ? -half_cell : 0;
-                        double dv = side == 2 ? half_cell : side == 0 ? -half_cell : 0;
-                        vec2 white = project(H, u + du, v + dv), black = project(H, u - du, v - dv);
-                        contrast_sum += sample_bilinear(&view, white.x, white.y) - sample_bilinear(&view, black.x, black.y);
-                    }
-                    good_sides += contrast_sum >= params->min_contrast * 0.25;
-                    all_sides += contrast_sum;
-                }
                 /* A tag's quiet zone is brighter than its border all the way round; the interior
                  * fragments and clutter that dominate proposals average near zero. */
-                if (good_sides < 3 || ((shadow || s <= 2 || (s <= 6 && !new_small)) && all_sides < (shadow ? 6.0 : 4.8) * params->min_contrast)) {
+                const int pass = mm && mm->screen >= 0 ? mm->screen
+                    : quiet_zone_passes(&view, rough, 0.5 * s * smax, cells, params->min_contrast,
+                                        shadow || s <= 2 || (s <= 6 && !new_small), shadow);
+                if (!pass) {
                     PROF_MARK(PROF_FIT1);
                     TRACE(7);
                     self->row_y = extended_shape ? -6 : -7;
@@ -4766,8 +6354,36 @@ start:;
             initial_capture initial_samples;
             const int confidence_eligible = s > 1 && !shadow && !piece && !delayed &&
                 !extended_shape && det->fam.piece_hamming >= 0 && found < max_out;
-            if (!fit_initial_captured(&view, rough, fine, 1.5 * s * smax + 1.0, 0.5 * s * smax + 1.0,
-                    params->min_contrast, &edge_w, cells, confidence_eligible ? &initial_samples : NULL)) {
+            int first_fit;
+            if (mm && mm->fit >= 0) {
+                first_fit = mm->fit;
+                if (first_fit) {
+                    memcpy(fine, mm->fine, sizeof fine);
+                    edge_w = mm->edge_w;
+                    if (confidence_eligible) initial_samples = mm->capture;
+                }
+            } else {
+                first_fit = fit_initial_captured(&view, rough, fine, 1.5 * s * smax + 1.0, 0.5 * s * smax + 1.0,
+                    params->min_contrast, &edge_w, cells, confidence_eligible ? &initial_samples : NULL);
+            }
+            /* The same for a small candidate whose first fit fails: a fragment's quad may not fit at all. A regrown
+             * fit captured no samples for confidence_quad, which also works from the fragment's rough quad. */
+            int regrown = 0;
+            if (!first_fit && !shadow && !piece && (base >= 2 || shaped) && s == base && big_px + s <= NAPA_REGROW_MAX_PX) {
+                component grown;
+                int ox = 0, oy = 0;
+                if (regrow_small(det, &view, rough, big_px + s, params->min_contrast, &grown, &ox, &oy) &&
+                    grown.maxx - grown.minx + 1 >= 8 && grown.maxy - grown.miny + 1 >= 8) {
+                    int gp[4][2];
+                    rough_pick(&grown, 0, gp);
+                    vec2 gq[4];
+                    for (int k = 0; k < 4; k++) gq[k].x = gp[k][0] + ox, gq[k].y = gp[k][1] + oy;
+                    edge_w = 0;
+                    if (fit_initial_captured(&view, gq, fine, 2.5, 1.5, params->min_contrast, &edge_w, cells, NULL))
+                        first_fit = 1, reach = 2.0, regrown = 1;
+                }
+            }
+            if (!first_fit) {
                 PROF_MARK(PROF_FIT1);
                 TRACE(7);
                 self->row_y = extended_shape ? -6 : -7;
@@ -4795,6 +6411,27 @@ start:;
                  * background around it (a grey card on a bright wall): then this quad is the margin's
                  * outline and the black square is its inner 8/10. Refit there and try once more. */
                 int rescued = 0;
+                /* A small candidate may be a fragment of a tag sampled every other pixel (or row): regrow it at full
+                 * resolution, fit that, and read again. */
+                if (!regrown && !shadow && !piece && (base >= 2 || shaped) && s == base && big_px + s <= NAPA_REGROW_MAX_PX) {
+                    component grown;
+                    int ox = 0, oy = 0;
+                    if (regrow_small(det, &view, rough, big_px + s, params->min_contrast, &grown, &ox, &oy) &&
+                        grown.maxx - grown.minx + 1 >= 8 && grown.maxy - grown.miny + 1 >= 8) {
+                        int gp[4][2];
+                        rough_pick(&grown, 0, gp);
+                        vec2 gq[4];
+                        double grown_w = 0;
+                        for (int k = 0; k < 4; k++) gq[k].x = gp[k][0] + ox, gq[k].y = gp[k][1] + oy;
+                        if (fit_initial_captured(&view, gq, finer, 2.5, 1.5, params->min_contrast, &grown_w, cells, NULL)) {
+                            memcpy(probe, finer, sizeof probe);
+                            if (decode_quad(det, &view, probe, decode_params, 2, &early, NULL, &lv)) {
+                                memcpy(fine, finer, sizeof fine);
+                                edge_w = grown_w, reach = 2.0, rescued = 1;
+                            }
+                        }
+                    }
+                }
                 double Hq[9], perim = 0;
                 square_to_quad(fine, Hq);
                 double m0 = 1.0 / (W + 2), m1 = (W + 1.0) / (W + 2);
@@ -4804,7 +6441,7 @@ start:;
                 /* Most failed decodes aren't tags at all. Refit only if the unfitted inner square already
                  * shows a dark border inside a lighter margin, with loose limits (half the contrast, six
                  * more light border cells): this skips 86% of retries and kept every rescue tested. */
-                if (r >= 1.5 &&
+                if (!rescued && r >= 1.5 &&
                     border_plausible(&det->fam, &view, inner, params->min_contrast / 2,
                                      min_border(&det->fam, params->min_border_cells) - 6) &&
                     fit_sides(&view, inner, finer, r, r, params->min_contrast, 0, 8, &edge_w, NULL, cells)) {
@@ -4822,7 +6459,7 @@ start:;
                     /* Pieces only read the list. A stricter border failure also cannot prove
                      * that an ordinary proposal at another level will fail the caller's check. */
                     if (!piece && !extended_shape && decode_params == params) remember_failure(det, fine, s);
-                    if (confidence_eligible) {
+                    if (confidence_eligible && !regrown) {
                         vec2 confidence[4];
                         if (confidence_quad(&initial_samples,rough,reach,confidence)) {
                             double movement = 0;
@@ -5247,7 +6884,7 @@ refine_candidate:
             }
             TRACE(12);
             self->row_y = -12;
-            if (split && !necks && !touching) touching = corners_touch(rview, &d, cells);
+            if ((split || watch) && !necks && !touching) touching = corners_touch(rview, &d, cells);
             if (found < max_out) {
                 if (!save_center(&det->out_centers, &det->out_center_capacity, found, &d)) return -2;
                 out[found] = d;
@@ -5278,6 +6915,7 @@ refine_candidate:
         }
         if (last) break;
     }
+    det->touching_seen = watch && touching;
     /* Retain the established whole detections and corners before adding new shapes.
      * These ordinary additions precede optional pieces to keep the unsplit prefix stable. */
     for (int k = 0; k < shape_found && found < max_out; k++) {
@@ -5307,9 +6945,25 @@ refine_candidate:
 
 /* Keep ordinary results first and untouched; recovery shares their coverage/duplicate checks.
  * Each pass resets its failed-quad cache: a failure under one threshold is not evidence for the other. */
+/* split_touching 2: frames where an ordinary pass finds tags touching dark shapes at their corners (AprilGrid boards,
+ * tag mosaics) are detected again with split_touching, splitting necks from the start; other frames pay only the
+ * corner checks on the tags they decode. */
+static int detect_ordinary(napa_detector *det, const uint8_t *img, int width, int height, int stride,
+                           const napa_params *params, napa_detection *out, int max_out) {
+    int n = detect_pass(det, img, width, height, stride, params, out, max_out, 0, 0);
+    if (n >= 0 && params->split_touching == 2 && det->touching_seen) {
+        napa_params split = *params;
+        split.split_touching = 1;
+        det->split_from_necks = 1;
+        n = detect_pass(det, img, width, height, stride, &split, out, max_out, 0, 0);
+        det->split_from_necks = 0;
+    }
+    return n;
+}
+
 int napa_detect(napa_detector *det, const uint8_t *img, int width, int height, int stride,
                 const napa_params *params, napa_detection *out, int max_out) {
-    return detect_pass(det, img, width, height, stride, params, out, max_out, 0, 0);
+    return detect_ordinary(det, img, width, height, stride, params, out, max_out);
 }
 
 int napa_detect_shadows_configured(napa_detector *det, const uint8_t *img, int width, int height, int stride,
@@ -5321,7 +6975,7 @@ int napa_detect_shadows_configured(napa_detector *det, const uint8_t *img, int w
     /* Recovery samples the same levels, so it reuses their extrema unless it samples more coarsely. */
     det->extrema_ready = 0;
     det->extrema_wanted = det->fam.piece_hamming >= 0;
-    int n = detect_pass(det, img, width, height, stride, params, out, max_out, 0, 0);
+    int n = detect_ordinary(det, img, width, height, stride, params, out, max_out);
     /* A shaped ordinary pass sampled other places than the recovery levels will: nothing of its can be reused. */
     det->extrema_ready = det->extrema_wanted && !det->tag_shape, det->extrema_wanted = 0;
     if (n < 0 || n == max_out || width < 16 || height < 16) return n;
@@ -5874,7 +7528,8 @@ static int blocked_code(const napa_detector *det, const soft_candidate *e, int *
             const unsigned row = (unsigned)(wrong >> (r * 6)) & 63u;
             if (row) { columns |= row; if (y0 < 0) y0 = r; y1 = r; }
         }
-        const int x0 = __builtin_ctz(columns), x1 = 31 - __builtin_clz(columns);
+        /* columns isn't 0: at least NAPA_BLOCKED_MIN_WRONG bits are wrong. */
+        const int x0 = napa_ctz64(columns), x1 = 63 - napa_clz64(columns);
         if ((x1 - x0 + 1) * (y1 - y0 + 1) > NAPA_BLOCKED_MAX_AREA) continue;
         float lo = HUGE_VALF, hi = -HUGE_VALF;
         for (int r = y0; r <= y1; r++)
@@ -5954,9 +7609,109 @@ static int blocked_pass(napa_detector *det, const image_view *view, const napa_p
     return n;
 }
 
+/* ---------------------------------------------------------------- input conversion */
+
+/* OpenCV's BGR-to-grey weights, in 15-bit fixed point: cv2.cvtColor gives exactly these values. */
+#define NAPA_GRAY_B 3735u
+#define NAPA_GRAY_G 19235u
+#define NAPA_GRAY_R 9798u
+
+typedef struct {
+    const uint8_t *src;
+    uint8_t *dst;
+    int width, height, stride, dst_stride, pixel_bytes, colour, chunks;
+} gray_job;
+
+static void gray_rows(void *arg, int k) {
+    const gray_job *job = (const gray_job *)arg;
+    const int y0 = (int)((long long)job->height * k / job->chunks), y1 = (int)((long long)job->height * (k + 1) / job->chunks);
+    const int w = job->width, step = job->pixel_bytes;
+#if defined(__ARM_NEON) && !defined(NAPA_NO_SIMD)
+    /* Vector loads read every byte of their 16 pixels; a view's last pixel can end a byte or more early (its last
+     * channel only), so the last pixel of each row is always left to the scalar loop. */
+    const int vector_end = w - 1;
+#endif
+    for (int y = y0; y < y1; y++) {
+        const uint8_t *s = job->src + (size_t)y * job->stride;
+        uint8_t *d = job->dst + (size_t)y * job->dst_stride;
+        int x = 0;
+        if (!job->colour) { /* one byte of each pixel: a strided view, such as YUYV's luma */
+#if defined(__ARM_NEON) && !defined(NAPA_NO_SIMD)
+            if (step == 2)
+                for (; x + 16 <= vector_end; x += 16) vst1q_u8(d + x, vld2q_u8(s + 2 * x).val[0]);
+            else if (step == 3)
+                for (; x + 16 <= vector_end; x += 16) vst1q_u8(d + x, vld3q_u8(s + 3 * x).val[0]);
+            else if (step == 4)
+                for (; x + 16 <= vector_end; x += 16) vst1q_u8(d + x, vld4q_u8(s + 4 * x).val[0]);
+#endif
+            for (; x < w; x++) d[x] = s[(size_t)x * step];
+            continue;
+        }
+#if defined(__ARM_NEON) && !defined(NAPA_NO_SIMD)
+        for (; x + 16 <= vector_end; x += 16) {
+            uint8x16_t b, g, r;
+            if (step == 3) {
+                uint8x16x3_t p = vld3q_u8(s + 3 * x);
+                b = p.val[0], g = p.val[1], r = p.val[2];
+            } else {
+                uint8x16x4_t p = vld4q_u8(s + 4 * x);
+                b = p.val[0], g = p.val[1], r = p.val[2];
+            }
+            uint16x8_t parts[3][2] = {{vmovl_u8(vget_low_u8(b)), vmovl_u8(vget_high_u8(b))},
+                                      {vmovl_u8(vget_low_u8(g)), vmovl_u8(vget_high_u8(g))},
+                                      {vmovl_u8(vget_low_u8(r)), vmovl_u8(vget_high_u8(r))}};
+            uint16x8_t half[2];
+            for (int h = 0; h < 2; h++) {
+                uint32x4_t lo = vmull_n_u16(vget_low_u16(parts[0][h]), NAPA_GRAY_B);
+                uint32x4_t hi = vmull_n_u16(vget_high_u16(parts[0][h]), NAPA_GRAY_B);
+                lo = vmlal_n_u16(lo, vget_low_u16(parts[1][h]), NAPA_GRAY_G);
+                hi = vmlal_n_u16(hi, vget_high_u16(parts[1][h]), NAPA_GRAY_G);
+                lo = vmlal_n_u16(lo, vget_low_u16(parts[2][h]), NAPA_GRAY_R);
+                hi = vmlal_n_u16(hi, vget_high_u16(parts[2][h]), NAPA_GRAY_R);
+                half[h] = vcombine_u16(vrshrn_n_u32(lo, 15), vrshrn_n_u32(hi, 15)); /* + 2^14, >> 15 */
+            }
+            vst1q_u8(d + x, vcombine_u8(vmovn_u16(half[0]), vmovn_u16(half[1])));
+        }
+#endif
+        for (; x < w; x++) {
+            const uint8_t *p = s + (size_t)x * step;
+            d[x] = (uint8_t)((p[0] * NAPA_GRAY_B + p[1] * NAPA_GRAY_G + p[2] * NAPA_GRAY_R + 16384u) >> 15);
+        }
+    }
+}
+
+int napa_gray_from_pixels(napa_detector *det, const uint8_t *src, int width, int height, int stride, int pixel_bytes,
+                          int colour, uint8_t *dst, int dst_stride) {
+    if (src == NULL || dst == NULL || width < 1 || height < 1 || width > NAPA_MAX_SIDE || height > NAPA_MAX_SIDE) return -1;
+    if (pixel_bytes < 1 || pixel_bytes > 4 || (colour && pixel_bytes < 3) || dst_stride < width) return -1;
+    if (stride < (width - 1) * pixel_bytes + (colour ? 3 : 1)) return -1;
+    const size_t pixels = (size_t)width * height;
+    /* Copying one byte per pixel is all memory traffic: threads only help the arithmetic of colour. */
+    const int chunks = colour && det != NULL && pool_for(det, pixels) ? det->threads * 2 : 1;
+    gray_job job = {src, dst, width, height, stride, dst_stride, pixel_bytes, colour != 0, chunks};
+    pool_run(chunks > 1 ? det->pool : NULL, gray_rows, &job, chunks);
+    return 0;
+}
+
+int napa_set_threads(napa_detector *det, int threads) {
+    if (det == NULL || threads < 1 || threads > NAPA_MAX_THREADS) return -1;
+    if (threads == det->threads) return 0;
+    napa_pool *pool = NULL;
+    if (threads > 1 && (pool = pool_create(threads - 1)) == NULL) return -2;
+    pool_destroy(det->pool);
+    det->pool = pool, det->threads = threads;
+    return 0;
+}
+
 int napa_set_tag_shape(napa_detector *det, int shape) {
     if (det == NULL || (shape != 0 && shape != NAPA_TAG_SHAPE_TALL && shape != NAPA_TAG_SHAPE_WIDE)) return -1;
     det->tag_shape = shape;
+    return 0;
+}
+
+int napa_set_regrow_small_tags(napa_detector *det, int on) {
+    if (det == NULL || (on != 0 && on != 1)) return -1;
+    det->regrow_small_tags = on;
     return 0;
 }
 
@@ -5967,10 +7722,37 @@ int napa_set_camera_gamma(napa_detector *det, double gamma) {
     return 0;
 }
 
+int napa_set_lens(napa_detector *det, int model, const double *intrinsics, const double *coefficients, int count) {
+    if (det == NULL) return -1;
+    if (model == NAPA_LENS_NONE) {
+        memset(&det->lens, 0, sizeof det->lens);
+        return 0;
+    }
+    if ((model != NAPA_LENS_BROWN_CONRADY && model != NAPA_LENS_FISHEYE) || intrinsics == NULL || coefficients == NULL) return -1;
+    if (model == NAPA_LENS_FISHEYE ? count != 4 : count != 4 && count != 5 && count != 8 && count != 12 && count != 14) return -1;
+    for (int i = 0; i < 5; i++)
+        if (!isfinite(intrinsics[i])) return -1;
+    for (int i = 0; i < count; i++)
+        /* No real lens comes near 1e6; the limit keeps the distortion polynomials far from overflow. */
+        if (!isfinite(coefficients[i]) || fabs(coefficients[i]) > 1e6) return -1;
+    if (!(intrinsics[0] > 0) || !(intrinsics[1] > 0) || (count == 14 && (coefficients[12] != 0 || coefficients[13] != 0))) return -1;
+    napa_lens L;
+    memset(&L, 0, sizeof L);
+    L.model = model, L.fx = intrinsics[0], L.fy = intrinsics[1], L.cx = intrinsics[2], L.cy = intrinsics[3];
+    L.skew = model == NAPA_LENS_FISHEYE ? intrinsics[4] : 0; /* OpenCV's standard model ignores it */
+    for (int i = 0; i < count && i < 12; i++) L.k[i] = coefficients[i];
+    L.rational = L.k[5] != 0 || L.k[6] != 0 || L.k[7] != 0;
+    L.prism = L.k[8] != 0 || L.k[9] != 0 || L.k[10] != 0 || L.k[11] != 0;
+    memset(&det->lens_cache, 0, sizeof det->lens_cache);
+    L.memo = &det->lens_cache;
+    det->lens = L;
+    return 0;
+}
+
 int napa_border_bias_cells(napa_detector *det, const uint8_t *img, int width, int height, int stride, const napa_params *params,
                            const double corners[8], double *bias_cells, double *edge_cells) {
     if (det == NULL || img == NULL || params == NULL || corners == NULL || bias_cells == NULL) return -1;
-    const image_view view = {img, width, height, stride, det->fam.f->reversed};
+    const image_view view = {img, width, height, stride, det->fam.f->reversed, NULL}; /* measured in pixels, as given */
     vec2 q[4];
     double side = 0, delta = NAN, disagreement = 0;
     for (int k = 0; k < 4; k++) q[k].x = corners[2 * k], q[k].y = corners[2 * k + 1];
@@ -6009,7 +7791,7 @@ int napa_detect_options(napa_detector *det, const uint8_t *img, int width, int h
     if (n < 0) return n;
     if (det->soft_failed) return -2;
     if (!soft) return n;
-    const image_view view = {img, width, height, stride, 0};
+    const image_view view = {img, width, height, stride, 0, det->lens.model ? &det->lens : NULL};
     const int with_soft = soft_pass(det, &view, out, n, max_out);
     return with_soft < 0 ? with_soft : blocked_pass(det, &view, params, out, with_soft, max_out);
 }

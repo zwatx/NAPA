@@ -18,10 +18,52 @@ from .types import FiducialImageObservation
 
 _LIBRARY_ENV = "NAPA_CORE_LIBRARY"
 _LIBRARY_PATTERNS = ("_napa_core*.so", "_napa_core*.pyd", "_napa_core*.dylib")
-_MAX_SIDE = 30000
+_MAX_SIDE = 30000  # napa_core.c NAPA_MAX_SIDE
 _TAG_SHAPES = {"tall": 1, "wide": 2}  # napa_core.h NAPA_TAG_SHAPE_*
+_MAX_THREADS = 16  # napa_core.c NAPA_MAX_THREADS
 _OPTION_SOFT_DECODE = 1
 _OPTION_ALIGN_CORNERS = 2
+_LENS_MODELS = {"brown_conrady": 1, "fisheye": 2}  # napa_core.h NAPA_LENS_*
+
+
+def _lens_arguments(camera: Any) -> tuple[int, Any, Any, int]:
+    """napa_set_lens arguments for ``camera``: a calibration, or (camera_matrix, distortion[, "fisheye"])."""
+
+    if hasattr(camera, "camera_matrix") and hasattr(camera, "distortion_coefficients"):
+        matrix, distortion, model = camera.camera_matrix, camera.distortion_coefficients, "brown_conrady"
+    elif isinstance(camera, tuple) and len(camera) in (2, 3):
+        matrix, distortion = camera[:2]
+        model = camera[2] if len(camera) == 3 else "brown_conrady"
+    else:
+        raise ValueError(
+            "camera must be None, a CameraCalibration, or (camera_matrix, distortion_coefficients[, model])"
+        )
+    if model not in _LENS_MODELS:
+        raise ValueError('camera model must be "brown_conrady" or "fisheye"')
+    try:
+        matrix = np.asarray(matrix, dtype=np.float64)
+        distortion = np.asarray(distortion, dtype=np.float64).reshape(-1)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("camera matrix and distortion coefficients must contain numbers") from exc
+    if (
+        matrix.shape != (3, 3)
+        or not np.all(np.isfinite(matrix))
+        or not np.allclose(matrix[2], [0.0, 0.0, 1.0])
+        or matrix[1, 0] != 0.0
+        or matrix[0, 0] <= 0.0
+        or matrix[1, 1] <= 0.0
+    ):
+        raise ValueError("camera matrix must be a finite 3x3 pinhole matrix with positive focal lengths")
+    counts = (4,) if model == "fisheye" else (4, 5, 8, 12, 14)
+    if len(distortion) not in counts or not np.all(np.isfinite(distortion)):
+        raise ValueError(f"camera {model} distortion must be {' or '.join(map(str, counts))} finite values")
+    if len(distortion) == 14 and np.any(distortion[12:] != 0.0):
+        raise ValueError("camera tilted-sensor terms (tau_x, tau_y) are not supported; they must be 0")
+    if np.any(np.abs(distortion) > 1e6):  # napa_set_lens's limit
+        raise ValueError("camera distortion coefficients must be at most 1e6 in magnitude")
+    intrinsics = (ctypes.c_double * 5)(matrix[0, 0], matrix[1, 1], matrix[0, 2], matrix[1, 2], matrix[0, 1])
+    coefficients = (ctypes.c_double * len(distortion))(*distortion.tolist())
+    return _LENS_MODELS[model], intrinsics, coefficients, len(distortion)
 
 
 class _Params(ctypes.Structure):
@@ -116,9 +158,38 @@ def _library() -> ctypes.CDLL:
         if hasattr(library, "napa_set_camera_gamma"):
             library.napa_set_camera_gamma.restype = ctypes.c_int
             library.napa_set_camera_gamma.argtypes = [ctypes.c_void_p, ctypes.c_double]
+        if hasattr(library, "napa_gray_from_pixels"):
+            library.napa_gray_from_pixels.restype = ctypes.c_int
+            library.napa_gray_from_pixels.argtypes = [
+                ctypes.c_void_p,
+                ctypes.c_void_p,
+                ctypes.c_int,
+                ctypes.c_int,
+                ctypes.c_int,
+                ctypes.c_int,
+                ctypes.c_int,
+                ctypes.c_void_p,
+                ctypes.c_int,
+            ]
+        if hasattr(library, "napa_set_threads"):
+            library.napa_set_threads.restype = ctypes.c_int
+            library.napa_set_threads.argtypes = [ctypes.c_void_p, ctypes.c_int]
+        if hasattr(library, "napa_set_lens"):
+            library.napa_set_lens.restype = ctypes.c_int
+            library.napa_set_lens.argtypes = [
+                ctypes.c_void_p,
+                ctypes.c_int,
+                ctypes.POINTER(ctypes.c_double),
+                ctypes.POINTER(ctypes.c_double),
+                ctypes.c_int,
+            ]
         if hasattr(library, "napa_set_tag_shape"):
             library.napa_set_tag_shape.restype = ctypes.c_int
             library.napa_set_tag_shape.argtypes = [ctypes.c_void_p, ctypes.c_int]
+        if hasattr(library, "napa_set_regrow_small_tags"):
+            library.napa_set_regrow_small_tags.restype = ctypes.c_int
+            library.napa_set_regrow_small_tags.argtypes = [ctypes.c_void_p, ctypes.c_int]
+        if hasattr(library, "napa_border_bias_cells"):
             library.napa_border_bias_cells.restype = ctypes.c_int
             library.napa_border_bias_cells.argtypes = [
                 ctypes.c_void_p,
@@ -175,10 +246,12 @@ class NapaDetector:
     order, in pixel-centre coordinates. The default is 22; ``min_tag_px=32`` runs at about 0.5.1's speed and finds
     fewer small tags.
 
-    ``split_touching=True`` also finds tags whose border touches another dark shape at a corner, as in
-    AprilGrid calibration boards and tags set in a checkerboard: such a tag and its neighbours form one blob,
-    which isn't tag-shaped. The extra tags come after the others, which are unchanged. It adds about 15-30% to
-    frames without touching tags, and boards take about 2.5-3x as long.
+    ``split_touching`` finds tags whose border touches another dark shape at a corner, as in AprilGrid calibration
+    boards and tags set in a checkerboard: such a tag and its neighbours form one blob, which isn't tag-shaped. The
+    extra tags come after the others, which are unchanged. The default, ``"auto"``, splits only frames where a tag it
+    finds has dark squares off its corners, so other frames cost what they do with it off; a board whose tags all
+    merge, so that none is found, isn't split. ``True`` splits every frame, finding those boards and tags touching
+    other dark shapes too, for about 15-30% more time on frames without touching tags. ``False`` never splits.
 
     ``recover_shadows=True`` (experimental, off by default) adds a lower-threshold proposal pass for tags whose
     border merges into a dim background, as in shade or against a bright window. Ordinary results stay first,
@@ -206,9 +279,24 @@ class NapaDetector:
     its extra time; at 22 it takes about as long as ``min_tag_px=32`` and finds more of the narrow tags. The wrong
     direction is worse than not setting it; see the detection guide.
 
+    ``regrow_small_tags=True`` (off by default) finds more small tags, up to about 28 pixels across, whose thin
+    border comes apart when the search samples every other pixel: a candidate that doesn't fit or read is regrown
+    from the full-resolution frame and tried again, at most 32 per frame. It found 2-10% more small tags in blurred
+    match footage for about 2% more time, with no false detections in the benchmark; see the detection guide.
+
+    ``camera`` (unset by default) is the camera's lens: a ``CameraCalibration``, or ``(camera_matrix,
+    distortion_coefficients)`` in OpenCV's standard model, or ``(camera_matrix, distortion_coefficients, "fisheye")``
+    for ``cv2.fisheye``'s. Each tag's sides are then fitted as straight lines through the lens instead of in pixels,
+    which removes most of the corner error a distorting lens causes; the image is never remapped and corners stay in
+    the frame's own pixels. Use the calibration made at this resolution; see the detection guide.
+
     ``align_corners=True`` (experimental, tag36h11 only, off by default) moves the corners of blurred tags onto
     their own picture after decoding. It mainly helps motion blur, costs time on every blurred tag, and has no check
     on a real camera; see the detection guide.
+
+    ``threads`` (1 by default, up to 16) lets one call use that many threads, the caller's included, for lower latency
+    on a frame. Results are identical at every count. With several cameras already keeping the cores busy, leave it
+    at 1; see the detection guide.
 
     One instance holds reusable buffers: serialize calls on each instance, and use one instance
     per thread or camera stream. The native call releases the GIL.
@@ -224,13 +312,16 @@ class NapaDetector:
         min_border_cells: int = 22,
         sharpening: float = 0.25,
         max_detections: int = 64,
-        split_touching: bool = False,
+        split_touching: bool | str = "auto",
         recover_shadows: bool = False,
         shadow_min_tag_px: int | None = None,
         soft_decode: bool = False,
         align_corners: bool = False,
         camera_gamma: float | None = None,
         tag_shape: str | None = None,
+        regrow_small_tags: bool = False,
+        camera: Any = None,
+        threads: int = 1,
     ) -> None:
         if isinstance(min_tag_px, bool) or not isinstance(min_tag_px, int) or not 8 <= min_tag_px <= _MAX_SIDE:
             raise ValueError(f"min_tag_px must be an integer from 8 to {_MAX_SIDE}")
@@ -250,8 +341,8 @@ class NapaDetector:
             raise ValueError("sharpening must be between 0 and 1")
         if isinstance(max_detections, bool) or not isinstance(max_detections, int) or max_detections < 1:
             raise ValueError("max_detections must be a positive integer")
-        if not isinstance(split_touching, bool):
-            raise ValueError("split_touching must be True or False")
+        if not isinstance(split_touching, bool) and split_touching != "auto":
+            raise ValueError('split_touching must be True, False or "auto"')
         if not isinstance(recover_shadows, bool):
             raise ValueError("recover_shadows must be True or False")
         if shadow_min_tag_px is not None:
@@ -269,6 +360,8 @@ class NapaDetector:
             raise ValueError("soft_decode is calibrated for tag36h11 only")
         if not isinstance(align_corners, bool):
             raise ValueError("align_corners must be True or False")
+        if not isinstance(regrow_small_tags, bool):
+            raise ValueError("regrow_small_tags must be True or False")
         if align_corners and family != "tag36h11":
             raise ValueError("align_corners is calibrated for tag36h11 only")
         if camera_gamma is not None:
@@ -282,6 +375,9 @@ class NapaDetector:
                 raise ValueError("camera_gamma is calibrated for tag36h11 only")
         if tag_shape not in (None, "tall", "wide"):
             raise ValueError('tag_shape must be None, "tall" or "wide"')
+        if isinstance(threads, bool) or not isinstance(threads, int) or not 1 <= threads <= _MAX_THREADS:
+            raise ValueError(f"threads must be an integer from 1 to {_MAX_THREADS}")
+        lens = None if camera is None else _lens_arguments(camera)
         library = _library()
         if recover_shadows and not hasattr(library, "napa_detect_shadows"):
             raise NativeLibraryError("recover_shadows requires an updated native library; rebuild napa-vision")
@@ -316,19 +412,43 @@ class NapaDetector:
         self.family = family
         self._library = library
         self._handle = ctypes.c_void_p(handle)
-        if camera_gamma is not None:
-            if not hasattr(library, "napa_set_camera_gamma"):
-                library.napa_destroy(self._handle)
-                raise NativeLibraryError("camera_gamma requires an updated native library; rebuild napa-vision")
-            library.napa_set_camera_gamma(self._handle, float(camera_gamma))
-        if tag_shape is not None:
-            if not hasattr(library, "napa_set_tag_shape"):
-                library.napa_destroy(self._handle)
-                raise NativeLibraryError("tag_shape requires an updated native library; rebuild napa-vision")
-            library.napa_set_tag_shape(self._handle, _TAG_SHAPES[tag_shape])
+        # Settings the library takes after creation; the detector is freed if any of them fails.
+        try:
+            if camera_gamma is not None:
+                if not hasattr(library, "napa_set_camera_gamma"):
+                    raise NativeLibraryError("camera_gamma requires an updated native library; rebuild napa-vision")
+                library.napa_set_camera_gamma(self._handle, float(camera_gamma))
+            if tag_shape is not None:
+                if not hasattr(library, "napa_set_tag_shape"):
+                    raise NativeLibraryError("tag_shape requires an updated native library; rebuild napa-vision")
+                library.napa_set_tag_shape(self._handle, _TAG_SHAPES[tag_shape])
+            if regrow_small_tags:
+                if not hasattr(library, "napa_set_regrow_small_tags"):
+                    raise NativeLibraryError(
+                        "regrow_small_tags requires an updated native library; rebuild napa-vision"
+                    )
+                library.napa_set_regrow_small_tags(self._handle, 1)
+            if lens is not None:
+                if not hasattr(library, "napa_set_lens"):
+                    raise NativeLibraryError("camera requires an updated native library; rebuild napa-vision")
+                if library.napa_set_lens(self._handle, *lens) != 0:
+                    raise ValueError("the native library rejected the camera calibration")
+            if threads != 1:
+                if not hasattr(library, "napa_set_threads"):
+                    raise NativeLibraryError("threads requires an updated native library; rebuild napa-vision")
+                if library.napa_set_threads(self._handle, threads) != 0:
+                    raise OSError(f"could not start {threads - 1} worker threads")
+        except BaseException:
+            library.napa_destroy(self._handle)
+            raise
         self._finalizer = weakref.finalize(self, library.napa_destroy, self._handle)
         self._params = _Params(
-            min_tag_px, max_hamming, min_contrast, min_border_cells, round(float(sharpening) * 100), split_touching
+            min_tag_px,
+            max_hamming,
+            min_contrast,
+            min_border_cells,
+            round(float(sharpening) * 100),
+            2 if split_touching == "auto" else int(split_touching),
         )
         self._results = (_Detection * max_detections)()
         self._rows = np.ctypeslib.as_array(self._results)  # a numpy view of the same buffer
@@ -341,11 +461,21 @@ class NapaDetector:
         self.align_corners = align_corners
         self.camera_gamma = camera_gamma
         self.tag_shape = tag_shape
+        self.regrow_small_tags = regrow_small_tags
+        self.camera = camera
+        # A calibration that records its resolution only holds at that resolution: check every frame against it.
+        self._camera_size = getattr(camera, "image_size", None)
+        self.threads = threads
 
     def detect(self, image: np.ndarray) -> list[FiducialImageObservation]:
         if not self._finalizer.alive:
             raise RuntimeError("NapaDetector.detect() called after close()")
-        gray = _grayscale(image)
+        gray = _grayscale(image, self._handle)
+        if self._camera_size is not None and (gray.shape[1], gray.shape[0]) != tuple(self._camera_size):
+            raise ValueError(
+                f"camera calibration was measured at {self._camera_size[0]}x{self._camera_size[1]}, "
+                f"not {gray.shape[1]}x{gray.shape[0]}"
+            )
         if gray.shape[0] > _MAX_SIDE or gray.shape[1] > _MAX_SIDE:
             raise ValueError(f"frames larger than {_MAX_SIDE} pixels per side are not supported")
         if gray.shape[0] < 16 or gray.shape[1] < 16:
@@ -362,6 +492,11 @@ class NapaDetector:
             *self._shadow_args,
         )
         if count < 0:
+            if count == -1 and self._params.split_touching == 2:
+                raise NativeLibraryError(
+                    "napa_detect rejected the frame or settings; split_touching='auto' requires an updated native "
+                    "library. Rebuild napa-vision, or use split_touching=False with an older core"
+                )
             raise RuntimeError(f"napa_detect failed with status {count}")
         if count == len(self._results):
             warnings.warn(
@@ -514,21 +649,61 @@ def estimate_camera_gamma(
     return CameraGammaEstimate(crossing(np.arange(used)), low, high, used, tags, means)
 
 
-def _grayscale(image: np.ndarray) -> np.ndarray:
+def _grayscale(image: np.ndarray, handle: ctypes.c_void_p | None = None) -> np.ndarray:
+    """A uint8 greyscale frame with contiguous rows: grey as given, BGR(A) converted with OpenCV's BGR2GRAY values.
+
+    Strided greyscale views, such as the luma of a YUYV frame (``frame[..., 0]``; ``frame[..., 1]`` for UYVY), are
+    copied natively. ``handle`` lends a detector's threads to large colour frames.
+    """
+
     image = np.asarray(image)
     if image.dtype != np.uint8:
         raise ValueError("AprilTag detection requires an 8-bit image")
     if image.ndim == 3 and image.shape[2] in {3, 4}:
-        image = _bgr_to_gray(image)
-    elif image.ndim != 2:
+        return _native_gray(image, colour=True, handle=handle)
+    if image.ndim != 2:
         raise ValueError("AprilTag detection requires a grayscale, BGR, or BGRA image")
     if image.strides[1] != 1 or image.strides[0] < image.shape[1]:
-        image = np.ascontiguousarray(image)
+        return _native_gray(image, colour=False, handle=handle)
     return image
 
 
+def _native_gray(image: np.ndarray, *, colour: bool, handle: ctypes.c_void_p | None) -> np.ndarray:
+    """Greyscale through napa_gray_from_pixels, for views it can read in place; anything else is copied first."""
+
+    height, width = image.shape[:2]
+    try:
+        library = _library()
+    except NativeLibraryError:
+        library = None
+    if (
+        library is None
+        or not hasattr(library, "napa_gray_from_pixels")
+        or not 0 < height <= _MAX_SIDE
+        or not 0 < width <= _MAX_SIDE  # detect() reports oversized frames itself
+    ):
+        return _bgr_to_gray(image) if colour else np.ascontiguousarray(image)
+    step = image.strides[1]
+    readable = (
+        image.strides[0] > 0
+        and step in ((3, 4) if colour else (1, 2, 3, 4))
+        and (not colour or image.strides[2] == 1)
+        and image.strides[0] >= (width - 1) * step + (3 if colour else 1)
+    )
+    if not readable:
+        image = np.ascontiguousarray(image)
+        step = image.strides[1]
+    gray = np.empty((height, width), np.uint8)
+    status = library.napa_gray_from_pixels(
+        handle, image.ctypes.data, width, height, image.strides[0], step, int(colour), gray.ctypes.data, width
+    )
+    if status != 0:
+        raise RuntimeError(f"napa_gray_from_pixels failed with status {status}")
+    return gray
+
+
 def _bgr_to_gray(image: np.ndarray) -> np.ndarray:
-    """BGR(A) to grayscale with BT.601 weights (within one grey level of OpenCV, which is used when installed)."""
+    """BGR(A) to grayscale with OpenCV's BGR2GRAY values, for a native library without napa_gray_from_pixels."""
 
     try:
         import cv2
@@ -544,13 +719,14 @@ def _bgr_to_gray(image: np.ndarray) -> np.ndarray:
         for y in range(0, image.shape[0], rows):
             block = image[y : y + rows]
             acc, tmp = total[: len(block)], scratch[: len(block)]
-            np.multiply(block[..., 0], 1868, out=acc, dtype=np.uint32)
-            np.multiply(block[..., 1], 9617, out=tmp, dtype=np.uint32)
+            # OpenCV's 15-bit fixed-point weights and rounding (napa_core.c NAPA_GRAY_*).
+            np.multiply(block[..., 0], 3735, out=acc, dtype=np.uint32)
+            np.multiply(block[..., 1], 19235, out=tmp, dtype=np.uint32)
             acc += tmp
-            np.multiply(block[..., 2], 4899, out=tmp, dtype=np.uint32)
+            np.multiply(block[..., 2], 9798, out=tmp, dtype=np.uint32)
             acc += tmp
-            acc += 1 << 13
-            acc >>= 14
+            acc += 1 << 14
+            acc >>= 15
             gray[y : y + rows] = acc
         return gray
     conversion = cv2.COLOR_BGRA2GRAY if image.shape[2] == 4 else cv2.COLOR_BGR2GRAY

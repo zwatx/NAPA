@@ -94,6 +94,46 @@ jobs:
           "$example" tag.pgm | tee found.txt
           grep -q '^id 7 hamming 0 ' found.txt
 
+  native-sanitizers:
+    # The C core reads untrusted camera frames: fuzz every entry point and run the detector tests under
+    # AddressSanitizer and UndefinedBehaviorSanitizer, with the SIMD paths and the scalar fallbacks.
+    runs-on: ubuntu-latest
+    env:
+      SAN_FLAGS: -std=c99 -g -O1 -pthread -fno-wrapv -fno-omit-frame-pointer -fno-sanitize-recover=undefined
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - name: Strict compile at C99 and C17 (-pedantic -Werror), as projects that vendor the core build it
+        run: |
+          for std in c99 gnu17; do
+            for simd in "" "-DNAPA_NO_SIMD"; do
+              gcc -std=$std $simd -pedantic -Werror -Wall -Wextra -Wformat=2 -pthread -fsyntax-only \
+                src/napa_vision/_native/napa_core.c
+            done
+          done
+      - name: Random fuzz driver, SIMD and scalar (gcc, ASan + UBSan)
+        run: |
+          for simd in "" "-DNAPA_NO_SIMD"; do
+            gcc $SAN_FLAGS -fsanitize=address,undefined $simd tests/fuzz/napa_fuzz.c src/napa_vision/_native/napa_core.c \
+              -lm -o napa_fuzz_driver
+            ./napa_fuzz_driver 3000
+          done
+      - name: libFuzzer, two minutes (clang, ASan + UBSan)
+        run: |
+          clang $SAN_FLAGS -fsanitize=fuzzer,address,undefined -DNAPA_LIBFUZZER tests/fuzz/napa_fuzz.c \
+            src/napa_vision/_native/napa_core.c -lm -o napa_fuzz
+          ./napa_fuzz -max_total_time=120 -max_len=8192 -timeout=20
+      - name: Detector tests on a sanitized core
+        run: |
+          python -m pip install -e ".[headless,test]"
+          gcc $SAN_FLAGS -fsanitize=address,undefined -fvisibility=hidden -fPIC -shared -Isrc/napa_vision/_native \
+            src/napa_vision/_native/napa_core.c -lm -o napa_asan.so
+          LD_PRELOAD="$(gcc -print-file-name=libasan.so) $(gcc -print-file-name=libubsan.so)" \
+            ASAN_OPTIONS=detect_leaks=0 NAPA_CORE_LIBRARY="$PWD/napa_asan.so" pytest tests/test_napa_detector.py
+
   package-smoke:
     runs-on: ubuntu-latest
     steps:

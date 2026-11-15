@@ -26,7 +26,8 @@ typedef struct {
     int min_border_cells; /* dark border cells required out of 28 (0-28) */
     int sharpening_x100;  /* cell sharpening strength x100 (0-100); upstream AprilTag uses 25 */
     int split_touching;   /* 1: also decode dark shapes that touch others only at a corner, as tags do in
-                           * AprilGrid boards and checkerboards; slower. 0 (the default): off */
+                           * AprilGrid boards and checkerboards; slower. 2: only on frames where a decoded tag
+                           * touches dark shapes at its corners, detecting those again with 1. 0 (the default): off */
 } napa_params;
 
 /* napa_detection.hamming of a tag read as a whole picture (napa_detect_soft): no bits were counted. */
@@ -104,6 +105,16 @@ NAPA_API int napa_detect_options(napa_detector *det, const uint8_t *img, int wid
  * Corners are then refined on a linearized copy of each tag. Applies to every later call on this detector. A wrong value is
  * worse than none on a linear camera. */
 NAPA_API int napa_set_camera_gamma(napa_detector *det, double gamma);
+/* The camera's lens, from its calibration, in OpenCV's conventions (pixel centres at integers). Sides are then fitted as
+ * straight lines through the lens instead of in pixels, and corners mapped back to pixels; the image is never remapped.
+ * intrinsics: fx, fy, cx, cy, skew (K[0][1]; only the fisheye model uses it, as fx * alpha, like OpenCV). NAPA_LENS_BROWN_CONRADY takes OpenCV's distortion
+ * coefficients (k1, k2, p1, p2[, k3[, k4, k5, k6[, s1, s2, s3, s4[, tau_x, tau_y]]]]): count 4, 5, 8, 12 or 14, tau
+ * values 0. NAPA_LENS_FISHEYE takes cv::fisheye's k1-k4: count 4. NAPA_LENS_NONE (the default) clears it; intrinsics and
+ * coefficients may then be NULL. Applies to every later call on this detector. 0, or -1 for invalid input. */
+#define NAPA_LENS_NONE 0
+#define NAPA_LENS_BROWN_CONRADY 1
+#define NAPA_LENS_FISHEYE 2
+NAPA_API int napa_set_lens(napa_detector *det, int model, const double *intrinsics, const double *coefficients, int count);
 /* How tags look in the frame, for the ordinary pass's sampling: 0 (the default) samples alike both ways. TALL samples
  * half as many rows, for tags turned about the vertical axis, which look narrow and tall; WIDE half as many columns,
  * for a camera on its side. The sampling across the narrow side is unchanged; fitting and decoding read the frame at
@@ -111,6 +122,22 @@ NAPA_API int napa_set_camera_gamma(napa_detector *det, double gamma);
 #define NAPA_TAG_SHAPE_TALL 1
 #define NAPA_TAG_SHAPE_WIDE 2
 NAPA_API int napa_set_tag_shape(napa_detector *det, int shape);
+/* 1: a small candidate (up to about 28 pixels) at the finest level that doesn't fit or read is regrown at full
+ * resolution and tried again in the same pass, at most 32 per pass. It finds small tags whose thin border comes apart
+ * when sampled every other pixel, for a few percent more time. 0 (the default) doesn't. Applies to every later call on
+ * this detector. 0, or -1 for another value. */
+NAPA_API int napa_set_regrow_small_tags(napa_detector *det, int on);
+/* An 8-bit greyscale copy of interleaved pixels, for napa_detect: with colour set, BGR (pixel_bytes 3) or BGRA (4) with
+ * OpenCV's BGR2GRAY weights, giving exactly cv2.cvtColor's values; otherwise byte 0 of each pixel_bytes-byte pixel (1-4),
+ * such as the luma of YUYV frames (pixel_bytes 2). stride and dst_stride are bytes per row. det, if not NULL, lends its
+ * threads (napa_set_threads) to large frames. 0, or -1 on invalid arguments. */
+NAPA_API int napa_gray_from_pixels(napa_detector *det, const uint8_t *src, int width, int height, int stride, int pixel_bytes,
+                                   int colour, uint8_t *dst, int dst_stride);
+/* Threads one detection call may use, 1 (the default) to 16: the calling thread plus threads - 1 workers this detector
+ * owns. Results are identical at every count; only latency changes. With several cameras already filling the cores,
+ * leave it at 1. Applies to every later call on this detector. 0, -1 for an invalid count, or -2 if threads can't be
+ * started (the previous setting stays). */
+NAPA_API int napa_set_threads(napa_detector *det, int threads);
 /* A tag's mean border-width bias, in cells, at the given corners: positive when the black border reads narrow. If edge_cells is
  * not NULL it receives the width of the blurred outer edges in cells, or NaN if they could not be fitted. 0 on success, 1 if
  * nothing could be measured, -1 on invalid input. */

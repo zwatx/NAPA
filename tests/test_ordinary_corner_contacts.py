@@ -33,7 +33,7 @@ def test_ordinary_tag_touching_a_filled_corner(minimum, tag_id, turns):
 @pytest.mark.parametrize("capacity", [1, 5, 64])
 def test_recovery_preserves_ordinary_board_prefix(minimum, angle, capacity):
     image, _ = _aprilgrid(list(range(100, 136)), columns=6, tag_px=48, angle_deg=angle)
-    ordinary_detector = NapaDetector(min_tag_px=minimum, max_detections=capacity)
+    ordinary_detector = NapaDetector(min_tag_px=minimum, max_detections=capacity, split_touching=False)
     try:
         ordinary = ordinary_detector.detect(image)
     finally:

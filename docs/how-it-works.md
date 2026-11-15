@@ -54,7 +54,8 @@ code allows is dropped: every tag36h11 code has at least 10 white cells. Then NA
 Each side's line fit drops samples that disagree with the rest of the edge, so a short obstruction along a side
 doesn't pull the corners off.
 
-Three kinds of image fool a plain edge fit, so NAPA checks for each:
+Four kinds of image fool a plain edge fit. NAPA checks for the first three on every frame, and for the fourth
+with `regrow_small_tags=True`:
 
 - **A grey quiet zone on a bright background** makes the margin look dark, so the first outline is the margin's. If
   the decode fails, NAPA tries the outline's inner 8/10, where the black square would be.
@@ -62,6 +63,11 @@ Three kinds of image fool a plain edge fit, so NAPA checks for each:
   that side in by a cell and refits it.
 - **Clipped exposure** shrinks every black region by the same amount. The black border must be exactly one cell wide,
   so NAPA measures the shrinkage on the tag itself and undoes it.
+- **A small tag that comes apart.** At the finest level NAPA samples every other pixel, and a tag not much bigger
+  than `min_tag_px` can have a black border only two or three pixels wide, which falls between samples. Its blob is
+  then a fragment of the tag. When a candidate up to 28 px across fails to fit or to read, NAPA regrows it at full
+  resolution: it thresholds a small window around it, follows the dark pixels connected to the fragment, and fits and
+  reads that outline instead. A component that runs out of the window has merged with its surroundings and is left.
 
 ## 5. Look up the ID
 

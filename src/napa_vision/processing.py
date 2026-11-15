@@ -353,6 +353,9 @@ class VisionProcessor:
     ``rolling_shutter`` (a ``RollingShutter``, unset by default) corrects the corners that feed the pose solvers for
     a camera that reads its lines one after another, using each tag's motion between frames and the ``timestamp`` of
     each call. ``image_observations`` stay as detected. See the pose guide.
+
+    Without a ``detector``, the processor makes a ``NapaDetector`` that is given ``calibration`` as its ``camera``, so
+    tag sides are fitted through the lens. A detector you pass is used as it is.
     """
 
     def __init__(
@@ -410,7 +413,7 @@ class VisionProcessor:
             corner_noise_px=corner_noise_px,
         )
         self._angle_solver = TagAngleSolver(corner_noise_px=corner_noise_px)
-        self.detector = detector if detector is not None else NapaDetector()
+        self.detector = detector if detector is not None else NapaDetector(camera=calibration)
 
     def process(
         self,

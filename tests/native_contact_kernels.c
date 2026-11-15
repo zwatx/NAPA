@@ -3,6 +3,7 @@
  * Copies and works based on this file must keep this notice and credit Zachary Wilson. */
 /* Independent pixel flood-fill oracle for the threshold/run connectivity kernels. */
 #include "../src/napa_vision/_native/napa_core.c"
+#include "native_row_pairs.h"
 #include <stdio.h>
 
 static int floor_at(const napa_detector *d, int x, int y, int factor) {
@@ -62,14 +63,15 @@ static int omit_edge(const napa_detector *d, const uint8_t *mask, int w, int h,
     return 1;
 }
 
-static int cases = 0;
+static int cases = 0, single_row_pairs = 0;
 static void check_impl(napa_detector *d, int w, int h, int factor, const char *name, int expected, int all_modes) {
     int pixels = w * h;
     uint8_t *mask = malloc((size_t)pixels);
     int *ids = malloc((size_t)pixels * sizeof(int)), *labels = malloc((size_t)pixels * sizeof(int));
     int *queue = malloc((size_t)pixels * sizeof(int)), *roots = malloc((size_t)pixels * sizeof(int));
-    napa_run *runs = malloc((size_t)pixels * sizeof(napa_run));
-    if (!mask || !ids || !labels || !queue || !roots || !runs) exit(2);
+    napa_run *runs = malloc((size_t)pixels * sizeof(napa_run)), *pair_rows = malloc((size_t)pixels * sizeof(napa_run));
+    int32_t *pair_roots = malloc((size_t)pixels * sizeof(int32_t));
+    if (!mask || !ids || !labels || !queue || !roots || !runs || !pair_rows || !pair_roots) exit(2);
     for (int shadow = 0; shadow <= (all_modes ? 1 : 0); shadow++) {
         dark_mask(d, w, h, factor, shadow, mask);
         int n = 0, components = 0;
@@ -104,10 +106,18 @@ static void check_impl(napa_detector *d, int w, int h, int factor, const char *n
         for (int split = 0; split <= (all_modes ? 2 : 0); split++) for (int hw = 0; hw < 2; hw++) {
             int actual;
 #ifdef NAPA_SSSE3_DISPATCH
-            if (hw && __builtin_cpu_supports("popcnt")) actual = threshold_index_popcnt(d, w, h, factor, split, shadow);
+            if (hw && __builtin_cpu_supports("popcnt")) actual = threshold_index_popcnt(d, w, h, factor, split, shadow, 0, (h + 3) / 4, 0);
             else
 #endif
-            actual = threshold_index_generic(d, w, h, factor, split, shadow);
+            actual = threshold_index_generic(d, w, h, factor, split, shadow, 0, (h + 3) / 4, 0);
+            /* Ordinary labelling stores row-pair runs: check and expand them to single rows. */
+            const int paired = !split && !shadow;
+            const napa_run *got = d->runs;
+            if (paired) {
+                for (int k = 0; k < actual; k++) if (d->runs[k].y & 1) { single_row_pairs++; break; }
+                if ((actual = expand_row_pairs(d, mask, w, h, actual, pair_rows, pair_roots, name)) < 0) exit(6);
+                got = pair_rows;
+            }
             if (actual != n) { fprintf(stderr, "%s: run count %d != %d\n", name, actual, n); exit(4); }
             /* Reconstruct all deferred split edges before comparing the graph. */
             for (int kind = 0; kind < 2; kind++) {
@@ -118,14 +128,17 @@ static void check_impl(napa_detector *d, int w, int h, int factor, const char *n
                     d->parent[a > b ? a : b] = a < b ? a : b;
                 }
             }
-            for (int k = 0; k < n; k++) if (d->runs[k].x0 != runs[k].x0 || d->runs[k].x1 != runs[k].x1 ||
-                    d->runs[k].y != runs[k].y || find_root(d->parent, k) != roots[k]) {
-                fprintf(stderr, "%s %dx%d factor=%d shadow=%d split=%d hw=%d run=%d root=%d expected=%d\n",
-                        name, w, h, factor, shadow, split, hw, k, find_root(d->parent, k), roots[k]); exit(5);
+            for (int k = 0; k < n; k++) {
+                int root = paired ? pair_roots[k] : find_root(d->parent, k);
+                if (got[k].x0 != runs[k].x0 || got[k].x1 != runs[k].x1 || got[k].y != runs[k].y || root != roots[k]) {
+                    fprintf(stderr, "%s %dx%d factor=%d shadow=%d split=%d hw=%d run=%d root=%d expected=%d\n",
+                            name, w, h, factor, shadow, split, hw, k, root, roots[k]); exit(5);
+                }
             }
         }
     }
-    free(mask); free(ids); free(labels); free(queue); free(roots); free(runs); cases++;
+    free(mask); free(ids); free(labels); free(queue); free(roots); free(runs); free(pair_rows); free(pair_roots);
+    cases++;
 }
 
 static void check(napa_detector *d, int w, int h, int factor, const char *name, int expected) {
@@ -205,8 +218,10 @@ int main(void) {
         if (middle) block(d, 20, 7, 1, 2, 2, 20);
         check(d, 20, 8, 1, "two trimmed contacts", 3); napa_destroy(d);
     }
+    /* Odd rows put the contact inside a row pair (rows 62 and 63), even ones between two pairs. */
+    for (int odd = 0; odd < 2; odd++)
     for (int variant = 0; variant < 9; variant++) for (int mirrored = 0; mirrored < 4; mirrored++) {
-        int w = 128, h = 128, x = variant == 1 ? 0 : 62, y = variant == 2 ? 0 : 62;
+        int w = 128, h = 128, x = variant == 1 ? 0 : 62, y = variant == 2 ? odd : 62 - odd;
         napa_detector *d = image(w, h, 1);
         if (variant == 4) memset(d->level, 70, (size_t)w * h);
         if (variant >= 5) memset(d->level, 160, (size_t)w * h);
@@ -220,10 +235,11 @@ int main(void) {
             d->level[(y + 1) * w + x + 2] = 120;
             expected = 1;
         }
+        if (odd && variant >= 5) expected = -1; /* the floor regions sit differently: BFS alone decides */
         if (mirrored & 1) reflect(d, w, h);
         if (mirrored & 2) reflect_vertical(d, w, h);
         char name[80];
-        snprintf(name, sizeof(name), "filled/gray/boundary variant=%d reflection=%d", variant, mirrored);
+        snprintf(name, sizeof(name), "filled/gray/boundary variant=%d reflection=%d odd=%d", variant, mirrored, odd);
         check(d, w, h, 1, name, expected); napa_destroy(d);
     }
     for (int bottom = 0; bottom < 2; bottom++) {
@@ -239,21 +255,23 @@ int main(void) {
         check(d, 70, 12, 1, "thin staircase", 1); napa_destroy(d);
     }
     /* Every pair of byte patterns, repeated vertically to make the support blocks solid.
-     * Shifts straddle 64-bit transition words; pixel BFS independently checks every contact. */
+     * Shifts straddle 64-bit transition words; pixel BFS independently checks every contact.
+     * One blank row first moves the contact from between two row pairs to inside one. */
     const int shifts[] = {1, 60, 124};
-    for (int at = 0; at < 3; at++) {
-        int offset = shifts[at], w = offset + 9;
-        napa_detector *d = image(w, 4, 1);
+    for (int at = 0; at < 3; at++) for (int drop = 0; drop < 2; drop++) {
+        int offset = shifts[at], w = offset + 9, h = 4 + drop;
+        napa_detector *d = image(w, h, 1);
         for (int upper = 0; upper < 256; upper++) for (int lower = 0; lower < 256; lower++) {
-            memset(d->level, 240, (size_t)w * 4);
+            memset(d->level, 240, (size_t)w * h);
             for (int y = 0; y < 4; y++) for (int x = 0; x < 8; x++) {
                 int pattern = y < 2 ? upper : lower;
-                if (pattern & (1 << x)) d->level[y * w + offset + x] = 0;
+                if (pattern & (1 << x)) d->level[(y + drop) * w + offset + x] = 0;
             }
-            check_impl(d, w, 4, 1, "exhaustive row-pair contacts", -1, 0);
+            check_impl(d, w, h, 1, "exhaustive row-pair contacts", -1, 0);
         }
         napa_destroy(d);
     }
+    if (!single_row_pairs) { fprintf(stderr, "no case kept a row pair as single rows\n"); return 7; }
     printf("%d pixel connectivity oracle cases passed\n", cases);
     return 0;
 }

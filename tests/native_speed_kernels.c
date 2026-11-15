@@ -5,6 +5,7 @@
  * below deliberately retain the pre-optimization algorithms as independent oracles.
  * Run through test_native_speed_kernels.py; no packaged library is modified. */
 #include "../src/napa_vision/_native/napa_core.c"
+#include "native_row_pairs.h"
 #include <stdio.h>
 #include <assert.h>
 static int threshold_legacy(napa_detector *det, int lw, int lh, int factor, const int split, int shadow) {
@@ -15,7 +16,7 @@ static int threshold_legacy(napa_detector *det, int lw, int lh, int factor, cons
     det->diag_n = det->neck_n = 0;
     int tw = (lw + TILE - 1) / TILE;
     int th = (lh + TILE - 1) / TILE;
-    uint8_t *vmin = det->row_min, *vmax = det->row_max, *trow = det->row_thr;
+    uint8_t *vmin = det->scratch.row_min, *vmax = det->scratch.row_max, *trow = det->scratch.row_thr;
 
     /* Tile min/max: a vertical pass over each band of TILE rows (contiguous, so it vectorises),
      * then a short horizontal pass over the band's TILE-wide groups. */
@@ -32,8 +33,8 @@ static int threshold_legacy(napa_detector *det, int lw, int lh, int factor, cons
                 vmax[x] = v > vmax[x] ? v : vmax[x];
             }
         }
-        uint8_t *tmin = det->tile_min + (size_t)ty * tw;
-        uint8_t *tmax = det->tile_max + (size_t)ty * tw;
+        uint8_t *tmin = det->scratch.tile_min + (size_t)ty * tw;
+        uint8_t *tmax = det->scratch.tile_max + (size_t)ty * tw;
         /* Rows are padded past lw by repeating the last sample, so every tile reads four. */
         for (int x = lw; x < 4 * tw; x++) vmin[x] = vmin[lw - 1], vmax[x] = vmax[lw - 1];
         for (int tx = 0; tx < tw; tx++) {
@@ -46,7 +47,7 @@ static int threshold_legacy(napa_detector *det, int lw, int lh, int factor, cons
     }
     /* 3x3 tile neighbourhood, separably and without branches so the loops vectorise: vertically
      * into a row padded by one tile at each end (repeating the edge tile), then horizontally. */
-    uint8_t *nlo = det->nb_lo, *nhi = det->nb_hi, *tt = det->nb_t, *fl = det->nb_f;
+    uint8_t *nlo = det->scratch.nb_lo, *nhi = det->scratch.nb_hi, *tt = det->scratch.nb_t, *fl = det->scratch.nb_f;
     /* A tile spans 4 * factor samples of the grid where the floors were measured. */
     int rows = det->floor_rows, cols = det->floor_cols;
     if (det->floor_uniform) memset(fl, det->floors[0], (size_t)tw);
@@ -57,12 +58,12 @@ static int threshold_legacy(napa_detector *det, int lw, int lh, int factor, cons
             int rx = tx * TILE * factor / NAPA_REGION;
             fl[tx] = frow[rx < cols ? rx : cols - 1];
         }
-        const uint8_t *lo_up = det->tile_min + (size_t)(ty > 0 ? ty - 1 : ty) * tw;
-        const uint8_t *lo_mid = det->tile_min + (size_t)ty * tw;
-        const uint8_t *lo_dn = det->tile_min + (size_t)(ty + 1 < th ? ty + 1 : ty) * tw;
-        const uint8_t *hi_up = det->tile_max + (size_t)(ty > 0 ? ty - 1 : ty) * tw;
-        const uint8_t *hi_mid = det->tile_max + (size_t)ty * tw;
-        const uint8_t *hi_dn = det->tile_max + (size_t)(ty + 1 < th ? ty + 1 : ty) * tw;
+        const uint8_t *lo_up = det->scratch.tile_min + (size_t)(ty > 0 ? ty - 1 : ty) * tw;
+        const uint8_t *lo_mid = det->scratch.tile_min + (size_t)ty * tw;
+        const uint8_t *lo_dn = det->scratch.tile_min + (size_t)(ty + 1 < th ? ty + 1 : ty) * tw;
+        const uint8_t *hi_up = det->scratch.tile_max + (size_t)(ty > 0 ? ty - 1 : ty) * tw;
+        const uint8_t *hi_mid = det->scratch.tile_max + (size_t)ty * tw;
+        const uint8_t *hi_dn = det->scratch.tile_max + (size_t)(ty + 1 < th ? ty + 1 : ty) * tw;
         for (int tx = 0; tx < tw; tx++) {
             uint8_t l = lo_mid[tx], h = hi_mid[tx];
             l = lo_up[tx] < l ? lo_up[tx] : l;
@@ -91,7 +92,7 @@ static int threshold_legacy(napa_detector *det, int lw, int lh, int factor, cons
         if (!any) continue; /* no contrast anywhere in this band: no dark samples, no runs */
         expand4(trow, tt, tw);
         memset(trow + lw, 0, (size_t)(4 * tw + 64 - lw)); /* nothing past the row is dark */
-        uint64_t *bits = det->row_bits;
+        uint64_t *bits = det->scratch.row_bits;
         for (int y = y0; y < y1; y++) {
             dark_bits(L + (size_t)y * lw, trow, lw, bits);
             int start = n;
@@ -264,6 +265,8 @@ static void independent_floors(void) {
             assert(contrast_floors(&det, image, w, h, settings[s].minimum, settings[s].sigmas, settings[s].cap) == frame);
             assert(det.floor_cols == cols && det.floor_rows == rows && det.floor_uniform == uniform);
             assert(memcmp(det.floors, want, (size_t)total) == 0);
+            free(det.floor_hist); /* contrast_floors' per-row histograms */
+            det.floor_hist = NULL, det.floor_hist_rows = 0;
             for (int i = 0; i < (int)sizeof guarded; i++) if (i < 19 || i >= 19 + total) assert(guarded[i] == 0xa7);
             assert(memcmp(owner, copy, pixels + 38) == 0);
             calls++; regions += (unsigned)total; nonuniform += !uniform;
@@ -282,39 +285,44 @@ int main(void) {
     for (int caseid=0; caseid<600; caseid++) {
         int w=widths[caseid%15], h=1+(int)(rnd()%17), nmax=((w+1)/2)*h+1;
         napa_detector *d=napa_create();
-        d->level=calloc((size_t)w*h+64,1);
-        d->runs=calloc(nmax,sizeof(napa_run)); d->parent=calloc(nmax,sizeof(int32_t));
         int tw=(w+3)/4, th=(h+3)/4;
-        d->tile_min=malloc(tw*th); d->tile_max=malloc(tw*th);
-        d->row_min=malloc(w+4); d->row_max=malloc(w+4); d->row_thr=malloc(w+68);
-        d->row_bits=malloc(((w+63)/64+1)*sizeof(uint64_t));
-        d->nb_lo=malloc(tw+2); d->nb_hi=malloc(tw+2); d->nb_t=malloc(tw+2); d->nb_f=malloc(tw+2);
+        if(!d || ensure_buffers(d,(size_t)w*h,(size_t)tw*th,(size_t)w,(size_t)nmax)) return 9;
+        memset(d->level,0,(size_t)w*h+64);
         d->floors=malloc(1); d->floors[0]=caseid%32; d->floor_cols=d->floor_rows=d->floor_uniform=1;
         for (int i=0;i<w*h;i++) d->level[i]=(caseid%3==0)?(rnd()>>24):((rnd()>>(caseid%17))&1)*255;
         int n=threshold_legacy(d,w,h,1,0,caseid&1);
         napa_run *runs=malloc((n+1)*sizeof(napa_run)); int32_t *roots=malloc((n+1)*sizeof(int32_t));
         memcpy(runs,d->runs,n*sizeof(napa_run));
         for (int i=0;i<n;i++) roots[i]=find_root(d->parent,i);
+        /* Ordinary labelling stores row-pair runs: expand them against the legacy runs' samples. */
+        uint8_t *mask=calloc((size_t)w*h,1); napa_run *pr=malloc((size_t)(w*h+1)*sizeof(napa_run));
+        int32_t *proots=malloc((size_t)(w*h+1)*sizeof(int32_t));
+        for (int i=0;i<n;i++) memset(mask+(size_t)runs[i].y*w+runs[i].x0,1,(size_t)(runs[i].x1-runs[i].x0+1));
         for (int path=0;path<2;path++) {
             int nn;
 #ifdef NAPA_SSSE3_DISPATCH
-            if(path && __builtin_cpu_supports("popcnt")) nn=threshold_index_popcnt(d,w,h,1,0,caseid&1);
+            if(path && __builtin_cpu_supports("popcnt")) nn=threshold_index_popcnt(d,w,h,1,0,caseid&1,0,(h+3)/4,0);
             else
 #endif
-            nn=threshold_index_generic(d,w,h,1,0,caseid&1);
+            nn=threshold_index_generic(d,w,h,1,0,caseid&1,0,(h+3)/4,0);
+            const napa_run *got=d->runs;
+            if(!(caseid&1)) {
+                if((nn=expand_row_pairs(d,mask,w,h,nn,pr,proots,"speed labels"))<0) return 13;
+                got=pr;
+            }
             if(nn!=n) return 10;
             for (int i=0;i<n;i++) {
-                int root = find_root(d->parent,i);
+                int root = caseid&1 ? find_root(d->parent,i) : proots[i];
                 /* Thresholds and raster runs stay exact. Ordinary supported-corner cuts may
                  * partition an old component; shadow retains the original eight-connected graph.
                  * native_contact_kernels.c independently checks the new graph with pixel BFS. */
-                if(runs[i].x0!=d->runs[i].x0 || runs[i].x1!=d->runs[i].x1 || runs[i].y!=d->runs[i].y ||
+                if(runs[i].x0!=got[i].x0 || runs[i].x1!=got[i].x1 || runs[i].y!=got[i].y ||
                    root < 0 || root > i || roots[root] != roots[i] || ((caseid&1) && roots[i]!=root)) {
                     printf("label failure %d %d\n",caseid,i);return 11;
                 }
             }
         }
-        free(runs);free(roots);napa_destroy(d);
+        free(runs);free(roots);free(mask);free(pr);free(proots);napa_destroy(d);
     }
     uint8_t im[71*64]; for(int i=0;i<71*64;i++) im[i]=rnd()>>24;
     for(int t=0;t<10000;t++) {

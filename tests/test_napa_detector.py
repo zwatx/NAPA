@@ -168,6 +168,30 @@ def test_missing_native_library_is_a_clear_error(monkeypatch, tmp_path) -> None:
         napa_detector._library.cache_clear()
 
 
+def test_border_bias_binding_does_not_require_regrowth_symbol(monkeypatch) -> None:
+    import ctypes
+
+    # Load a fresh CDLL so a previously cached binding cannot hide missing pointer types.
+    library = ctypes.CDLL(napa_detector._library()._name)
+
+    class WithoutRegrowth:
+        def __getattr__(self, name):
+            if name == "napa_set_regrow_small_tags":
+                raise AttributeError(name)
+            return getattr(library, name)
+
+    monkeypatch.setattr(ctypes, "CDLL", lambda path: WithoutRegrowth())
+    bound = napa_detector._library.__wrapped__()
+    assert bound.napa_border_bias_cells.argtypes[:2] == [ctypes.c_void_p, ctypes.c_void_p]
+
+
+def test_auto_rejection_explains_how_to_update_an_older_core(monkeypatch) -> None:
+    detector = NapaDetector()
+    monkeypatch.setattr(detector, "_detect", lambda *args: -1)
+    with pytest.raises(napa_detector.NativeLibraryError, match="Rebuild napa-vision"):
+        detector.detect(np.zeros((32, 32), np.uint8))
+
+
 def test_detect_after_close_raises_instead_of_crashing() -> None:
     detector = NapaDetector()
     detector.close()
@@ -397,10 +421,12 @@ def _aprilgrid(ids, *, columns: int, tag_px: int, angle_deg: float, size=(1280, 
 def test_split_touching_finds_aprilgrid_tags(tag_px: int, angle: float, min_tag_px: int, at_least: int) -> None:
     ids = list(range(100, 136))
     image, corners = _aprilgrid(ids, columns=6, tag_px=tag_px, angle_deg=angle)
-    ordinary = NapaDetector(min_tag_px=min_tag_px, max_detections=128, recover_shadows=False).detect(image)
-    found = NapaDetector(
-        min_tag_px=min_tag_px, max_detections=128, split_touching=True, recover_shadows=False
+    ordinary = NapaDetector(
+        min_tag_px=min_tag_px, max_detections=128, recover_shadows=False, split_touching=False
     ).detect(image)
+    found = NapaDetector(min_tag_px=min_tag_px, max_detections=128, split_touching=True, recover_shadows=False).detect(
+        image
+    )
     # Filled corner contacts are separated in the ordinary pass. Rotated/antialiased
     # necks may still need the optional recovery, which must preserve its prefix.
     if angle == 0.0:
@@ -441,7 +467,7 @@ def test_split_touching_changes_nothing_without_touching_shapes() -> None:
     frames = [_scene(tag_id, side, angle_deg=angle)[0] for tag_id, side, angle in ((3, 40, 10.0), (77, 120, 33.0))]
     frames.append(cv2.GaussianBlur(np.random.default_rng(3).integers(0, 256, (480, 640), dtype=np.uint8), (3, 3), 0))
     for min_tag_px in (16, 32):
-        ordinary = NapaDetector(min_tag_px=min_tag_px)
+        ordinary = NapaDetector(min_tag_px=min_tag_px, split_touching=False)
         split = NapaDetector(min_tag_px=min_tag_px, split_touching=True)
         for frame in frames:
             assert [(o.tag_id, o.corners.tolist()) for o in split.detect(frame)] == [
@@ -465,11 +491,59 @@ def test_split_touching_has_no_false_positives_on_noise_text_and_checkers() -> N
             assert detector.detect(frame) == []
 
 
-def test_split_touching_must_be_a_bool() -> None:
-    for value in (1, 0, "yes", None):
+@pytest.mark.parametrize(
+    ("tag_px", "angle", "min_tag_px"), [(48, 0.0, 16), (48, 0.0, 32), (36, 8.0, 32), (90, 25.0, 16)]
+)
+@pytest.mark.parametrize("shadows", [False, True])
+def test_split_touching_auto_splits_boards_as_split_touching_does(
+    tag_px: int, angle: float, min_tag_px: int, shadows: bool
+) -> None:
+    image, _ = _aprilgrid(list(range(100, 136)), columns=6, tag_px=tag_px, angle_deg=angle)
+    kwargs = dict(min_tag_px=min_tag_px, max_detections=128, recover_shadows=shadows)
+    split = NapaDetector(split_touching=True, **kwargs).detect(image)
+    auto = NapaDetector(split_touching="auto", **kwargs).detect(image)
+    assert [(o.tag_id, o.corners.tolist()) for o in auto] == [(o.tag_id, o.corners.tolist()) for o in split]
+
+
+def test_split_touching_auto_needs_one_tag_found_to_split() -> None:
+    # Turned 12 degrees at 48 px, every tag of this board merges with its corner squares: the ordinary pass finds
+    # none, so there's no tag to show the board's squares and auto gives the ordinary result.
+    image, _ = _aprilgrid(list(range(100, 136)), columns=6, tag_px=48, angle_deg=12.0)
+    kwargs = dict(min_tag_px=16, max_detections=128, recover_shadows=False)
+    assert NapaDetector(split_touching=False, **kwargs).detect(image) == []
+    assert NapaDetector(split_touching="auto", **kwargs).detect(image) == []
+    assert len(NapaDetector(split_touching=True, **kwargs).detect(image)) >= 33
+
+
+def test_split_touching_auto_changes_nothing_without_touching_tags() -> None:
+    rng = np.random.default_rng(5)
+    frames = [_scene(tag_id, side, angle_deg=angle)[0] for tag_id, side, angle in ((3, 40, 10.0), (77, 120, 33.0))]
+    frames.append(cv2.GaussianBlur(rng.integers(0, 256, (480, 640), dtype=np.uint8), (3, 3), 0))
+    frames.append(np.kron((np.indices((25, 33)).sum(0) % 2) * 255, np.ones((20, 20)))[:480, :640].astype(np.uint8))
+    for min_tag_px in (16, 32):
+        ordinary = NapaDetector(min_tag_px=min_tag_px, split_touching=False)
+        auto = NapaDetector(min_tag_px=min_tag_px, split_touching="auto")
+        for frame in frames:
+            assert [(o.tag_id, o.corners.tolist()) for o in auto.detect(frame)] == [
+                (o.tag_id, o.corners.tolist()) for o in ordinary.detect(frame)
+            ]
+
+
+def test_split_touching_auto_gives_the_same_tags_at_any_thread_count() -> None:
+    image, _ = _aprilgrid(list(range(100, 136)), columns=6, tag_px=90, angle_deg=25.0)
+    one = NapaDetector(min_tag_px=16, max_detections=128, split_touching="auto").detect(image)
+    four = NapaDetector(min_tag_px=16, max_detections=128, split_touching="auto", threads=4).detect(image)
+    assert len(one) > len(NapaDetector(min_tag_px=16, max_detections=128, split_touching=False).detect(image))
+    assert [(o.tag_id, o.corners.tolist()) for o in four] == [(o.tag_id, o.corners.tolist()) for o in one]
+
+
+def test_split_touching_must_be_a_bool_or_auto() -> None:
+    for value in (1, 0, "yes", "Auto", None):
         with pytest.raises(ValueError, match="split_touching"):
             NapaDetector(split_touching=value)
+    assert NapaDetector().split_touching == "auto"
+    assert NapaDetector(split_touching=False).split_touching is False
     detector = NapaDetector()
-    detector._params.split_touching = 2  # the C core validates the field too
+    detector._params.split_touching = 3  # the C core validates the field too
     with pytest.raises(RuntimeError, match="status -1"):
         detector.detect(_scene(1, 100)[0])

@@ -69,6 +69,8 @@ def _shape_growth_input(tmp_path: Path, small: bool = False) -> Path:
         "native_borrowed_gray.c",
         "native_border_batch.c",
         "native_box_rake.c",
+        "native_band_kernels.c",
+        "native_pool.c",
     ],
 )
 def test_native_speed_kernels(tmp_path: Path, scalar: bool, source_name: str) -> None:
@@ -88,7 +90,7 @@ def _run_native_kernels(tmp_path: Path, scalar: bool, source_name: str, small_st
     if not (root / "src/napa_vision/_native/napa_core.c").is_file():
         pytest.skip("private C kernel checks require a source checkout")
     executable = tmp_path / "kernels"
-    command = [compiler, "-std=c99", "-O2", "-fno-wrapv"]
+    command = [compiler, "-std=c99", "-O2", "-fno-wrapv", "-pthread"]
     if scalar:
         command.append("-DNAPA_NO_SIMD")
     if source_name == "native_shape_storage.c":
@@ -119,6 +121,11 @@ def _run_native_kernels(tmp_path: Path, scalar: bool, source_name: str, small_st
         )
     elif source_name == "native_border_batch.c":
         assert "2560 sampler cases, 49408 scalar-oracle points, 152 family endpoint checks passed" in result.stdout
+    elif source_name == "native_pool.c":
+        assert "2400 pool jobs at 1-8 threads, 16 thread settings, 800 contended jobs passed" in result.stdout
+        assert "672 banded labelling cases match the serial pass" in result.stdout
+    elif source_name == "native_band_kernels.c":
+        assert "20480 exact dark-bit cases, 13608 exact tile-extrema rows passed" in result.stdout
     elif source_name == "native_box_rake.c":
         assert "6000 box_rake cases match the block-mean definition" in result.stdout
     elif source_name == "native_borrowed_gray.c":
