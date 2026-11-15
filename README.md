@@ -45,8 +45,7 @@ from napa_vision.compat import Detector  # was: from pupil_apriltags import Dete
 
 ## How it compares
 
-On November 15, we compared 16 detector settings on the same synthetic frames, using one P-core of an Intel
-i7-12700H. These are the results for the 3,000-frame main corpus:
+Single-core performance on an Intel i7-12700H, across 3,000 labelled synthetic images:
 
 | Detector | Median ms | p95 ms | Tags found | Wrong IDs |
 | --- | --- | --- | --- | --- |
@@ -66,8 +65,20 @@ The [full report](benchmarks/results/2026-11-15_merged_cpu_comparison/report.md)
 results, and the timing method. The [measurement audit](benchmarks/results/2026-11-15_merged_cpu_comparison/audit.md)
 covers frequency and temperature variation during the run.
 
-The [benchmark guide](benchmarks/README.md#latest-results) also has the earlier Pi 5 measurements, made on older
-builds. For results on your camera and hardware, [measure your own footage](docs/measuring.md).
+We also tested NAPA on third-party datasets. These results use one Raspberry Pi 5 core:
+
+| Dataset | Images | Matched / labelled | Median ms |
+| --- | --- | --- | --- |
+| Locus AprilGrid renders | 200 | 2,768 / 2,916 tags | 5.743 |
+| ICRA 2020 forward renders | 50 | 4,258 / 7,700 tags | 9.882 |
+| Roboflow test split | 258 | 434 / 1,039 boxes | 0.410 |
+
+Locus and ICRA have tag IDs and corner labels. Roboflow has bounding boxes, so its matches do not measure ID
+accuracy. These [November 14 results](benchmarks/results/2026-11-14_auto_split/report.md) use an older build,
+with automatic splitting, shadows off, and `max_detections=2048` for dense boards.
+
+The [benchmark guide](benchmarks/README.md#latest-results) has the full settings and other datasets.
+For results on your camera and hardware, [measure your own footage](docs/measuring.md).
 
 ## How it works
 
