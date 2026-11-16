@@ -1,11 +1,30 @@
 """Rotated foreshortened tags must survive proposal filtering with accurate corners."""
 
+from pathlib import Path
+
 import cv2
 import numpy as np
 import pytest
 
 from napa_vision import NapaDetector
 from tests.test_napa_detector import DICTIONARY
+
+
+@pytest.mark.parametrize("angle", [15, 105])
+def test_sampled_component_corner_survives_rough_quad_selection(angle: int) -> None:
+    # The pair below rendered with OpenCV 4.7. Its component keeps a corner that the largest-area quad omits.
+    with np.load(Path(__file__).parent / "fixtures" / f"oblique-retreated-corner-{angle}.npz") as data:
+        image, truth = data["image"], data["truth"]
+    detector = NapaDetector(min_tag_px=16)
+    try:
+        observations = detector.detect(image)
+    finally:
+        detector.close()
+    assert len(observations) == 2
+    observations.sort(key=lambda observation: np.linalg.norm(observation.corners.mean(0) - truth[0].mean(0)))
+    for tag_id, expected, observation in zip([137, 424], truth, observations, strict=True):
+        assert (observation.tag_id, observation.hamming) == (tag_id, 0)
+        np.testing.assert_allclose(observation.corners, expected, atol=0.1)
 
 
 @pytest.mark.parametrize("ids", [(137, 424), (137, 137)])

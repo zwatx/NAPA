@@ -5911,6 +5911,48 @@ static NAPA_NOINLINE void rough_corners(int pick[4][2], int s, double sx, double
     }
 }
 
+/* A maximum-area inscribed quad can slide a corner along a long side, leaving
+ * another component extremum beyond the short side's outward fit window. After
+ * that fit fails, restore the nearest endpoint from the retained support point.
+ * Bound the replacement by the fitter's existing movement limit and keep convex winding. */
+static int restore_rough_corner(const component *comp, int pick[4][2], double step_x, double step_y,
+                                double outward, double move_limit) {
+    double most = outward;
+    int corner = -1, extreme = -1;
+    for (int k = 0; k < 4; k++) {
+        int next = (k + 1) & 3;
+        double ex = (pick[next][0] - pick[k][0]) * step_x;
+        double ey = (pick[next][1] - pick[k][1]) * step_y;
+        double len = hypot(ex, ey);
+        if (!(len > 0)) return 0;
+        for (int j = 0; j < 16; j++) {
+            double x = (comp->ext[j][0] - pick[k][0]) * step_x;
+            double y = (comp->ext[j][1] - pick[k][1]) * step_y;
+            double outside = (x * ey - y * ex) / len;
+            if (outside > most) {
+                most = outside;
+                corner = x * x + y * y < (x - ex) * (x - ex) + (y - ey) * (y - ey) ? k : next;
+                extreme = j;
+            }
+        }
+    }
+    if (corner < 0) return 0;
+    int oldx = pick[corner][0], oldy = pick[corner][1];
+    if (fabs((comp->ext[extreme][0] - oldx) * step_x) +
+        fabs((comp->ext[extreme][1] - oldy) * step_y) > move_limit) return 0;
+    pick[corner][0] = comp->ext[extreme][0], pick[corner][1] = comp->ext[extreme][1];
+    for (int k = 0; k < 4; k++) {
+        int j = (k + 1) & 3, n = (k + 2) & 3;
+        int64_t ax = (int64_t)pick[j][0] - pick[k][0], ay = (int64_t)pick[j][1] - pick[k][1];
+        int64_t bx = (int64_t)pick[n][0] - pick[j][0], by = (int64_t)pick[n][1] - pick[j][1];
+        if (ax * by - ay * bx <= 0) {
+            pick[corner][0] = oldx, pick[corner][1] = oldy;
+            return 0;
+        }
+    }
+    return 1;
+}
+
 /* Sparse paired border samples, before the expensive edge profiles: whether the rough quad (grown by `grow`) has a
  * quiet zone brighter than its border on three sides, and over all four on average when `strict`. */
 static NAPA_NOINLINE int quiet_zone_passes(const image_view *view, const vec2 rough[4], double grow, double cells,
@@ -7080,6 +7122,25 @@ static int process_level_candidates(napa_detector *det, const pass_config *confi
         } else {
             first_fit = fit_initial_from_level(&view, rough, fit.fine, s, smax,
                 params->min_contrast, &fit.edge_w, cells, confidence_eligible ? &initial_samples : NULL, &fit.frame_sides);
+        }
+        if (!first_fit && !piece && !shadow && !extended_shape) {
+            int supported_pick[4][2];
+            memcpy(supported_pick, pick, sizeof supported_pick);
+            double supported_area, supported_perimeter;
+            if (restore_rough_corner(&comp, supported_pick, s * sx, s * sy,
+                                     1.5 * s * smax + 1.0, 4.0 * fit.reach + 2.0) &&
+                !rough_quad_too_full(&det->fam, &comp, supported_pick, &supported_area, &supported_perimeter) &&
+                supported_area >= 0.3 * bw * bh) {
+                vec2 supported[4];
+                rough_corners(supported_pick, s, sx, sy, offx, offy, supported);
+                if (quiet_zone_passes(&view, supported, 0.5 * s * smax, cells, params->min_contrast, 1, 0)) {
+                    fit.edge_w = 0, fit.frame_sides = 0;
+                    first_fit = fit_initial_from_level(&view, supported, fit.fine, s, smax,
+                        params->min_contrast, &fit.edge_w, cells,
+                        confidence_eligible ? &initial_samples : NULL, &fit.frame_sides);
+                    if (first_fit) memcpy(rough, supported, sizeof supported);
+                }
+            }
         }
         /* The same for a small candidate whose first fit fails: a fragment's quad may not fit at all. A regrown
          * fit captured no samples for confidence_quad, which also works from the fragment's rough quad. */
