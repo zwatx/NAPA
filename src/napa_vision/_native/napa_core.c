@@ -3204,6 +3204,17 @@ static NAPA_NOINLINE void lens_profiles(const lens_side *ls, vec2 a, vec2 b, dou
 }
 
 static inline double fade(double x, double lo, double hi);
+/* Nearest falling midpoint crossing; equal distances retain the first crossing. */
+static double nearest_midpoint_crossing(const int64_t *prof, int K, int jl, int jr, double mid, double center) {
+    double best_c = -1, best_d = 1e9;
+    for (int j = jl - 1; j <= jr && j + 1 < K; j++) {
+        if (j < 0 || !((double)prof[j] >= mid && (double)prof[j + 1] < mid)) continue;
+        double c = j + ((double)prof[j] - mid) / (double)(prof[j] - prof[j + 1]);
+        if (fabs(c - center) < best_d) best_d = fabs(c - center), best_c = c;
+    }
+    return best_c;
+}
+
 static NAPA_FORCE_INLINE int fit_sides_impl(const image_view *im, const vec2 in[4], vec2 out[4], double r_out, double r_in, int min_edge,
                      int outermost, int max_points, double *edge_width, edge_levels *levels, double cells, vec2 alternate[4], vec2 curved[4], vec2 est_lens[4], int *est_ok, double *width_ratio, initial_capture *capture, int *frame_sides) {
     const uint8_t *img = im->p;
@@ -3380,19 +3391,13 @@ retake:
                         levels->model_pending = 0;
                     }
                     if (levels->has_model) {
-                    double local_mid = levels->midpoint[0] +
-                        levels->midpoint[1] * (bx - levels->cx) / levels->scale +
-                        levels->midpoint[2] * (by - levels->cy) / levels->scale;
-                    double mid = local_mid * 16777216.0;
-                    double best_d = 1e9;
-                    for (int j = jl - 1; j <= jr && j + 1 < K; j++) {
-                        if (j < 0 || !((double)prof[j] >= mid && (double)prof[j + 1] < mid)) continue;
-                        double c = j + ((double)prof[j] - mid) / (double)(prof[j] - prof[j + 1]);
-                        if (fabs(c - cj) < best_d) {
-                            best_d = fabs(c - cj); acj = c; alternate_crossing = 1;
-                        }
-                    }
-                    if (alternate_crossing && len / cells >= NAPA_BALANCE_MIN_CELL) acj = balanced_crossing(prof, K, step, acj, mid);
+                        double local_mid = levels->midpoint[0] +
+                            levels->midpoint[1] * (bx - levels->cx) / levels->scale +
+                            levels->midpoint[2] * (by - levels->cy) / levels->scale;
+                        double mid = local_mid * 16777216.0;
+                        double crossing = nearest_midpoint_crossing(prof, K, jl, jr, mid, cj);
+                        if (crossing >= 0) acj = crossing, alternate_crossing = 1;
+                        if (alternate_crossing && len / cells >= NAPA_BALANCE_MIN_CELL) acj = balanced_crossing(prof, K, step, acj, mid);
                     }
                 }
                 double half = len / (2.0 * cells);
@@ -3401,12 +3406,7 @@ retake:
                     double wl = sample_bilinear(im, bx + pnx * (pos0 - half), by + pny * (pos0 - half));
                     double bl = sample_bilinear(im, bx + pnx * (pos0 + half), by + pny * (pos0 + half));
                     double mid = 0.5 * (wl + bl) * 16777216.0;
-                    double best_c = -1, best_d = 1e9;
-                    for (int j = jl - 1; j <= jr && j + 1 < K; j++) {
-                        if (j < 0 || !((double)prof[j] >= mid && (double)prof[j + 1] < mid)) continue;
-                        double c = j + ((double)prof[j] - mid) / (double)(prof[j] - prof[j + 1]);
-                        if (fabs(c - cj) < best_d) best_d = fabs(c - cj), best_c = c;
-                    }
+                    double best_c = nearest_midpoint_crossing(prof, K, jl, jr, mid, cj);
                     if (best_c < 0) break;
                     int settled = fabs(best_c - cj) < 1e-3; /* the next pass would re-read the same levels */
                     cj = best_c;
@@ -4095,6 +4095,7 @@ static int fit_edge_run(const double *t, const double *y, int n, double scale, d
         }
         if (used < 5) return 0;
         if (!solve_3x3(a, c)) return 0;
+        if (pass == 2) break;
         double residual[NAPA_LOCAL_EDGE_SAMPLES], sorted[NAPA_LOCAL_EDGE_SAMPLES];
         for (int i = 0; i < n; i++) {
             const double u = t[i] / scale;
@@ -4526,21 +4527,19 @@ static int decode_quad_impl(napa_detector *det, const image_view *im, vec2 q[4],
     }
     /* Sharpen the cell samples, as upstream AprilTag does, to undo blur between neighbouring cells. */
     double unsharpened[256];
-    if (params->sharpening_x100 > 0) memcpy(unsharpened, grid, sizeof(double) * (size_t)(G * G));
     if (params->sharpening_x100 > 0) {
+        memcpy(unsharpened, grid, sizeof(double) * (size_t)(G * G));
         double k = params->sharpening_x100 / 100.0;
-        double sharp[256];
         for (int r = 0; r < G; r++) {
             for (int c = 0; c < G; c++) {
-                double v = grid[r * G + c], lap = 4 * v;
-                lap -= r > 0 ? grid[(r - 1) * G + c] : v;
-                lap -= r < G - 1 ? grid[(r + 1) * G + c] : v;
-                lap -= c > 0 ? grid[r * G + c - 1] : v;
-                lap -= c < G - 1 ? grid[r * G + c + 1] : v;
-                sharp[r * G + c] = v + k * lap;
+                double v = unsharpened[r * G + c], lap = 4 * v;
+                lap -= r > 0 ? unsharpened[(r - 1) * G + c] : v;
+                lap -= r < G - 1 ? unsharpened[(r + 1) * G + c] : v;
+                lap -= c > 0 ? unsharpened[r * G + c - 1] : v;
+                lap -= c < G - 1 ? unsharpened[r * G + c + 1] : v;
+                grid[r * G + c] = v + k * lap;
             }
         }
-        memcpy(grid, sharp, sizeof(double) * (size_t)(G * G));
     }
 
     uint64_t code = 0;
@@ -5687,14 +5686,13 @@ static int tone_aligned_quad(const image_view *view, const napa_detection *d, co
             Hi[0] = H[4] * H[8] - H[5] * H[7], Hi[1] = H[2] * H[7] - H[1] * H[8], Hi[2] = H[1] * H[5] - H[2] * H[4];
             Hi[3] = H[5] * H[6] - H[3] * H[8], Hi[4] = H[0] * H[8] - H[2] * H[6], Hi[5] = H[2] * H[3] - H[0] * H[5];
             Hi[6] = H[3] * H[7] - H[4] * H[6], Hi[7] = H[1] * H[6] - H[0] * H[7], Hi[8] = H[0] * H[4] - H[1] * H[3];
+            float gu[NAPA_SOFT_AREA], gv[NAPA_SOFT_AREA];
             for (int r = 0; r < 30; r++)
                 for (int c = 0; c < 30; c++) {
                     const int i = r * 30 + c, cl = c > 0 ? c - 1 : c, cr = c < 29 ? c + 1 : c, ru = r > 0 ? r - 1 : r, rd = r < 29 ? r + 1 : r;
-                    jacobian[0][i] = (g[r * 30 + cr] - g[r * 30 + cl]) * 24.0f / (cr - cl);
-                    jacobian[1][i] = (g[rd * 30 + c] - g[ru * 30 + c]) * 24.0f / (rd - ru);
+                    gu[i] = (g[r * 30 + cr] - g[r * 30 + cl]) * 24.0f / (cr - cl);
+                    gv[i] = (g[rd * 30 + c] - g[ru * 30 + c]) * 24.0f / (rd - ru);
                 }
-            float gu[NAPA_SOFT_AREA], gv[NAPA_SOFT_AREA];
-            memcpy(gu, jacobian[0], sizeof gu), memcpy(gv, jacobian[1], sizeof gv);
             for (int k = 0; k < 8; k++) {
                 double *c = k & 1 ? &q[k / 2].y : &q[k / 2].x;
                 const double was = *c;
@@ -7723,13 +7721,11 @@ static void soft_align(const image_view *view, const float t[NAPA_SOFT_AREA], co
     for (int k = 0; k < 4; k++) x[2 * k] = start[k].x, x[2 * k + 1] = start[k].y;
     memcpy(origin, x, sizeof origin);
     memcpy(kept, x, sizeof kept);
-    memcpy(out, start, 4 * sizeof(vec2));
-    soft_sample(view, out, now);
+    soft_sample(view, start, now);
     float best = soft_correlation(now, t);
     for (int iter = 0; iter < 4; iter++) {
         vec2 q[4];
         for (int k = 0; k < 4; k++) q[k].x = x[2 * k], q[k].y = x[2 * k + 1];
-        soft_sample(view, q, now);
         for (int m = 0; m < 8; m++) {
             double *coordinate = m & 1 ? &q[m / 2].y : &q[m / 2].x;
             const double was = *coordinate;
@@ -7968,9 +7964,7 @@ static int blocked_pass(napa_detector *det, const image_view *view, const napa_p
         const int code = blocked_code(det, e, &x0, &x1, &y0, &y1);
         if (code < 0) continue;
         const double cell = side / 8, reach = 0.45 * cell >= 1.5 ? 0.45 * cell : 1.5;
-        memcpy(fine, q, sizeof fine);
-        if (!fit_sides(view, fine, refined, reach, reach, params->min_contrast, 0, 8, &edge, NULL, 8, NULL)) continue;
-        memcpy(fine, refined, sizeof fine);
+        if (!fit_sides(view, q, fine, reach, reach, params->min_contrast, 0, 8, &edge, NULL, 8, NULL)) continue;
         if (!fit_sides(view, fine, refined, reach, reach, params->min_contrast, 0, NAPA_FINAL_POINTS, &edge, NULL, 8, NULL)) continue;
         if (signed_area(refined) < 0) { vec2 t = refined[1]; refined[1] = refined[3]; refined[3] = t; }
         if (convex_area(refined) <= 0) continue;
