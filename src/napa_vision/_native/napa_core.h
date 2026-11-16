@@ -139,7 +139,8 @@ NAPA_API int napa_gray_from_pixels(napa_detector *det, const uint8_t *src, int w
 NAPA_API int napa_set_threads(napa_detector *det, int threads);
 /* A tag's mean border-width bias, in cells, at the given corners: positive when the black border reads narrow. If edge_cells is
  * not NULL it receives the width of the blurred outer edges in cells, or NaN if they could not be fitted. 0 on success, 1 if
- * nothing could be measured, -1 on invalid input. */
+ * nothing could be measured, -1 on invalid input. Width/height must be 2-30000, stride at least width,
+ * corners finite, and parameters within napa_params ranges. */
 NAPA_API int napa_border_bias_cells(napa_detector *det, const uint8_t *img, int width, int height, int stride, const napa_params *params,
                                     const double corners[8], double *bias_cells, double *edge_cells);
 /* The payload of tag36h11 tag `id` (0-586): the 6x6 cells inside the black border, row-major, most

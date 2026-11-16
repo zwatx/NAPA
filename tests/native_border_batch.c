@@ -47,7 +47,44 @@ static void unit(double cells, int side, int c, double t, double *u, double *v) 
     *u = side == 0 ? a_ : side == 1 ? 1 - t_ : side == 2 ? a_ : t_;
     *v = side == 0 ? t_ : side == 1 ? a_ : side == 2 ? 1 - t_ : a_;
 }
+static void invalid_border_measurements(void) {
+    napa_detector *det = napa_create();
+    assert(det != NULL);
+    const napa_params params = {22, 3, 20, 22, 25, 0};
+    double q[8] = {0, 0, 1, 0, 1, 1, 0, 1}, bias = 17, edge = 19;
+    uint8_t one_pixel = 255;
+    const int sizes[][3] = {{1,1,1}, {1,16,1}, {16,1,16}, {0,16,16}, {-1,16,16},
+                            {16,0,16}, {16,-1,16}, {16,16,15}, {16,16,-1}, {30001,16,30001}, {16,30001,16}};
+    for (size_t i = 0; i < sizeof sizes / sizeof sizes[0]; i++) {
+        assert(napa_border_bias_cells(det, &one_pixel, sizes[i][0], sizes[i][1], sizes[i][2],
+                                      &params, q, &bias, &edge) == -1);
+        assert(bias == 17 && edge == 19);
+    }
+    uint8_t blank[16 * 16];
+    memset(blank, 255, sizeof blank);
+    for (int k = 0; k < 8; k++) {
+        double saved = q[k];
+        q[k] = k & 1 ? INFINITY : NAN;
+        assert(napa_border_bias_cells(det, blank, 16, 16, 16, &params, q, &bias, &edge) == -1);
+        q[k] = saved;
+    }
+    const napa_params invalid[] = {{7,3,20,22,25,0}, {30001,3,20,22,25,0}, {22,-1,20,22,25,0},
+        {22,4,20,22,25,0}, {22,3,0,22,25,0}, {22,3,256,22,25,0}, {22,3,20,-1,25,0},
+        {22,3,20,29,25,0}, {22,3,20,22,-1,0}, {22,3,20,22,101,0}, {22,3,20,22,25,-1}, {22,3,20,22,25,3}};
+    for (size_t i = 0; i < sizeof invalid / sizeof invalid[0]; i++)
+        assert(napa_border_bias_cells(det, blank, 16, 16, 16, &invalid[i], q, &bias, &edge) == -1);
+    assert(napa_border_bias_cells(NULL, blank, 16, 16, 16, &params, q, &bias, &edge) == -1);
+    assert(napa_border_bias_cells(det, NULL, 16, 16, 16, &params, q, &bias, &edge) == -1);
+    assert(napa_border_bias_cells(det, blank, 16, 16, 16, NULL, q, &bias, &edge) == -1);
+    assert(napa_border_bias_cells(det, blank, 16, 16, 16, &params, NULL, &bias, &edge) == -1);
+    assert(napa_border_bias_cells(det, blank, 16, 16, 16, &params, q, NULL, &edge) == -1);
+    assert(napa_border_bias_cells(det, blank, 16, 16, 16, &params, q, &bias, NULL) == 1);
+    assert(bias == 17 && edge == 19);
+    napa_destroy(det);
+}
+
 int main(void) {
+    invalid_border_measurements();
     const int lengths[] = {0,1,2,3,7,16,31,32,33,68};
     const double special[] = {0.0,-0.0,-1000,1000,DBL_MIN,-DBL_MIN,DBL_MAX,-DBL_MAX,
                               INFINITY,-INFINITY,NAN,0x1p-1074,15.999,11.999};

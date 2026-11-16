@@ -823,74 +823,6 @@ typedef struct {
     const napa_lens *lens; /* NULL: fit straight sides in pixels */
 } image_view;
 
-/* Exact integer-to-double values for scalar byte samples and signed differences. */
-static const double sample_integer_values[511] = {
-    -255.0, -254.0, -253.0, -252.0, -251.0, -250.0, -249.0, -248.0,
-    -247.0, -246.0, -245.0, -244.0, -243.0, -242.0, -241.0, -240.0,
-    -239.0, -238.0, -237.0, -236.0, -235.0, -234.0, -233.0, -232.0,
-    -231.0, -230.0, -229.0, -228.0, -227.0, -226.0, -225.0, -224.0,
-    -223.0, -222.0, -221.0, -220.0, -219.0, -218.0, -217.0, -216.0,
-    -215.0, -214.0, -213.0, -212.0, -211.0, -210.0, -209.0, -208.0,
-    -207.0, -206.0, -205.0, -204.0, -203.0, -202.0, -201.0, -200.0,
-    -199.0, -198.0, -197.0, -196.0, -195.0, -194.0, -193.0, -192.0,
-    -191.0, -190.0, -189.0, -188.0, -187.0, -186.0, -185.0, -184.0,
-    -183.0, -182.0, -181.0, -180.0, -179.0, -178.0, -177.0, -176.0,
-    -175.0, -174.0, -173.0, -172.0, -171.0, -170.0, -169.0, -168.0,
-    -167.0, -166.0, -165.0, -164.0, -163.0, -162.0, -161.0, -160.0,
-    -159.0, -158.0, -157.0, -156.0, -155.0, -154.0, -153.0, -152.0,
-    -151.0, -150.0, -149.0, -148.0, -147.0, -146.0, -145.0, -144.0,
-    -143.0, -142.0, -141.0, -140.0, -139.0, -138.0, -137.0, -136.0,
-    -135.0, -134.0, -133.0, -132.0, -131.0, -130.0, -129.0, -128.0,
-    -127.0, -126.0, -125.0, -124.0, -123.0, -122.0, -121.0, -120.0,
-    -119.0, -118.0, -117.0, -116.0, -115.0, -114.0, -113.0, -112.0,
-    -111.0, -110.0, -109.0, -108.0, -107.0, -106.0, -105.0, -104.0,
-    -103.0, -102.0, -101.0, -100.0, -99.0, -98.0, -97.0, -96.0,
-    -95.0, -94.0, -93.0, -92.0, -91.0, -90.0, -89.0, -88.0,
-    -87.0, -86.0, -85.0, -84.0, -83.0, -82.0, -81.0, -80.0,
-    -79.0, -78.0, -77.0, -76.0, -75.0, -74.0, -73.0, -72.0,
-    -71.0, -70.0, -69.0, -68.0, -67.0, -66.0, -65.0, -64.0,
-    -63.0, -62.0, -61.0, -60.0, -59.0, -58.0, -57.0, -56.0,
-    -55.0, -54.0, -53.0, -52.0, -51.0, -50.0, -49.0, -48.0,
-    -47.0, -46.0, -45.0, -44.0, -43.0, -42.0, -41.0, -40.0,
-    -39.0, -38.0, -37.0, -36.0, -35.0, -34.0, -33.0, -32.0,
-    -31.0, -30.0, -29.0, -28.0, -27.0, -26.0, -25.0, -24.0,
-    -23.0, -22.0, -21.0, -20.0, -19.0, -18.0, -17.0, -16.0,
-    -15.0, -14.0, -13.0, -12.0, -11.0, -10.0, -9.0, -8.0,
-    -7.0, -6.0, -5.0, -4.0, -3.0, -2.0, -1.0, 0.0,
-    1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0,
-    9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0,
-    17.0, 18.0, 19.0, 20.0, 21.0, 22.0, 23.0, 24.0,
-    25.0, 26.0, 27.0, 28.0, 29.0, 30.0, 31.0, 32.0,
-    33.0, 34.0, 35.0, 36.0, 37.0, 38.0, 39.0, 40.0,
-    41.0, 42.0, 43.0, 44.0, 45.0, 46.0, 47.0, 48.0,
-    49.0, 50.0, 51.0, 52.0, 53.0, 54.0, 55.0, 56.0,
-    57.0, 58.0, 59.0, 60.0, 61.0, 62.0, 63.0, 64.0,
-    65.0, 66.0, 67.0, 68.0, 69.0, 70.0, 71.0, 72.0,
-    73.0, 74.0, 75.0, 76.0, 77.0, 78.0, 79.0, 80.0,
-    81.0, 82.0, 83.0, 84.0, 85.0, 86.0, 87.0, 88.0,
-    89.0, 90.0, 91.0, 92.0, 93.0, 94.0, 95.0, 96.0,
-    97.0, 98.0, 99.0, 100.0, 101.0, 102.0, 103.0, 104.0,
-    105.0, 106.0, 107.0, 108.0, 109.0, 110.0, 111.0, 112.0,
-    113.0, 114.0, 115.0, 116.0, 117.0, 118.0, 119.0, 120.0,
-    121.0, 122.0, 123.0, 124.0, 125.0, 126.0, 127.0, 128.0,
-    129.0, 130.0, 131.0, 132.0, 133.0, 134.0, 135.0, 136.0,
-    137.0, 138.0, 139.0, 140.0, 141.0, 142.0, 143.0, 144.0,
-    145.0, 146.0, 147.0, 148.0, 149.0, 150.0, 151.0, 152.0,
-    153.0, 154.0, 155.0, 156.0, 157.0, 158.0, 159.0, 160.0,
-    161.0, 162.0, 163.0, 164.0, 165.0, 166.0, 167.0, 168.0,
-    169.0, 170.0, 171.0, 172.0, 173.0, 174.0, 175.0, 176.0,
-    177.0, 178.0, 179.0, 180.0, 181.0, 182.0, 183.0, 184.0,
-    185.0, 186.0, 187.0, 188.0, 189.0, 190.0, 191.0, 192.0,
-    193.0, 194.0, 195.0, 196.0, 197.0, 198.0, 199.0, 200.0,
-    201.0, 202.0, 203.0, 204.0, 205.0, 206.0, 207.0, 208.0,
-    209.0, 210.0, 211.0, 212.0, 213.0, 214.0, 215.0, 216.0,
-    217.0, 218.0, 219.0, 220.0, 221.0, 222.0, 223.0, 224.0,
-    225.0, 226.0, 227.0, 228.0, 229.0, 230.0, 231.0, 232.0,
-    233.0, 234.0, 235.0, 236.0, 237.0, 238.0, 239.0, 240.0,
-    241.0, 242.0, 243.0, 244.0, 245.0, 246.0, 247.0, 248.0,
-    249.0, 250.0, 251.0, 252.0, 253.0, 254.0, 255.0,
-};
-
 static inline double sample_bilinear(const image_view *im, double x, double y) {
     const uint8_t *img = im->p;
     const int w = im->w, h = im->h, stride = im->stride;
@@ -904,9 +836,8 @@ static inline double sample_bilinear(const image_view *im, double x, double y) {
     double fx = x - x0;
     double fy = y - y0;
     const uint8_t *p = img + (size_t)y0 * stride + x0;
-    const double *values = sample_integer_values + 255;
-    double a = values[p[0]] + values[p[1] - p[0]] * fx;
-    double b = values[p[stride]] + values[p[stride + 1] - p[stride]] * fx;
+    double a = p[0] + (p[1] - p[0]) * fx;
+    double b = p[stride] + (p[stride + 1] - p[stride]) * fx;
     double v = a + (b - a) * fy;
     return im->invert ? 255.0 - v : v;
 }
@@ -5952,6 +5883,32 @@ static NAPA_NOINLINE int quiet_zone_passes(const image_view *view, const vec2 ro
     return !(good_sides < 3 || (strict && all_sides < (shadow ? 6.0 : 4.8) * min_contrast));
 }
 
+/* These decisions are shared by serial candidates and the parallel pre-pass. */
+static int rough_quad_too_full(const family_layout *family, const component *comp, int pick[4][2],
+                               double *area, double *perimeter) {
+    *area = quad_area_pts(pick);
+    *perimeter = 0;
+    for (int k = 0; k < 4; k++) {
+        int ex = pick[(k + 1) & 3][0] - pick[k][0], ey = pick[(k + 1) & 3][1] - pick[k][1];
+        *perimeter += sqrt((double)(ex * ex + ey * ey));
+    }
+    return comp->count > family->fill_limit * (*area + 0.5 * *perimeter + 1.0);
+}
+
+enum { QUIET_ZONE_SKIP, QUIET_ZONE_CHECK, QUIET_ZONE_STRICT };
+
+static int rough_screen_mode(int s, int last, int shadow, int piece, int undersized_whole, int min_border_cells) {
+    const int strict = shadow || s <= 2 || (s <= 6 && !undersized_whole);
+    if (min_border_cells < 22 || !(shadow || piece || (strict && !last))) return QUIET_ZONE_SKIP;
+    return strict ? QUIET_ZONE_STRICT : QUIET_ZONE_CHECK;
+}
+
+static int fit_initial_from_level(const image_view *view, const vec2 rough[4], vec2 fine[4], int s, double scale,
+                                   int min_contrast, double *width, double cells, initial_capture *capture, int *frame_sides) {
+    return fit_initial_captured(view, rough, fine, 1.5 * s * scale + 1.0, 0.5 * s * scale + 1.0,
+                                min_contrast, width, cells, capture, frame_sides);
+}
+
 /* threads: a candidate's rough quad, screen and first fit, for the candidate loop. screen and fit are -1 where the
  * pre-pass didn't get that far (the loop then works them out itself, if it gets there). */
 typedef struct cand_memo {
@@ -5988,38 +5945,40 @@ static void memo_candidates(void *ctx, int chunk) {
         const int undersized_whole = j->base > 1 && (bw < j->lo || bh < j->lo);
         rough_pick(comp, undersized_whole, m->pick);
         if (undersized_whole || dense_whole_needs_deferral(j->base, j->s, j->last, bw, bh)) continue; /* set aside by the loop */
-        double best_area = quad_area_pts(m->pick), perim_q = 0;
-        for (int k = 0; k < 4; k++) {
-            int ex = m->pick[(k + 1) & 3][0] - m->pick[k][0], ey = m->pick[(k + 1) & 3][1] - m->pick[k][1];
-            perim_q += sqrt((double)(ex * ex + ey * ey));
-        }
-        if (comp->count > det->fam.fill_limit * (best_area + 0.5 * perim_q + 1.0)) continue;
+        double best_area, perim_q;
+        if (rough_quad_too_full(&det->fam, comp, m->pick, &best_area, &perim_q)) continue;
         vec2 rough[4], fine[4];
         rough_corners(m->pick, j->s, j->sx, j->sy, j->offx, j->offy, rough);
         const int s = j->s;
-        if ((j->shadow || ((s <= 2 || (s <= 6 && !undersized_whole)) && !j->last)) && j->params->min_border_cells >= 22) {
+        const int screen_mode = rough_screen_mode(s, j->last, j->shadow, 0, undersized_whole, j->params->min_border_cells);
+        if (screen_mode != QUIET_ZONE_SKIP) {
             m->screen = (signed char)quiet_zone_passes(j->view, rough, 0.5 * s * j->smax, j->cells, j->params->min_contrast,
-                                                       j->shadow || s <= 2 || (s <= 6 && !undersized_whole), j->shadow);
+                                                       screen_mode == QUIET_ZONE_STRICT, j->shadow);
             if (!m->screen) continue;
         }
         double width = 0;
-        m->fit = (signed char)fit_initial_captured(j->view, rough, fine, 1.5 * s * j->smax + 1.0, 0.5 * s * j->smax + 1.0,
+        m->fit = (signed char)fit_initial_from_level(j->view, rough, fine, s, j->smax,
                                                    j->params->min_contrast, &width, j->cells, &m->capture, &m->frame_sides);
         memcpy(m->fine, fine, sizeof fine);
         m->edge_w = width;
     }
 }
 
+static int params_valid(const napa_params *params) {
+    return params != NULL && params->min_tag_px >= 8 && params->min_tag_px <= 30000 &&
+        params->max_hamming >= 0 && params->max_hamming <= 3 &&
+        params->min_contrast >= 1 && params->min_contrast <= 255 &&
+        params->min_border_cells >= 0 && params->min_border_cells <= 28 &&
+        params->sharpening_x100 >= 0 && params->sharpening_x100 <= 100 &&
+        params->split_touching >= 0 && params->split_touching <= 2;
+}
+
 static int detect_pass(napa_detector *det, const uint8_t *img, int width, int height, int stride, const napa_params *params,
                 napa_detection *out, int max_out, int found, int shadow) {
-    if (det == NULL || img == NULL || params == NULL) return -1;
+    if (det == NULL || img == NULL) return -1;
     if (stride < width || max_out < 0) return -1;
     if (width > NAPA_MAX_SIDE || height > NAPA_MAX_SIDE) return -1;
-    if (params->min_tag_px < 8 || params->min_tag_px > 30000 || params->max_hamming < 0 || params->max_hamming > 3 ||
-        params->min_contrast < 1 || params->min_contrast > 255 || params->min_border_cells < 0 ||
-        params->min_border_cells > 28 || params->sharpening_x100 < 0 || params->sharpening_x100 > 100)
-        return -1;
-    if (params->split_touching < 0 || params->split_touching > 2) return -1;
+    if (!params_valid(params)) return -1;
     det->touching_seen = 0;
     if (width < 16 || height < 16) return 0;
     const int split = params->split_touching == 1 && det->fam.piece_hamming >= 0;
@@ -6468,16 +6427,11 @@ start:;
             int pick[4][2];
             if (mm) memcpy(pick, mm->pick, sizeof pick);
             else rough_pick(&comp, undersized_whole, pick);
-            double best_area = quad_area_pts(pick);
+            double best_area, perim_q;
             /* Every tag36h11 code has at least 10 white payload cells, so at most 54/64 of a tag's
              * square is dark (0.85 measured, against the quad grown by the half sample its corner
              * samples sit inside). Solid strokes and filled shapes run well past that. */
-            double perim_q = 0;
-            for (int k = 0; k < 4; k++) {
-                int ex = pick[(k + 1) & 3][0] - pick[k][0], ey = pick[(k + 1) & 3][1] - pick[k][1];
-                perim_q += sqrt((double)(ex * ex + ey * ey));
-            }
-            if (comp.count > det->fam.fill_limit * (best_area + 0.5 * perim_q + 1.0)) {
+            if (rough_quad_too_full(&det->fam, &comp, pick, &best_area, &perim_q)) {
                 PROF_MARK(PROF_QUAD);
                 TRACE(6);
                 self->row_y = -6;
@@ -6521,12 +6475,13 @@ start:;
             /* Sparse paired border samples reject noise before the expensive edge profiles.
              * Permit one weak side and leave terminal proposals unscreened: their ring can have
              * local clutter that a later level would normally resolve. Final decode is unchanged. */
-            if ((shadow || piece || ((s <= 2 || (s <= 6 && !undersized_whole)) && !last)) && params->min_border_cells >= 22) {
+            const int screen_mode = rough_screen_mode(s, last, shadow, piece, undersized_whole, params->min_border_cells);
+            if (screen_mode != QUIET_ZONE_SKIP) {
                 /* A tag's quiet zone is brighter than its border all the way round; the interior
                  * fragments and clutter that dominate proposals average near zero. */
                 const int pass = mm && mm->screen >= 0 ? mm->screen
                     : quiet_zone_passes(&view, rough, 0.5 * s * smax, cells, params->min_contrast,
-                                        shadow || s <= 2 || (s <= 6 && !undersized_whole), shadow);
+                                        screen_mode == QUIET_ZONE_STRICT, shadow);
                 if (!pass) {
                     PROF_MARK(PROF_FIT1);
                     TRACE(7);
@@ -6549,7 +6504,7 @@ start:;
                     if (confidence_eligible) initial_samples = mm->capture;
                 }
             } else {
-                first_fit = fit_initial_captured(&view, rough, fine, 1.5 * s * smax + 1.0, 0.5 * s * smax + 1.0,
+                first_fit = fit_initial_from_level(&view, rough, fine, s, smax,
                     params->min_contrast, &edge_w, cells, confidence_eligible ? &initial_samples : NULL, &frame_sides);
             }
             /* The same for a small candidate whose first fit fails: a fragment's quad may not fit at all. A regrown
@@ -7577,7 +7532,7 @@ static void soft_align(const image_view *view, const float t[NAPA_SOFT_AREA], co
 typedef struct {
     vec2 q[4];
     int code, bin;
-    float lead, ncc;
+    float lead;
     double side, black, white;
 } soft_accepted;
 
@@ -7654,7 +7609,7 @@ static int soft_pass(napa_detector *det, const image_view *view, napa_detection 
         if (!(best - nontag >= NAPA_SOFT_MIN_NONTAG_LEAD)) continue;
         soft_accepted *a = &accepted[count++];
         memcpy(a->q, q, sizeof q);
-        a->code = code, a->bin = b, a->lead = lead, a->ncc = best, a->side = side, a->black = e->black, a->white = e->white;
+        a->code = code, a->bin = b, a->lead = lead, a->side = side, a->black = e->black, a->white = e->white;
     }
     qsort(accepted, count, sizeof *accepted, compare_soft_lead);
     for (size_t index = 0; index < count && n < max_out; index++) {
@@ -7721,7 +7676,6 @@ static int blocked_prepare(napa_detector *det) {
 
 /* The one code whose wrong cells a flat rectangle explains, or -1 if none does or more than one tag could. */
 static int blocked_code(const napa_detector *det, const soft_candidate *e, int *x0_out, int *x1_out, int *y0_out, int *y1_out) {
-    const family_layout *L = &det->fam;
     const float mid = 0.5f * (e->black + e->white), allowed = (float)(NAPA_BLOCKED_MAX_SPAN * (e->white - e->black > 1e-3f ? e->white - e->black : 1e-3f));
     uint64_t read = 0;
     for (int r = 0; r < 6; r++)
@@ -7748,7 +7702,7 @@ static int blocked_code(const napa_detector *det, const soft_candidate *e, int *
                 lo = v < lo ? v : lo, hi = v > hi ? v : hi;
             }
         if (hi - lo > allowed) continue;
-        if (found >= 0 && (L->ids[found] != L->ids[t] || found != t)) return -1;
+        if (found >= 0) return -1;
         found = t, *x0_out = x0, *x1_out = x1, *y0_out = y0, *y1_out = y1;
     }
     return found;
@@ -7961,7 +7915,10 @@ int napa_set_lens(napa_detector *det, int model, const double *intrinsics, const
 
 int napa_border_bias_cells(napa_detector *det, const uint8_t *img, int width, int height, int stride, const napa_params *params,
                            const double corners[8], double *bias_cells, double *edge_cells) {
-    if (det == NULL || img == NULL || params == NULL || corners == NULL || bias_cells == NULL) return -1;
+    if (det == NULL || img == NULL || corners == NULL || bias_cells == NULL || !params_valid(params) ||
+        width < 2 || height < 2 || width > NAPA_MAX_SIDE || height > NAPA_MAX_SIDE || stride < width) return -1;
+    for (int k = 0; k < 8; k++)
+        if (!isfinite(corners[k])) return -1;
     const image_view view = {img, width, height, stride, det->fam.f->reversed, NULL}; /* measured in pixels, as given */
     vec2 q[4];
     double side = 0, delta = NAN, disagreement = 0;
