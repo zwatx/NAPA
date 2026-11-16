@@ -55,15 +55,23 @@ def _warped(side: int, angle: float, k: float) -> tuple[np.ndarray, np.ndarray]:
     return encoded, np.array(expected)
 
 
-# Single angles: at k 0.1 the worst corner over 2-44 degrees averages 0.20 px and peaks at 0.37, so 0.3 leaves room
-# for the angle-to-angle scatter of the final fit's end profiles.
 @pytest.mark.parametrize(
-    "angle,k,limit",
-    [(20.0, 0.1, 0.3), (20.0, 0.2, 0.55), (35.0, 0.2, 0.7)],
+    "angle,k,limit,fixture",
+    [
+        (20.0, 0.1, 0.3, None),
+        (20.0, 0.2, 0.55, None),
+        (35.0, 0.2, 0.7, None),
+        pytest.param(20.0, 0.1, 0.3, "bowed-gamma-small-refit.npz", id="frozen-opencv47"),
+    ],
 )
-def test_bowed_gamma_tag_corners_follow_their_edges(angle: float, k: float, limit: float) -> None:
+def test_bowed_gamma_tag_corners_follow_their_edges(angle: float, k: float, limit: float, fixture: str | None) -> None:
     # Bowed enough that a whole-side fit misses the corners, and gamma-encoded so the half level is off the edge.
-    image, expected = _warped(240, angle, k)
+    if fixture is None:
+        image, expected = _warped(240, angle, k)
+    else:
+        # _warped(240, 20, 0.1) under OpenCV 4.7; later interpolation changes hide the small-refit regression.
+        with np.load(Path(__file__).parent / "fixtures" / fixture) as data:
+            image, expected = data["image"], data["truth"]
     detector = NapaDetector(min_tag_px=32)
     try:
         observations = detector.detect(image)

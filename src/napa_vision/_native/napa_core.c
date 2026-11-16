@@ -6317,7 +6317,9 @@ static void polish_decoded_corners(napa_detector *det, const image_view *rview, 
                 }
                 if (weight > 0 && refit_corner(rview, start[k], &sides, one_cell, c->measured_bias, &fitted)) {
                     const double dx = fitted.x - start[k].x, dy = fitted.y - start[k].y;
-                    weight *= fade(hypot(dx, dy), NAPA_LOCAL_MIN_MOVE - NAPA_FADE_MOVE, NAPA_LOCAL_MIN_MOVE + NAPA_FADE_MOVE);
+                    /* A small local move can still correct a bowed edge; fade it as bow confidence falls. */
+                    const double move_weight = fade(hypot(dx, dy), NAPA_LOCAL_MIN_MOVE - NAPA_FADE_MOVE, NAPA_LOCAL_MIN_MOVE + NAPA_FADE_MOVE);
+                    weight *= bowed_weight + (1 - bowed_weight) * move_weight;
                     if (weight > 0) local[k].x = start[k].x + weight * dx, local[k].y = start[k].y + weight * dy, moved = 1;
                     continue;
                 }
