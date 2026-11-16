@@ -232,12 +232,19 @@ typedef struct {
     int minx, maxx, miny, maxy;
     int ext[16][2]; /* extreme points along the 16 directions of comp_dirs, in angular order */
     int extv[16];
-    int row_y, row_x0, row_x1; /* the blob's current row: its leftmost and rightmost dark sample */
-    /* With row-pair runs: the current pair's top row and its two rows' extents (x0 -1: no sample yet; a
-     * negative x1 is -x1 - 1 of a union run whose last dark sample in that row is still to find). */
-    int pair_y, top_x0, top_x1, bot_x0, bot_x1;
-    /* Spent once the extrema are flushed; napa_detect then reuses row_y for how far the blob got and
-     * row_x1 for how many split pieces it has. */
+    /* Row accumulation ends before candidate processing; the two phases share storage. */
+    union {
+        struct {
+            int y, x0, x1;
+            /* Row pairs: x0 = -1 means empty; a negative x1 encodes the union run's end
+             * as -x1 - 1 until the last dark sample in that row is resolved. */
+            int pair_y, top_x0, top_x1, bot_x0, bot_x1;
+        } rows;
+        struct {
+            int fate; /* trace stage reached, or 1 for a piece deferred until neck splitting */
+            int piece_count;
+        } candidate;
+    } work;
 } component;
 
 typedef struct fine_whole fine_whole;
@@ -4761,7 +4768,7 @@ static const int comp_dirs[16][2] = {{1, 0},  {2, 1},   {1, 1},   {1, 2},  {0, 1
  * row's leftmost or rightmost dark sample, so this runs once per row, not once per run. The stores
  * are unconditional selects: a growing blob moves its extremes on most rows, unpredictably. */
 static void comp_flush_row(component *c) {
-    int x0 = c->row_x0, x1 = c->row_x1, y = c->row_y;
+    int x0 = c->work.rows.x0, x1 = c->work.rows.x1, y = c->work.rows.y;
     for (int k = 0; k < 16; k++) {
         int x = comp_dirs[k][0] > 0 ? x1 : x0;
         int v = comp_dirs[k][0] * x + comp_dirs[k][1] * y;
@@ -4772,13 +4779,13 @@ static void comp_flush_row(component *c) {
     }
 }
 
-/* Runs arrive in raster order. extv starts at INT32_MIN and row_y at -1. */
+/* Runs arrive in raster order. extv starts at INT32_MIN and the pending row at -1. */
 static void comp_add_run(component *c, const napa_run *r) {
-    if (r->y != c->row_y) {
-        if (c->row_y >= 0) comp_flush_row(c);
-        c->row_y = r->y, c->row_x0 = r->x0;
+    if (r->y != c->work.rows.y) {
+        if (c->work.rows.y >= 0) comp_flush_row(c);
+        c->work.rows.y = r->y, c->work.rows.x0 = r->x0;
     }
-    c->row_x1 = r->x1;
+    c->work.rows.x1 = r->x1;
     c->count += r->x1 - r->x0 + 1;
 }
 
@@ -4809,16 +4816,16 @@ static int bits_count_both(const uint64_t *a, const uint64_t *b, int x0, int x1)
 /* Fold the pending row pair into the extremes: its top row, then its bottom row, as comp_add_run's
  * flushes would. A negative x1 is -x1 - 1 of a union run whose last dark sample is still to find. */
 static void comp_flush_pair(component *c, const uint64_t *bits, int stride) {
-    if (c->pair_y < 0) return;
-    const uint64_t *t = bits + (size_t)c->pair_y * stride;
-    if (c->top_x0 >= 0) {
-        c->row_y = c->pair_y, c->row_x0 = c->top_x0;
-        c->row_x1 = c->top_x1 >= 0 ? c->top_x1 : last_bit(t, -c->top_x1 - 1);
+    if (c->work.rows.pair_y < 0) return;
+    const uint64_t *t = bits + (size_t)c->work.rows.pair_y * stride;
+    if (c->work.rows.top_x0 >= 0) {
+        c->work.rows.y = c->work.rows.pair_y, c->work.rows.x0 = c->work.rows.top_x0;
+        c->work.rows.x1 = c->work.rows.top_x1 >= 0 ? c->work.rows.top_x1 : last_bit(t, -c->work.rows.top_x1 - 1);
         comp_flush_row(c);
     }
-    if (c->bot_x0 >= 0) {
-        c->row_y = c->pair_y + 1, c->row_x0 = c->bot_x0;
-        c->row_x1 = c->bot_x1 >= 0 ? c->bot_x1 : last_bit(t + stride, -c->bot_x1 - 1);
+    if (c->work.rows.bot_x0 >= 0) {
+        c->work.rows.y = c->work.rows.pair_y + 1, c->work.rows.x0 = c->work.rows.bot_x0;
+        c->work.rows.x1 = c->work.rows.bot_x1 >= 0 ? c->work.rows.bot_x1 : last_bit(t + stride, -c->work.rows.bot_x1 - 1);
         comp_flush_row(c);
     }
 }
@@ -4830,30 +4837,30 @@ static void comp_flush_pair(component *c, const uint64_t *bits, int stride) {
  * row arrive in two sweeps, so its extents take the outermost. */
 static NAPA_FORCE_INLINE void comp_add_pair_run(component *c, const napa_run *r, const uint64_t *bits, int stride) {
     const int pair_y = r->y & ~1;
-    if (pair_y != c->pair_y) {
+    if (pair_y != c->work.rows.pair_y) {
         comp_flush_pair(c, bits, stride);
-        c->pair_y = pair_y, c->top_x0 = c->bot_x0 = -1;
+        c->work.rows.pair_y = pair_y, c->work.rows.top_x0 = c->work.rows.bot_x0 = -1;
     }
     if (r->rows == 3) {
         const uint64_t *t = bits + (size_t)r->y * stride, *b = t + stride;
         c->count += r->x1 - r->x0 + 1 + bits_count_both(t, b, r->x0, r->x1);
-        if (c->top_x0 < 0) c->top_x0 = first_bit(t, r->x0);
-        c->top_x1 = -r->x1 - 1;
+        if (c->work.rows.top_x0 < 0) c->work.rows.top_x0 = first_bit(t, r->x0);
+        c->work.rows.top_x1 = -r->x1 - 1;
         /* The first such run is the leftmost dark in the bottom row so far: only top-row runs came before. */
-        if (c->bot_x0 < 0) c->bot_x0 = first_bit(b, r->x0);
-        c->bot_x1 = -r->x1 - 1;
+        if (c->work.rows.bot_x0 < 0) c->work.rows.bot_x0 = first_bit(b, r->x0);
+        c->work.rows.bot_x1 = -r->x1 - 1;
         return;
     }
     c->count += r->x1 - r->x0 + 1;
     if (!(r->y & 1) && r->rows == 1) {
-        if (c->top_x0 < 0) c->top_x0 = r->x0;
-        c->top_x1 = r->x1;
-    } else if (c->bot_x0 < 0) {
-        c->bot_x0 = r->x0, c->bot_x1 = r->x1;
+        if (c->work.rows.top_x0 < 0) c->work.rows.top_x0 = r->x0;
+        c->work.rows.top_x1 = r->x1;
+    } else if (c->work.rows.bot_x0 < 0) {
+        c->work.rows.bot_x0 = r->x0, c->work.rows.bot_x1 = r->x1;
     } else {
         /* Runs are disjoint: compare with the range of the run holding the current extreme. */
-        if (r->x0 < c->bot_x0) c->bot_x0 = r->x0;
-        if (r->x1 > (c->bot_x1 >= 0 ? c->bot_x1 : -c->bot_x1 - 1)) c->bot_x1 = r->x1;
+        if (r->x0 < c->work.rows.bot_x0) c->work.rows.bot_x0 = r->x0;
+        if (r->x1 > (c->work.rows.bot_x1 >= 0 ? c->work.rows.bot_x1 : -c->work.rows.bot_x1 - 1)) c->work.rows.bot_x1 = r->x1;
     }
 }
 
@@ -4958,7 +4965,7 @@ static int propose_piece(napa_detector *det, int32_t r, int n, int lo, int hi, i
     component *c = &det->pieces[n];
     c->count = 0;
     for (int k = 0; k < 16; k++) c->extv[k] = INT32_MIN;
-    c->row_y = -1;
+    c->work.rows.y = -1;
     c->minx = B[r].minx & ~PIECE_SEEN, c->maxx = B[r].maxx, c->miny = B[r].miny, c->maxy = B[r].maxy;
     det->piece_root[n] = r;
     return n + 1;
@@ -6696,7 +6703,7 @@ static int assemble_level_candidates(napa_detector *det, const pass_config *conf
         component *c = &det->cands[level->ncand];
         c->count = 0;
         for (int k = 0; k < 16; k++) c->extv[k] = INT32_MIN;
-        c->row_y = c->pair_y = -1;
+        c->work.rows.y = c->work.rows.pair_y = -1;
         c->minx = t_minx, c->maxx = t_maxx, c->miny = t_miny, c->maxy = t_maxy;
         det->slot[i] = level->ncand++;
     }
@@ -6753,19 +6760,22 @@ static int assemble_level_candidates(napa_detector *det, const pass_config *conf
             if (c >= 0) comp_add_run(&det->cands[c], &R[i]);
         }
         for (int k = 0; k < level->npieces; k++)
-            if (det->pieces[k].row_y >= 0) comp_flush_row(&det->pieces[k]); /* not: pieces given no runs */
+            if (det->pieces[k].work.rows.y >= 0) comp_flush_row(&det->pieces[k]); /* not: pieces given no runs */
     }
     if (!paired) for (int ci = 0; ci < level->ncand; ci++) comp_flush_row(&det->cands[ci]);
-    if (level->npieces) {
-        /* row_x1 is spent after the flush: it counts each candidate blob's proposed pieces. */
-        for (int ci = 0; ci < level->ncand; ci++) det->cands[ci].row_x1 = 0;
-        for (int k = 0; k < level->npieces; k++)
-            if (det->piece_cand[k] >= 0) det->cands[det->piece_cand[k]].row_x1++;
+    /* All row extrema are complete. Candidates now carry rejection stages and piece counts. */
+    for (int ci = 0; ci < level->ncand; ci++) {
+        det->cands[ci].work.candidate.fate = 0;
+        det->cands[ci].work.candidate.piece_count = 0;
+    }
+    for (int k = 0; k < level->npieces; k++) {
+        det->pieces[k].work.candidate.fate = 0;
+        if (det->piece_cand[k] >= 0) det->cands[det->piece_cand[k]].work.candidate.piece_count++;
     }
     if (level->redo && outputs->fate_off + (size_t)level->ncand + (size_t)(level->npieces - level->fine) <= outputs->fates_kept) {
         /* The first pass's fates: the corner-stage pieces are the same pieces, in the same order. */
-        for (int ci = 0; ci < level->ncand; ci++) det->cands[ci].row_y = -det->fates[outputs->fate_off + ci];
-        for (int k = level->fine; k < level->npieces; k++) det->pieces[k].row_y = -det->fates[outputs->fate_off + level->ncand + k - level->fine];
+        for (int ci = 0; ci < level->ncand; ci++) det->cands[ci].work.candidate.fate = det->fates[outputs->fate_off + ci];
+        for (int k = level->fine; k < level->npieces; k++) det->pieces[k].work.candidate.fate = det->fates[outputs->fate_off + level->ncand + k - level->fine];
     }
     PROF_MARK(PROF_BLOBS);
     return 0;
@@ -6884,12 +6894,12 @@ static int process_level_candidates(napa_detector *det, const pass_config *confi
         const int coverage_start = delayed ? 0 : covered_prefix;
         /* Corner-stage pieces first: a tag kept whole there is found as without necks. */
         int k = piece ? (ci - ncand < npieces - fine ? fine + ci - ncand : ci - ncand - (npieces - fine)) : 0;
-        /* Redone levels decode only the pieces not tried before (whose fate reads -1, below). */
-        if (!delayed && redo && (!piece || (k >= fine && det->pieces[k].row_y != -1))) continue;
+        /* Redone levels decode only the pieces not tried before (whose fate is 1). */
+        if (!delayed && redo && (!piece || (k >= fine && det->pieces[k].work.candidate.fate != 1))) continue;
         /* These locals are shared with the predecoded confidence entry below. Every
          * value read after refine_candidate is assigned on both incoming paths. */
-        component confidence_self;
-        component *self;
+        int confidence_fate;
+        int *candidate_fate = &confidence_fate;
         component comp;
         int undersized_whole = 0, require_exact = confidence, extended_shape = 0;
         int t_minx, t_maxx, t_miny, t_maxy;
@@ -6913,10 +6923,7 @@ static int process_level_candidates(napa_detector *det, const pass_config *confi
             strict_border = *params;
             strict_border.max_hamming = 0;
             decode_params = &strict_border;
-            /* The shared tail only writes a failure fate through self. Keep those
-             * writes local instead of changing an established component's fate. */
-            confidence_self.row_y = -8;
-            self = &confidence_self;
+            /* Confidence entries have no component fate; shared-tail writes stay local. */
 #ifdef NAPA_TRACE
             t_minx = t_maxx = (int)floor(fit.fine[0].x / s);
             t_miny = t_maxy = (int)floor(fit.fine[0].y / s);
@@ -6931,8 +6938,9 @@ static int process_level_candidates(napa_detector *det, const pass_config *confi
 #endif
             goto refine_candidate;
         }
-        self = delayed ? &det->fine_wholes[pending_index].data.shape
-               : piece ? &det->pieces[k] : &det->cands[ci];
+        component *self = delayed ? &det->fine_wholes[pending_index].data.shape
+                          : piece ? &det->pieces[k] : &det->cands[ci];
+        candidate_fate = &self->work.candidate.fate;
         comp = *self;
         undersized_whole = !piece && base > 1 &&
             (comp.maxx - comp.minx + 1 < lo || comp.maxy - comp.miny + 1 < lo);
@@ -6947,11 +6955,10 @@ static int process_level_candidates(napa_detector *det, const pass_config *confi
                 if (outputs->fine_whole_count > (size_t)(INT32_MAX - ordinary_count)) return -2;
                 candidate_count = ordinary_count + (int)outputs->fine_whole_count;
             }
-            self->row_y = -6; /* deferred wholes must not control split-piece eligibility */
+            *candidate_fate = 6; /* deferred wholes must not control split-piece eligibility */
             continue;
         }
-        /* row_y is spent after the extrema pass: it records how far each proposal got (-TRACE stage). */
-        self->row_y = -5;
+        *candidate_fate = 5;
         if (piece) {
             /* A blob or larger piece that failed its rough quad or its refinement, or decoded, never
              * held another tag in its pieces; at stride one, nor did any candidate blob (only tiny
@@ -6959,20 +6966,20 @@ static int process_level_candidates(napa_detector *det, const pass_config *confi
             int next = det->piece_next[k];
             const component *whole = next >= ncand ? &det->pieces[next - ncand]
                                      : det->piece_cand[k] >= 0 ? &det->cands[det->piece_cand[k]] : NULL;
-            int fate = whole ? -whole->row_y : 0;
+            int fate = whole ? whole->work.candidate.fate : 0;
             if (det->piece_cand[k] >= 0 && s == 1) continue;
             /* Until tags are seen touching, a piece that is nearly all of its blob, and its blob's only
              * piece, waits when the blob failed its first fit: it fails the same way. (A tag touching a
              * bar or a board is a small part of its blob.) Untried, it is decoded if the level is redone. */
             const component *blob = det->piece_cand[k] >= 0 ? &det->cands[det->piece_cand[k]] : NULL;
-            if (!outputs->necks && blob && fate == 7 && blob->row_x1 == 1 &&
+            if (!outputs->necks && blob && fate == 7 && blob->work.candidate.piece_count == 1 &&
                 5 * (comp.maxx - comp.minx + 1) * (comp.maxy - comp.miny + 1) >=
                     4 * (blob->maxx - blob->minx + 1) * (blob->maxy - blob->miny + 1)) {
-                self->row_y = -1;
+                *candidate_fate = 1;
                 continue;
             }
             if (fate == 6 || fate >= 9) {
-                self->row_y = whole->row_y; /* its own pieces share the fate */
+                *candidate_fate = whole->work.candidate.fate; /* its own pieces share the fate */
                 continue;
             }
         }
@@ -6989,7 +6996,7 @@ static int process_level_candidates(napa_detector *det, const pass_config *confi
                      ccx, ccy, 0.3 * big_px + 2.0)) ||
             (piece && covered_footprint(det->piece_out, det->piece_centers, outputs->piece_found, ccx, ccy, 0.3 * big_px + 2.0))) {
             TRACE(5);
-            self->row_y = -5;
+            *candidate_fate = 5;
             continue;
         }
         const cand_memo *mm = memo_level && !piece && !delayed ? &det->memo[ci] : NULL;
@@ -7003,7 +7010,7 @@ static int process_level_candidates(napa_detector *det, const pass_config *confi
         if (rough_quad_too_full(&det->fam, &comp, pick, &best_area, &perim_q)) {
             PROF_MARK(PROF_QUAD);
             TRACE(6);
-            self->row_y = -6;
+            *candidate_fate = 6;
             continue;
         }
         /* The axis-aligned box grows when a thin tag rotates. Sparse or slender whole
@@ -7016,13 +7023,13 @@ static int process_level_candidates(napa_detector *det, const pass_config *confi
             (81.0 * best_area < 2.0 * perim_q * perim_q || comp.count < 0.2 * best_area))) {
             PROF_MARK(PROF_QUAD);
             TRACE(6);
-            self->row_y = -6;
+            *candidate_fate = 6;
             continue;
         }
         if (extended_shape) {
             /* Extended wholes retain rough-rejection fate 6 so their additional fitting
              * does not change split-piece eligibility. */
-            self->row_y = -6;
+            *candidate_fate = 6;
             if (covered_footprint(det->shape_out, det->shape_centers, outputs->shape_found,
                                   ccx, ccy, 0.3 * big_px + 2.0)) continue;
         }
@@ -7054,7 +7061,7 @@ static int process_level_candidates(napa_detector *det, const pass_config *confi
             if (!pass) {
                 PROF_MARK(PROF_FIT1);
                 TRACE(7);
-                self->row_y = extended_shape ? -6 : -7;
+                *candidate_fate = extended_shape ? 6 : 7;
                 continue;
             }
         }
@@ -7096,7 +7103,7 @@ static int process_level_candidates(napa_detector *det, const pass_config *confi
         if (!first_fit) {
             PROF_MARK(PROF_FIT1);
             TRACE(7);
-            self->row_y = extended_shape ? -6 : -7;
+            *candidate_fate = extended_shape ? 6 : 7;
             continue;
         }
         const double initial_width = fit.edge_w;
@@ -7110,7 +7117,7 @@ static int process_level_candidates(napa_detector *det, const pass_config *confi
         if (failed_before(det, fit.fine, s, 0.3)) {
             PROF_MARK(PROF_DECODE1);
             TRACE(8);
-            self->row_y = extended_shape ? -6 : -8;
+            *candidate_fate = extended_shape ? 6 : 8;
             continue;
         }
         const double regrow_extent = !regrown && !shadow && !piece && (base >= 2 || shaped) &&
@@ -7118,7 +7125,7 @@ static int process_level_candidates(napa_detector *det, const pass_config *confi
         if (!decode_initial_candidate(det, &view, params, decode_params, &fit, rough, regrow_extent)) {
             PROF_MARK(PROF_DECODE1);
             TRACE(8);
-            self->row_y = extended_shape ? -6 : -8;
+            *candidate_fate = extended_shape ? 6 : 8;
             /* Pieces only read the list. A stricter border failure also cannot prove
              * that an ordinary proposal at another level will fail the caller's check. */
             if (!piece && !extended_shape && decode_params == params) remember_failure(det, fit.fine, s);
@@ -7155,7 +7162,7 @@ static int process_level_candidates(napa_detector *det, const pass_config *confi
         if (rejected) {
             int fate = rejected == REFINE_FIT_FAILED ? 9 : 10;
             TRACE(fate);
-            if (rejected != REFINE_CUT_FAILED) self->row_y = extended_shape ? -6 : -fate;
+            if (rejected != REFINE_CUT_FAILED) *candidate_fate = extended_shape ? 6 : fate;
             continue;
         }
         rview = &lin_view;
@@ -7169,7 +7176,7 @@ static int process_level_candidates(napa_detector *det, const pass_config *confi
         if (piece) {
             /* Pieces are many and mostly not tags: correct fewer bits (in tag36h11, three admitted
              * chance matches from random-payload grids), and keep them apart until the end. */
-            self->row_y = extended_shape ? -6 : -12;
+            *candidate_fate = extended_shape ? 6 : 12;
             if (d.hamming > det->fam.piece_hamming || already_found_footprint(det->piece_out, det->piece_centers, outputs->piece_found, &d)) continue;
             if ((size_t)outputs->piece_found == det->piece_out_capacity) {
                 size_t cap = det->piece_out_capacity ? 2 * det->piece_out_capacity : 64;
@@ -7185,7 +7192,7 @@ static int process_level_candidates(napa_detector *det, const pass_config *confi
         }
         if (already_found_footprint(outputs->out, det->out_centers, outputs->found < outputs->max_out ? outputs->found : outputs->max_out, &d)) {
             TRACE(11);
-            self->row_y = extended_shape ? -6 : -11;
+            *candidate_fate = extended_shape ? 6 : 11;
             continue;
         }
         if (extended_shape) {
@@ -7204,7 +7211,7 @@ static int process_level_candidates(napa_detector *det, const pass_config *confi
             continue; /* No ordinary coverage, output count or restart decision changes. */
         }
         TRACE(12);
-        self->row_y = -12;
+        *candidate_fate = 12;
         if ((split || watch) && !outputs->necks && !outputs->touching) outputs->touching = corners_touch(rview, &d, cells);
         if (outputs->found < outputs->max_out) {
             if (!save_center(&det->out_centers, &det->out_center_capacity, outputs->found, &d)) return -2;
@@ -7227,8 +7234,8 @@ static int save_level_fates(napa_detector *det, pass_outputs *outputs, const can
         det->fates = f;
         det->fate_capacity = cap;
     }
-    for (int ci = 0; ci < level->ncand; ci++) det->fates[outputs->fate_off + ci] = (uint8_t)-det->cands[ci].row_y;
-    for (int k = 0; k < level->npieces; k++) det->fates[outputs->fate_off + level->ncand + k] = (uint8_t)-det->pieces[k].row_y;
+    for (int ci = 0; ci < level->ncand; ci++) det->fates[outputs->fate_off + ci] = (uint8_t)det->cands[ci].work.candidate.fate;
+    for (int k = 0; k < level->npieces; k++) det->fates[outputs->fate_off + level->ncand + k] = (uint8_t)det->pieces[k].work.candidate.fate;
     outputs->fates_kept = outputs->fate_off + n;
     return 0;
 }
