@@ -94,6 +94,7 @@ test-command = '''python -c "import ctypes, pathlib, sys, chaquopy, pytest; lib 
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
 addopts = "--strict-config --strict-markers"
 
 [tool.ruff]
