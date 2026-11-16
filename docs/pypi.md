@@ -63,12 +63,12 @@ in the main corpus, its median/p95 worst-corner error was 0.017/0.080 px. Matche
 uses the best corner ordering and counts only matched tags.
 
 Including the 600 stress and 900 range frames, NAPA defaults found 10,952 of 10,998 tags, with one wrong ID.
-The [full report](https://github.com/zwatx/NAPA/blob/feat/consolidated-detector-review/benchmarks/results/2026-11-15_merged_cpu_comparison/report.md) has all 16 settings, per-scene
-results, and the timing method. The [measurement audit](https://github.com/zwatx/NAPA/blob/feat/consolidated-detector-review/benchmarks/results/2026-11-15_merged_cpu_comparison/audit.md)
+The [full report](https://github.com/zwatx/NAPA/blob/master/benchmarks/results/2026-11-15_merged_cpu_comparison/report.md) has all 16 settings, per-scene
+results, and the timing method. The [measurement audit](https://github.com/zwatx/NAPA/blob/master/benchmarks/results/2026-11-15_merged_cpu_comparison/audit.md)
 covers frequency and temperature variation during the run.
 
-The [benchmark guide](https://github.com/zwatx/NAPA/blob/feat/consolidated-detector-review/benchmarks/README.md#latest-results) has the full method.
-For results on your camera and hardware, [measure your own footage](https://github.com/zwatx/NAPA/blob/feat/consolidated-detector-review/docs/measuring.md).
+The [benchmark guide](https://github.com/zwatx/NAPA/blob/master/benchmarks/README.md#latest-results) has the full method.
+For results on your camera and hardware, [measure your own footage](https://github.com/zwatx/NAPA/blob/master/docs/measuring.md).
 
 ## Documentation
 
