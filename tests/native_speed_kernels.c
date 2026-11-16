@@ -9,6 +9,8 @@
 #include <stdio.h>
 #include <assert.h>
 static int threshold_legacy(napa_detector *det, int lw, int lh, int factor, const int split, int shadow) {
+    label_context ctx = label_context_for(det);
+    label_contacts contacts = label_contacts_for(det);
     const uint8_t *L = det->level;
     napa_run *R = det->runs;
     int32_t *P = det->parent;
@@ -119,9 +121,9 @@ static int threshold_legacy(napa_detector *det, int lw, int lh, int factor, cons
                     det->neck_root = p;
                     det->neck_capacity = cap;
                 }
-                if (split == 2) join_rows(det, R, P, prev_start, prev_end, start, n, 2, lw, lh, factor, shadow);
-                else if (split) join_rows(det, R, P, prev_start, prev_end, start, n, 1, lw, lh, factor, shadow);
-                else join_rows(det, R, P, prev_start, prev_end, start, n, 0, lw, lh, factor, shadow);
+                if (split == 2) join_rows(&ctx, &contacts, R, P, prev_start, prev_end, start, n, 2, lw, lh, factor, shadow);
+                else if (split) join_rows(&ctx, &contacts, R, P, prev_start, prev_end, start, n, 1, lw, lh, factor, shadow);
+                else join_rows(&ctx, &contacts, R, P, prev_start, prev_end, start, n, 0, lw, lh, factor, shadow);
             }
             prev_y = y, prev_start = start, prev_end = n;
         }
@@ -300,11 +302,13 @@ int main(void) {
         for (int i=0;i<n;i++) memset(mask+(size_t)runs[i].y*w+runs[i].x0,1,(size_t)(runs[i].x1-runs[i].x0+1));
         for (int path=0;path<2;path++) {
             int nn;
+            label_context ctx = label_context_for(d);
+            label_contacts contacts = label_contacts_for(d);
 #ifdef NAPA_SSSE3_DISPATCH
-            if(path && __builtin_cpu_supports("popcnt")) nn=threshold_index_popcnt(d,w,h,1,0,caseid&1,0,(h+3)/4,0);
+            if(path && __builtin_cpu_supports("popcnt")) nn=threshold_index_popcnt(&ctx,&contacts,w,h,1,0,caseid&1,0,(h+3)/4,0);
             else
 #endif
-            nn=threshold_index_generic(d,w,h,1,0,caseid&1,0,(h+3)/4,0);
+            nn=threshold_index_generic(&ctx,&contacts,w,h,1,0,caseid&1,0,(h+3)/4,0);
             const napa_run *got=d->runs;
             if(!(caseid&1)) {
                 if((nn=expand_row_pairs(d,mask,w,h,nn,pr,proots,"speed labels"))<0) return 13;

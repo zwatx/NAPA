@@ -329,6 +329,24 @@ typedef struct {
     size_t tile_capacity;
 } label_scratch;
 
+/* Bounded access for thresholding and run labelling; no detector, pool or candidate state. */
+typedef struct {
+    const uint8_t *level, *floors, *level_extrema_in;
+    int borrowed, floor_cols, floor_rows, floor_uniform;
+    uint8_t level_contrast_min;
+    uint8_t *level_extrema_out;
+    napa_run *runs;
+    int32_t *parent;
+    const label_scratch *scratch;
+    uint64_t *level_bits;
+} label_context;
+
+/* Only serial split labelling can grow and append these deferred contacts. */
+typedef struct {
+    int32_t **diag, **neck, **neck_root;
+    size_t *diag_n, *neck_n, *diag_capacity, *neck_capacity;
+} label_contacts;
+
 /* A decode attempt worth a second look by the soft decoder. `order` keeps the first of exact duplicates. */
 typedef struct {
     float quad[8], black, white, grid[64];
@@ -1426,14 +1444,38 @@ static NAPA_FORCE_INLINE int filled_corner_contact(const uint8_t *L, int w, int 
            L[(size_t)(y + 1) * w + bx + db] <= limit;
 }
 
+/* Labelling sees only this level's inputs and the buffers assigned to this pass. A band replaces
+ * the three private buffers; its dark-bit rows remain disjoint parts of the shared level. */
+static label_context label_context_for(napa_detector *det) {
+    label_context ctx = {
+        .level = det->level_view ? det->level_view : det->level,
+        .borrowed = det->level_view != NULL,
+        .floors = det->floors,
+        .floor_cols = det->floor_cols, .floor_rows = det->floor_rows, .floor_uniform = det->floor_uniform,
+        .level_contrast_min = det->level_contrast_min,
+        .level_extrema_in = det->level_extrema_in, .level_extrema_out = det->level_extrema_out,
+        .runs = det->runs, .parent = det->parent, .scratch = &det->scratch, .level_bits = det->level_bits
+    };
+    return ctx;
+}
+
+/* Point at the owning fields so successful reallocations remain published even if a later one fails. */
+static label_contacts label_contacts_for(napa_detector *det) {
+    label_contacts contacts = {
+        &det->diag, &det->neck, &det->neck_root,
+        &det->diag_n, &det->neck_n, &det->diag_capacity, &det->neck_capacity
+    };
+    return contacts;
+}
+
 /* The corner rule at the diagonal between columns x and x + 1 of rows y - 1 and y, upper-left and
  * lower-right dark when left is set (else upper-right and lower-left), against the larger noise floor
  * of the regions around it. Both runs must already span two samples. */
-static NAPA_FORCE_INLINE int corner_contact_at(const napa_detector *det, int lw, int lh, int factor, int x, int y,
+static NAPA_FORCE_INLINE int corner_contact_at(const label_context *ctx, int lw, int lh, int factor, int x, int y,
                                                int left) {
-    int floor = det->floors[0];
-    if (!det->floor_uniform) {
-        int cols = det->floor_cols, rows = det->floor_rows;
+    int floor = ctx->floors[0];
+    if (!ctx->floor_uniform) {
+        int cols = ctx->floor_cols, rows = ctx->floor_rows;
         int x0 = (x / TILE) * TILE * factor / NAPA_REGION;
         int x1 = ((x + 1) / TILE) * TILE * factor / NAPA_REGION;
         int y0 = ((y - 1) / TILE) * TILE * factor / NAPA_REGION;
@@ -1442,22 +1484,22 @@ static NAPA_FORCE_INLINE int corner_contact_at(const napa_detector *det, int lw,
         if (x1 >= cols) x1 = cols - 1;
         if (y0 >= rows) y0 = rows - 1;
         if (y1 >= rows) y1 = rows - 1;
-        const uint8_t *up = det->floors + (size_t)y0 * cols;
-        const uint8_t *dn = det->floors + (size_t)y1 * cols;
+        const uint8_t *up = ctx->floors + (size_t)y0 * cols;
+        const uint8_t *dn = ctx->floors + (size_t)y1 * cols;
         floor = up[x0] > up[x1] ? up[x0] : up[x1];
         if (dn[x0] > floor) floor = dn[x0];
         if (dn[x1] > floor) floor = dn[x1];
     }
-    return filled_corner_contact(det->level_view ? det->level_view : det->level, lw, lh, y, x, left, floor);
+    return filled_corner_contact(ctx->level, lw, lh, y, x, left, floor);
 }
 
 /* Both paths must omit the same edges, including across regional noise-floor boundaries. Run a lies in
  * the row above run b, and they touch only diagonally. */
-static NAPA_NOINLINE int separate_corner_contact(const napa_detector *det, int lw, int lh, int factor, int a, int b) {
-    const napa_run *R = det->runs;
+static NAPA_NOINLINE int separate_corner_contact(const label_context *ctx, int lw, int lh, int factor, int a, int b) {
+    const napa_run *R = ctx->runs;
     if (R[a].x1 <= R[a].x0 || R[b].x1 <= R[b].x0) return 0;
     int left = R[a].x1 + 1 == R[b].x0;
-    return corner_contact_at(det, lw, lh, factor, left ? R[b].x0 - 1 : R[b].x1, R[b].y, left);
+    return corner_contact_at(ctx, lw, lh, factor, left ? R[b].x0 - 1 : R[b].x1, R[b].y, left);
 }
 
 static NAPA_FORCE_INLINE int bit_at(const uint64_t *bits, int x) { return (int)(bits[x >> 6] >> (x & 63)) & 1; }
@@ -1465,24 +1507,25 @@ static NAPA_FORCE_INLINE int bit_at(const uint64_t *bits, int x) { return (int)(
 /* separate_corner_contact for dark bit rows: upper and lower (row y) touch only diagonally between
  * columns x and x + 1, upper dark at x when left is set. The run ending at x and the run starting at
  * x + 1 must each span two samples. */
-static NAPA_NOINLINE int separate_bit_contact(const napa_detector *det, int lw, int lh, int factor,
+static NAPA_NOINLINE int separate_bit_contact(const label_context *ctx, int lw, int lh, int factor,
                                               const uint64_t *upper, const uint64_t *lower, int x, int y, int left) {
     const uint64_t *ends = left ? upper : lower, *starts = left ? lower : upper;
     if (x < 1 || x + 2 >= lw || !bit_at(ends, x - 1) || !bit_at(starts, x + 2)) return 0;
-    return corner_contact_at(det, lw, lh, factor, x, y, left);
+    return corner_contact_at(ctx, lw, lh, factor, x, y, left);
 }
 
 /* Join adjacent rows for optional splitting. Supported filled-corner contacts stay separate, as in
  * ordinary indexing. Other corner contacts (and, with split 2, one-sample necks) are deferred as pairs. */
-static NAPA_FORCE_INLINE void join_rows(napa_detector *det, const napa_run *R, int32_t *P, int a, int a_end, int b,
-                                        int b_end, const int split, int lw, int lh, int factor, int shadow) {
+static NAPA_FORCE_INLINE void join_rows(const label_context *ctx, const label_contacts *contacts, const napa_run *R,
+                                        int32_t *P, int a, int a_end, int b, int b_end, const int split,
+                                        int lw, int lh, int factor, int shadow) {
     while (a < a_end && b < b_end) {
         if (R[a].x1 + 1 < R[b].x0) {
             a++;
         } else if (R[b].x1 + 1 < R[a].x0) {
             b++;
         } else if (split && !shadow && (R[a].x1 + 1 == R[b].x0 || R[b].x1 + 1 == R[a].x0) &&
-                   separate_corner_contact(det, lw, lh, factor, a, b)) {
+                   separate_corner_contact(ctx, lw, lh, factor, a, b)) {
             /* These contacts also stay separate in ordinary detection: do not defer them. */
             if (R[a].x1 < R[b].x1) a++;
             else b++;
@@ -1490,8 +1533,8 @@ static NAPA_FORCE_INLINE void join_rows(napa_detector *det, const napa_run *R, i
                               : split && (R[a].x1 + 1 == R[b].x0 || R[b].x1 + 1 == R[a].x0)) {
             /* A corner contact (no overlap) or, with split 2, a neck (one sample). */
             int corner = R[a].x1 + 1 == R[b].x0 || R[b].x1 + 1 == R[a].x0;
-            int32_t *pairs = corner ? det->diag : det->neck;
-            size_t *count = corner ? &det->diag_n : &det->neck_n;
+            int32_t *pairs = corner ? *contacts->diag : *contacts->neck;
+            size_t *count = corner ? contacts->diag_n : contacts->neck_n;
             pairs[(*count)++] = a;
             pairs[(*count)++] = b;
             if (R[a].x1 < R[b].x1) a++;
@@ -1644,25 +1687,25 @@ static NAPA_FORCE_INLINE int edges_before(const uint64_t *mask, const int32_t *p
  * and b.x1+2 give the eight-connected range above; ordinary indexing then trims
  * supported corner contacts. Visit b and its neighbors in raster order so backward
  * roots retain the original packed order. Single-row runs need no row-pair mask. */
-static NAPA_FORCE_INLINE void label_indexed_run(napa_detector *det, int lw, int lh, int factor,
+static NAPA_FORCE_INLINE void label_indexed_run(const label_context *ctx, int lw, int lh, int factor,
                                   int b, int prev_start, const uint64_t *mask, const int32_t *prefix, int shadow, int hw) {
-    napa_run *R = det->runs;
-    int32_t *P = det->parent;
+    napa_run *R = ctx->runs;
+    int32_t *P = ctx->parent;
     int f = prev_start + (edges_before(mask, prefix, R[b].x0, hw) >> 1);
     int g = prev_start + ((edges_before(mask, prefix, R[b].x1 + 2, hw) + 1) >> 1);
     if (!shadow && f < g) {
-        if (R[f].x1 + 1 == R[b].x0 && separate_corner_contact(det, lw, lh, factor, f, b)) f++;
-        if (f < g && R[g - 1].x0 == R[b].x1 + 1 && separate_corner_contact(det, lw, lh, factor, g - 1, b)) g--;
+        if (R[f].x1 + 1 == R[b].x0 && separate_corner_contact(ctx, lw, lh, factor, f, b)) f++;
+        if (f < g && R[g - 1].x0 == R[b].x1 + 1 && separate_corner_contact(ctx, lw, lh, factor, g - 1, b)) g--;
     }
     P[b] = f < g ? P[f] : b;
     for (int a = f + 1; a < g; a++)
         if (P[b] != P[a]) union_roots(P, a, b);
 }
 
-static NAPA_FORCE_INLINE int extract_labeled_runs(napa_detector *det, const uint64_t *bits,
+static NAPA_FORCE_INLINE int extract_labeled_runs(const label_context *ctx, const uint64_t *bits,
                                     int lw, int lh, int factor, int y, int n, int prev_start,
                                     const uint64_t *mask, const int32_t *prefix, const int shadow, int hw) {
-    napa_run *R = det->runs;
+    napa_run *R = ctx->runs;
     int open = 0, x0 = 0;
     for (int w = 0; w * 64 < lw; w++) {
         uint64_t edges = bits[w] ^ ((bits[w] << 1) | (uint64_t)open);
@@ -1673,14 +1716,14 @@ static NAPA_FORCE_INLINE int extract_labeled_runs(napa_detector *det, const uint
                 x0 = 64 * w + bit, open = 1;
             } else {
                 R[n].x0 = (uint16_t)x0, R[n].x1 = (uint16_t)(64 * w + bit - 1), R[n].y = (uint16_t)y;
-                label_indexed_run(det, lw, lh, factor, n, prev_start, mask, prefix, shadow, hw);
+                label_indexed_run(ctx, lw, lh, factor, n, prev_start, mask, prefix, shadow, hw);
                 n++, open = 0;
             }
         }
     }
     if (open) {
         R[n].x0 = (uint16_t)x0, R[n].x1 = (uint16_t)(lw - 1), R[n].y = (uint16_t)y;
-        label_indexed_run(det, lw, lh, factor, n, prev_start, mask, prefix, shadow, hw);
+        label_indexed_run(ctx, lw, lh, factor, n, prev_start, mask, prefix, shadow, hw);
         n++;
     }
     return n;
@@ -1688,9 +1731,9 @@ static NAPA_FORCE_INLINE int extract_labeled_runs(napa_detector *det, const uint
 
 /* Row y's dark bits. Borrowed input need not have the owned level's 64 padding bytes: for narrow
  * images, rounded word loads can cross the array before the final row. */
-static NAPA_FORCE_INLINE void level_row_bits(const napa_detector *det, const uint8_t *L, int lw, int lh, int y,
+static NAPA_FORCE_INLINE void level_row_bits(const label_context *ctx, const uint8_t *L, int lw, int lh, int y,
                                              const uint8_t *trow, uint64_t *bits) {
-    if (det->level_view && (size_t)(lh - y) * lw < ((size_t)lw + 63) / 64 * 64) {
+    if (ctx->borrowed && (size_t)(lh - y) * lw < ((size_t)lw + 63) / 64 * 64) {
         int whole = lw & ~63;
         uint8_t tail[64] = {0};
         memcpy(tail, L + (size_t)y * lw + whole, (size_t)(lw - whole));
@@ -1752,14 +1795,14 @@ static NAPA_FORCE_INLINE int bits_any(const uint64_t *b, int lo, int hi) {
  * x of both rows, so at most one run of each row there, and the rows touch through it when both are
  * dark in it. A window dark only at opposite corners holds a diagonal contact, which the corner rule
  * may keep apart; any other holds an overlap. */
-static NAPA_FORCE_INLINE uint64_t boundary_word(const napa_detector *det, int lw, int lh, int factor,
+static NAPA_FORCE_INLINE uint64_t boundary_word(const label_context *ctx, int lw, int lh, int factor,
                                                 const uint64_t *up, const uint64_t *dn, int w, int y, int *carry) {
     const uint64_t u = up[w], d = dn[w], ul = u << 1 | (uint64_t)(*carry & 1), dl = d << 1 | (uint64_t)(*carry >> 1);
     *carry = (int)(u >> 63) | (int)(d >> 63) << 1;
     uint64_t win = (u | ul) & (d | dl);
     for (uint64_t diag = win & ((ul & ~u & d & ~dl) | (dl & ~d & u & ~ul)); diag; diag &= diag - 1) {
         const int x = 64 * w + napa_ctz64(diag);
-        if (separate_bit_contact(det, lw, lh, factor, up, dn, x - 1, y, (int)(ul >> (x & 63)) & 1))
+        if (separate_bit_contact(ctx, lw, lh, factor, up, dn, x - 1, y, (int)(ul >> (x & 63)) & 1))
             win &= ~((uint64_t)1 << (x & 63));
     }
     return win;
@@ -1767,11 +1810,11 @@ static NAPA_FORCE_INLINE uint64_t boundary_word(const napa_detector *det, int lw
 
 /* All the boundary windows. Window lw (in the padding word) is left empty: it holds only column
  * lw - 1, which window lw - 1 holds too. */
-static NAPA_FORCE_INLINE void boundary_windows(const napa_detector *det, int lw, int lh, int factor,
+static NAPA_FORCE_INLINE void boundary_windows(const label_context *ctx, int lw, int lh, int factor,
                                                const uint64_t *up, const uint64_t *dn, int words, int y,
                                                uint64_t *junction) {
     int carry = 0;
-    for (int w = 0; w < words; w++) junction[w] = boundary_word(det, lw, lh, factor, up, dn, w, y, &carry);
+    for (int w = 0; w < words; w++) junction[w] = boundary_word(ctx, lw, lh, factor, up, dn, w, y, &carry);
     junction[words] = 0;
 }
 
@@ -1781,7 +1824,7 @@ static NAPA_FORCE_INLINE void boundary_windows(const napa_detector *det, int lw,
  * runs holding one); and, given the row above (up), the boundary windows, as boundary_windows. Returns
  * 0 when the pair's rows meet only diagonally somewhere single-row labelling keeps apart: the pair then
  * keeps single rows, and the windows are incomplete. */
-static NAPA_FORCE_INLINE int index_pair(const napa_detector *det, int lw, int lh, int factor, const uint64_t *up,
+static NAPA_FORCE_INLINE int index_pair(const label_context *ctx, int lw, int lh, int factor, const uint64_t *up,
                                         const uint64_t *top, const uint64_t *bot, int has_bottom, int words, int y,
                                         uint64_t *mask, int32_t *prefix, uint64_t *ft, uint64_t *fb,
                                         uint64_t *junction, const int hw) {
@@ -1794,7 +1837,7 @@ static NAPA_FORCE_INLINE int index_pair(const napa_detector *det, int lw, int lh
         const uint64_t tn = t >> 1 | top[w + 1] << 63, bn = has_bottom ? b >> 1 | bot[w + 1] << 63 : 0;
         for (uint64_t d = (t & ~b & bn & ~tn) | (b & ~t & tn & ~bn); d; d &= d - 1) {
             const int at = 64 * w + napa_ctz64(d);
-            if (separate_bit_contact(det, lw, lh, factor, top, bot, at, y + 1, (int)(t >> (at & 63)) & 1)) return 0;
+            if (separate_bit_contact(ctx, lw, lh, factor, top, bot, at, y + 1, (int)(t >> (at & 63)) & 1)) return 0;
         }
         const uint64_t e = x ^ (x << 1 | carry);
         carry = x >> 63;
@@ -1807,7 +1850,7 @@ static NAPA_FORCE_INLINE int index_pair(const napa_detector *det, int lw, int lh
         sum = x + b, v = sum + cb;
         cb = (uint64_t)((sum < x) | (v < sum));
         fb[w] = v & ~x;
-        if (up) junction[w] = boundary_word(det, lw, lh, factor, up, top, w, y, &boundary);
+        if (up) junction[w] = boundary_word(ctx, lw, lh, factor, up, top, w, y, &boundary);
     }
     mask[words] = 0, prefix[words] = count;
     ft[words] = ct, fb[words] = cb;
@@ -1842,10 +1885,10 @@ static NAPA_FORCE_INLINE int decode_edges(const uint64_t *mask, int words, uint1
  * max(x0)..min(x1) + 1 of two such runs belong to those two runs, because their rows are empty beside
  * them. A run touches nothing earlier in its own pair, so the first touching run's parent, which
  * precedes it, takes it. */
-static NAPA_FORCE_INLINE void join_above(napa_detector *det, int c, const int32_t *prank, const uint64_t *pmask,
+static NAPA_FORCE_INLINE void join_above(const label_context *ctx, int c, const int32_t *prank, const uint64_t *pmask,
                                          const int32_t *pprefix, const uint64_t *junction, const int hw) {
-    napa_run *R = det->runs;
-    int32_t *P = det->parent;
+    napa_run *R = ctx->runs;
+    int32_t *P = ctx->parent;
     const int f = edges_before(pmask, pprefix, R[c].x0, hw) >> 1;
     const int g = (edges_before(pmask, pprefix, R[c].x1 + 2, hw) + 1) >> 1;
     for (int k = f; k < g; k++) {
@@ -1858,26 +1901,26 @@ static NAPA_FORCE_INLINE void join_above(napa_detector *det, int c, const int32_
     }
 }
 
-/* Label row pair y (has_bottom: whether row y + 1 is in it), whose dark bits are in det->level_bits, against
+/* Label row pair y (has_bottom: whether row y + 1 is in it), whose dark bits are in ctx->level_bits, against
  * the pair above's touchable runs (prank, edges pmask / pprefix; prank NULL when the rows are not
  * adjacent). Runs are stored in the order single-row labelling meets them first: those dark in the top
  * row, left to right, then the rest, left to right. Union by smaller index then keeps each blob's root
  * at its first sample in raster order. This pair's touchable runs go to rank, left to right, and their
  * edges to mask / prefix. The scratch rows hold the union's run flags and a single-row pair's top-row
- * edges; det->scratch.row_bits holds the boundary windows. */
-static NAPA_FORCE_INLINE int label_row_pair(napa_detector *det, int lw, int lh, int factor, int y, int has_bottom, int n,
+ * edges; ctx->scratch->row_bits holds the boundary windows. */
+static NAPA_FORCE_INLINE int label_row_pair(const label_context *ctx, int lw, int lh, int factor, int y, int has_bottom, int n,
                                             const int32_t *prank, const uint64_t *pmask, const int32_t *pprefix,
                                             int32_t *rank, uint64_t *mask, int32_t *prefix, uint64_t *scratch[3],
                                             int32_t *tprefix, const int hw) {
-    napa_run *R = det->runs;
-    int32_t *P = det->parent;
+    napa_run *R = ctx->runs;
+    int32_t *P = ctx->parent;
     const int words = (lw + 63) / 64, stride = words + 1, start = n;
-    const uint64_t *top = det->level_bits + (size_t)y * stride, *bot = top + stride;
+    const uint64_t *top = ctx->level_bits + (size_t)y * stride, *bot = top + stride;
     const uint64_t *up = prank ? top - stride : NULL;
-    uint64_t *junction = det->scratch.row_bits, *ft = scratch[0], *fb = scratch[1];
-    if (index_pair(det, lw, lh, factor, up, top, bot, has_bottom, words, y, mask, prefix, ft, fb, junction, hw)) {
-        uint16_t *edge = det->scratch.row_edges;
-        int32_t *later = det->scratch.pair_rank + 2 * (size_t)(lw / 2 + 2);
+    uint64_t *junction = ctx->scratch->row_bits, *ft = scratch[0], *fb = scratch[1];
+    if (index_pair(ctx, lw, lh, factor, up, top, bot, has_bottom, words, y, mask, prefix, ft, fb, junction, hw)) {
+        uint16_t *edge = ctx->scratch->row_edges;
+        int32_t *later = ctx->scratch->pair_rank + 2 * (size_t)(lw / 2 + 2);
         int ne = decode_edges(mask, words, edge, hw), nlater = 0;
         if (ne & 1) edge[ne++] = (uint16_t)lw; /* a run still open at the end of a whole last word */
         for (int k = 0; k < ne; k += 2) {
@@ -1893,7 +1936,7 @@ static NAPA_FORCE_INLINE int label_row_pair(napa_detector *det, int lw, int lh, 
             R[n].rows = (uint16_t)(1 | ((fb[end >> 6] >> (end & 63)) & 1) << 1);
             P[n] = n;
             rank[k >> 1] = n;
-            if (prank) join_above(det, n, prank, pmask, pprefix, junction, hw);
+            if (prank) join_above(ctx, n, prank, pmask, pprefix, junction, hw);
             n++;
         }
         for (int j = 0; j < nlater; j++, n++) {
@@ -1903,18 +1946,18 @@ static NAPA_FORCE_INLINE int label_row_pair(napa_detector *det, int lw, int lh, 
         }
     } else {
         uint64_t *tmask = scratch[2];
-        if (prank) boundary_windows(det, lw, lh, factor, up, top, words, y, junction);
+        if (prank) boundary_windows(ctx, lw, lh, factor, up, top, words, y, junction);
         index_edges(top, top, words, tmask, tprefix, hw);
         n = runs_from_edges(tmask, lw, words, y, R, n);
         for (int c = start; c < n; c++) {
             P[c] = c;
-            if (prank) join_above(det, c, prank, pmask, pprefix, junction, hw);
+            if (prank) join_above(ctx, c, prank, pmask, pprefix, junction, hw);
         }
         const int mid = n;
         index_edges(bot, bot, words, mask, prefix, hw);
         n = runs_from_edges(mask, lw, words, y + 1, R, n);
         for (int b = mid; b < n; b++) {
-            label_indexed_run(det, lw, lh, factor, b, start, tmask, tprefix, 0, hw);
+            label_indexed_run(ctx, lw, lh, factor, b, start, tmask, tprefix, 0, hw);
             rank[b - mid] = b;
         }
     }
@@ -1925,32 +1968,32 @@ static NAPA_FORCE_INLINE int label_row_pair(napa_detector *det, int lw, int lh, 
  * the pair above it (top row y - 2), the last of the band before, whose runs end at c. That pair's touchable
  * runs and their edges are rebuilt from the dark bits, and each run of the band's first pair that is dark in
  * row y joins them as label_row_pair would have: through join_above, with the same windows. */
-static void join_band_pairs(napa_detector *det, int lw, int lh, int factor, int y, int c, int end) {
+static void join_band_pairs(const label_context *ctx, int lw, int lh, int factor, int y, int c, int end) {
     uint64_t mask[INDEX_WORDS];
     int32_t prefix[INDEX_WORDS];
-    const napa_run *R = det->runs;
+    const napa_run *R = ctx->runs;
     const int words = (lw + 63) / 64, stride = words + 1;
     int above = c;
     while (above > 0 && R[above - 1].y >= y - 2) above--;
     if (above == c || c == end || R[c].y != y || !(R[c].rows & 1)) return; /* nothing labelled to join on one side */
-    const uint64_t *top = det->level_bits + (size_t)(y - 2) * stride, *bot = top + stride;
+    const uint64_t *top = ctx->level_bits + (size_t)(y - 2) * stride, *bot = top + stride;
     /* A pair kept as single rows stores its bottom row's runs last; they are its touchable runs. */
     const int single = R[c - 1].y == y - 1;
-    int32_t *prank = det->scratch.pair_rank;
+    int32_t *prank = ctx->scratch->pair_rank;
     index_edges(single ? bot : top, bot, words, mask, prefix, 0);
     for (int a = above; a < c; a++)
         if (!single || R[a].y == y - 1) prank[edges_before(mask, prefix, R[a].x0, 0) >> 1] = a;
-    boundary_windows(det, lw, lh, factor, bot, bot + stride, words, y, det->scratch.row_bits);
-    for (; c < end && R[c].y == y && (R[c].rows & 1); c++) join_above(det, c, prank, mask, prefix, det->scratch.row_bits, 0);
+    boundary_windows(ctx, lw, lh, factor, bot, bot + stride, words, y, ctx->scratch->row_bits);
+    for (; c < end && R[c].y == y && (R[c].rows & 1); c++) join_above(ctx, c, prank, mask, prefix, ctx->scratch->row_bits, 0);
 }
 
 /* Join the first row y of a band (threshold_banded) of shadow labelling, whose runs are c..end - 1, to row
  * y - 1, the last of the band before, whose runs end at c, as label_indexed_run would have: for each run, left
  * is the first run above whose end reaches its left neighbour, right the first that starts past its right
  * one. Shadow labelling keeps corner contacts, so every run in left..right - 1 joins. */
-static void join_band_rows(napa_detector *det, int y, int c, int end) {
-    const napa_run *R = det->runs;
-    int32_t *P = det->parent;
+static void join_band_rows(const label_context *ctx, int y, int c, int end) {
+    const napa_run *R = ctx->runs;
+    int32_t *P = ctx->parent;
     const int first = c; /* the band's first run: row y - 1's runs end here */
     int above = first;
     while (above > 0 && R[above - 1].y == y - 1) above--;
@@ -1967,15 +2010,16 @@ static void join_band_rows(napa_detector *det, int y, int c, int end) {
 /* Threshold the level and label its dark samples as runs joined by union-find. Adjacent-row runs
  * connect within one sample, except supported filled-corner contacts in ordinary detection. Returns
  * the run count, or -1 when out of memory. Optional splitting defers the remaining corner contacts
- * (split 1), or also one-sample necks (split 2), in det->diag / det->neck for split_pieces. */
+ * (split 1), or also one-sample necks (split 2), in contacts for split_pieces. */
 /* Works over tile rows [ty0, ty1) of the level. Tile extrema come from level_extrema_in when saved; otherwise they are
- * computed here one tile row ahead, into det->scratch.tile_min and tile_max, which hold tile rows from `base`
+ * computed here one tile row ahead, into ctx->scratch->tile_min and tile_max, which hold tile rows from `base`
  * on (a band keeps only its own rows and the one on each side). */
-static NAPA_FORCE_INLINE int threshold_index_impl(napa_detector *det, int lw, int lh, int factor, const int split, int shadow, const int hw,
+static NAPA_FORCE_INLINE int threshold_index_impl(const label_context *ctx, const label_contacts *contacts,
+                                                  int lw, int lh, int factor, const int split, int shadow, const int hw,
                                                   int ty0, int ty1, int base) {
-    const uint8_t *L = det->level_view ? det->level_view : det->level;
-    napa_run *R = det->runs;
-    int32_t *P = det->parent;
+    const uint8_t *L = ctx->level;
+    napa_run *R = ctx->runs;
+    int32_t *P = ctx->parent;
     /* Run edges of the previous and current row (row pairs: also a fallback pair's top row). */
     uint64_t masks[3][INDEX_WORDS];
     int32_t prefixes[3][INDEX_WORDS];
@@ -1983,38 +2027,38 @@ static NAPA_FORCE_INLINE int threshold_index_impl(napa_detector *det, int lw, in
     uint64_t *pair_scratch[3] = {flags[0], flags[1], masks[2]};
     const int paired = !split && !shadow;
     int n = 0, prev_y = -2, prev_start = 0, prev_end = 0;
-    det->diag_n = det->neck_n = 0;
+    if (contacts) *contacts->diag_n = *contacts->neck_n = 0;
     int tw = (lw + TILE - 1) / TILE;
     int th = (lh + TILE - 1) / TILE;
-    uint8_t *vmin = det->scratch.row_min, *vmax = det->scratch.row_max, *trow = det->scratch.row_thr;
+    uint8_t *vmin = ctx->scratch->row_min, *vmax = ctx->scratch->row_max, *trow = ctx->scratch->row_thr;
 
     /* 3x3 tile neighbourhood, separably and without branches so the loops vectorise: vertically
      * into a row padded by one tile at each end (repeating the edge tile), then horizontally. */
-    uint8_t *nlo = det->scratch.nb_lo, *nhi = det->scratch.nb_hi, *tt = det->scratch.nb_t, *fl = det->scratch.nb_f;
-    const uint8_t contrast_min = det->level_contrast_min;
+    uint8_t *nlo = ctx->scratch->nb_lo, *nhi = ctx->scratch->nb_hi, *tt = ctx->scratch->nb_t, *fl = ctx->scratch->nb_f;
+    const uint8_t contrast_min = ctx->level_contrast_min;
     /* A tile spans 4 * factor samples of the grid where the floors were measured. */
-    int rows = det->floor_rows, cols = det->floor_cols;
-    if (det->floor_uniform) memset(fl, det->floors[0], (size_t)tw);
+    int rows = ctx->floor_rows, cols = ctx->floor_cols;
+    if (ctx->floor_uniform) memset(fl, ctx->floors[0], (size_t)tw);
     int floor_row = -1;
-    const uint8_t *saved = det->level_extrema_in;
+    const uint8_t *saved = ctx->level_extrema_in;
     const size_t tile_count = (size_t)tw * th;
     if (saved) base = 0;
-    const uint8_t *tile_min = saved ? saved : det->scratch.tile_min;
-    const uint8_t *tile_max = saved ? saved + tile_count : det->scratch.tile_max;
+    const uint8_t *tile_min = saved ? saved : ctx->scratch->tile_min;
+    const uint8_t *tile_max = saved ? saved + tile_count : ctx->scratch->tile_max;
     if (!saved)
         for (int r = ty0 > 0 ? ty0 - 1 : 0; r <= ty0 && r < th; r++)
-            tile_row_minmax(L, lw, lw, lh, r, tw, vmin, vmax, det->scratch.tile_min + (size_t)(r - base) * tw,
-                            det->scratch.tile_max + (size_t)(r - base) * tw);
+            tile_row_minmax(L, lw, lw, lh, r, tw, vmin, vmax, ctx->scratch->tile_min + (size_t)(r - base) * tw,
+                            ctx->scratch->tile_max + (size_t)(r - base) * tw);
     for (int ty = ty0; ty < ty1; ty++) {
         if (!saved && ty + 1 < th)
             tile_row_minmax(L, lw, lw, lh, ty + 1, tw, vmin, vmax,
-                            det->scratch.tile_min + (size_t)(ty + 1 - base) * tw, det->scratch.tile_max + (size_t)(ty + 1 - base) * tw);
+                            ctx->scratch->tile_min + (size_t)(ty + 1 - base) * tw, ctx->scratch->tile_max + (size_t)(ty + 1 - base) * tw);
         int ry = ty * TILE * factor / NAPA_REGION;
         ry = ry < rows ? ry : rows - 1;
-        if (!det->floor_uniform && ry != floor_row) {
+        if (!ctx->floor_uniform && ry != floor_row) {
             /* Each floor region covers a run of whole tiles: fill the row's floors run by run,
              * and only when the tile row enters a new region row. */
-            const uint8_t *frow = det->floors + (size_t)ry * cols;
+            const uint8_t *frow = ctx->floors + (size_t)ry * cols;
             floor_row = ry;
             for (int tx = 0; tx < tw;) {
                 int rx = tx * TILE * factor / NAPA_REGION;
@@ -2054,30 +2098,30 @@ static NAPA_FORCE_INLINE int threshold_index_impl(napa_detector *det, int lw, in
             const int words = (lw + 63) / 64, stride = words + 1;
             for (int y = y0; y < y1; y += 2) {
                 const int has_bottom = y + 1 < y1, side = (y >> 1) & 1;
-                uint64_t *top = det->level_bits + (size_t)y * stride;
-                level_row_bits(det, L, lw, lh, y, trow, top);
+                uint64_t *top = ctx->level_bits + (size_t)y * stride;
+                level_row_bits(ctx, L, lw, lh, y, trow, top);
                 top[words] = 0;
                 if (has_bottom) {
-                    level_row_bits(det, L, lw, lh, y + 1, trow, top + stride);
+                    level_row_bits(ctx, L, lw, lh, y + 1, trow, top + stride);
                     top[stride + words] = 0;
                 }
-                int32_t *rank = det->scratch.pair_rank + (size_t)side * (lw / 2 + 2);
-                const int32_t *prank = prev_y == y - 1 ? det->scratch.pair_rank + (size_t)(side ^ 1) * (lw / 2 + 2) : NULL;
-                n = label_row_pair(det, lw, lh, factor, y, has_bottom, n, prank, masks[side ^ 1], prefixes[side ^ 1], rank,
+                int32_t *rank = ctx->scratch->pair_rank + (size_t)side * (lw / 2 + 2);
+                const int32_t *prank = prev_y == y - 1 ? ctx->scratch->pair_rank + (size_t)(side ^ 1) * (lw / 2 + 2) : NULL;
+                n = label_row_pair(ctx, lw, lh, factor, y, has_bottom, n, prank, masks[side ^ 1], prefixes[side ^ 1], rank,
                                    masks[side], prefixes[side], pair_scratch, prefixes[2], hw);
                 prev_y = y + has_bottom;
             }
             continue;
         }
-        uint64_t *bits = det->scratch.row_bits;
+        uint64_t *bits = ctx->scratch->row_bits;
         for (int y = y0; y < y1; y++) {
-            level_row_bits(det, L, lw, lh, y, trow, bits);
+            level_row_bits(ctx, L, lw, lh, y, trow, bits);
             /* Shadow labelling labels each run as it is emitted, against the row above's edge index; split
              * labelling stores the rows' runs unlabelled and joins them below (join_rows). */
             if (!split) index_edges(bits, bits, (lw + 63) / 64, masks[y & 1], prefixes[y & 1], hw);
             int start = n;
             if (!split && prev_y == y - 1 && prev_start < prev_end)
-                n = extract_labeled_runs(det, bits, lw, lh, factor, y, n, prev_start,
+                n = extract_labeled_runs(ctx, bits, lw, lh, factor, y, n, prev_start,
                                         masks[(y & 1) ^ 1], prefixes[(y & 1) ^ 1], shadow, hw);
             else n = extract_runs(bits, lw, y, R, n);
             if (split || prev_y != y - 1 || prev_start == prev_end)
@@ -2085,53 +2129,62 @@ static NAPA_FORCE_INLINE int threshold_index_impl(napa_detector *det, int lw, in
             if (prev_y == y - 1 && split) {
                 /* Two adjacent rows touch at most once per run of either. */
                 size_t most = 2 * ((size_t)(prev_end - prev_start) + (size_t)(n - start));
-                if (split && det->diag_n + most > det->diag_capacity) {
-                    size_t cap = det->diag_capacity ? 2 * det->diag_capacity : 4096;
-                    while (cap < det->diag_n + most) cap *= 2;
-                    int32_t *p = (int32_t *)realloc(det->diag, cap * sizeof(int32_t));
+                if (split && *contacts->diag_n + most > *contacts->diag_capacity) {
+                    size_t cap = *contacts->diag_capacity ? 2 * *contacts->diag_capacity : 4096;
+                    while (cap < *contacts->diag_n + most) cap *= 2;
+                    int32_t *p = (int32_t *)realloc(*contacts->diag, cap * sizeof(int32_t));
                     if (p == NULL) return -1;
-                    det->diag = p;
-                    det->diag_capacity = cap;
+                    *contacts->diag = p;
+                    *contacts->diag_capacity = cap;
                 }
-                if (split == 2 && det->neck_n + most > det->neck_capacity) {
-                    size_t cap = det->neck_capacity ? 2 * det->neck_capacity : 4096;
-                    while (cap < det->neck_n + most) cap *= 2;
-                    int32_t *p = (int32_t *)realloc(det->neck, cap * sizeof(int32_t));
+                if (split == 2 && *contacts->neck_n + most > *contacts->neck_capacity) {
+                    size_t cap = *contacts->neck_capacity ? 2 * *contacts->neck_capacity : 4096;
+                    while (cap < *contacts->neck_n + most) cap *= 2;
+                    int32_t *p = (int32_t *)realloc(*contacts->neck, cap * sizeof(int32_t));
                     if (p == NULL) return -1;
-                    det->neck = p;
-                    if ((p = (int32_t *)realloc(det->neck_root, cap * sizeof(int32_t))) == NULL) return -1;
-                    det->neck_root = p;
-                    det->neck_capacity = cap;
+                    *contacts->neck = p;
+                    if ((p = (int32_t *)realloc(*contacts->neck_root, cap * sizeof(int32_t))) == NULL) return -1;
+                    *contacts->neck_root = p;
+                    *contacts->neck_capacity = cap;
                 }
-                if (split == 2) join_rows(det, R, P, prev_start, prev_end, start, n, 2, lw, lh, factor, shadow);
-                else join_rows(det, R, P, prev_start, prev_end, start, n, 1, lw, lh, factor, shadow);
+                if (split == 2) join_rows(ctx, contacts, R, P, prev_start, prev_end, start, n, 2, lw, lh, factor, shadow);
+                else join_rows(ctx, contacts, R, P, prev_start, prev_end, start, n, 1, lw, lh, factor, shadow);
             }
             prev_y = y, prev_start = start, prev_end = n;
         }
     }
-    if (det->level_extrema_out) {
-        memcpy(det->level_extrema_out, det->scratch.tile_min, tile_count);
-        memcpy(det->level_extrema_out + tile_count, det->scratch.tile_max, tile_count);
+    if (ctx->level_extrema_out) {
+        memcpy(ctx->level_extrema_out, ctx->scratch->tile_min, tile_count);
+        memcpy(ctx->level_extrema_out + tile_count, ctx->scratch->tile_max, tile_count);
     }
     return n;
 }
-static int threshold_index_generic(napa_detector *det, int lw, int lh, int factor, int split, int shadow, int ty0, int ty1, int base) {
+static int threshold_index_generic(const label_context *ctx, const label_contacts *contacts,
+                                   int lw, int lh, int factor, int split, int shadow, int ty0, int ty1, int base) {
     /* Keep the common ordinary loop free of recovery-mode branches. */
-    if (!split && !shadow) return threshold_index_impl(det, lw, lh, factor, 0, 0, 0, ty0, ty1, base);
-    return threshold_index_impl(det, lw, lh, factor, split, shadow, 0, ty0, ty1, base);
+    if (!split && !shadow) return threshold_index_impl(ctx, contacts, lw, lh, factor, 0, 0, 0, ty0, ty1, base);
+    return threshold_index_impl(ctx, contacts, lw, lh, factor, split, shadow, 0, ty0, ty1, base);
 }
 #ifdef NAPA_SSSE3_DISPATCH
-__attribute__((target("popcnt"))) static int threshold_index_popcnt(napa_detector *det, int lw, int lh, int factor, int split, int shadow, int ty0, int ty1, int base) {
+__attribute__((target("popcnt"))) static int threshold_index_popcnt(const label_context *ctx, const label_contacts *contacts,
+                                   int lw, int lh, int factor, int split, int shadow, int ty0, int ty1, int base) {
     /* Keep the common ordinary loop free of recovery-mode branches. */
-    if (!split && !shadow) return threshold_index_impl(det, lw, lh, factor, 0, 0, 1, ty0, ty1, base);
-    return threshold_index_impl(det, lw, lh, factor, split, shadow, 1, ty0, ty1, base);
+    if (!split && !shadow) return threshold_index_impl(ctx, contacts, lw, lh, factor, 0, 0, 1, ty0, ty1, base);
+    return threshold_index_impl(ctx, contacts, lw, lh, factor, split, shadow, 1, ty0, ty1, base);
 }
 #endif
+static int threshold_context(const label_context *ctx, const label_contacts *contacts,
+                                   int lw, int lh, int factor, int split, int shadow, int ty0, int ty1, int base) {
+#ifdef NAPA_SSSE3_DISPATCH
+    if (__builtin_cpu_supports("popcnt")) return threshold_index_popcnt(ctx, contacts, lw, lh, factor, split, shadow, ty0, ty1, base);
+#endif
+    return threshold_index_generic(ctx, contacts, lw, lh, factor, split, shadow, ty0, ty1, base);
+}
+
 static int threshold_rows(napa_detector *det, int lw, int lh, int factor, int split, int shadow, int ty0, int ty1, int base) {
-#ifdef NAPA_SSSE3_DISPATCH
-    if (__builtin_cpu_supports("popcnt")) return threshold_index_popcnt(det, lw, lh, factor, split, shadow, ty0, ty1, base);
-#endif
-    return threshold_index_generic(det, lw, lh, factor, split, shadow, ty0, ty1, base);
+    label_context ctx = label_context_for(det);
+    label_contacts contacts = label_contacts_for(det);
+    return threshold_context(&ctx, &contacts, lw, lh, factor, split, shadow, ty0, ty1, base);
 }
 
 /* ---------------------------------------------------------------- banded labelling */
@@ -2182,22 +2235,17 @@ static void band_free(napa_detector *det) {
     det->bands = NULL, det->band_count = 0;
 }
 
-/* Band k's runs, labelled within the band, through a shallow copy of the detector that points at the band's
- * runs and scratch. Bands run at once, so the copy relies on what labelling ordinary and shadow rows touches:
- * it writes only the runs, the scratch, diag_n and neck_n (all the copy's own), its band's rows of the
- * shared level_bits and, below, its band's rows of the shared level_extrema_out; it reads the level, floors
- * and saved extrema, which nothing writes meanwhile. Split
- * labelling, which grows shared arrays, is never banded, and the copy's pool must not be used. A labelling
- * change that writes another detector field must give each band its own. */
+/* Each band receives its own runs, parents and scratch, plus shared read-only inputs and its own
+ * rows of level_bits. Split contact storage is absent; saved extrema are copied by band below. */
 static void band_label(void *arg, int k) {
     band_job *job = (band_job *)arg;
     napa_band *b = &job->det->bands[k];
-    napa_detector local = *job->det;
-    local.runs = b->runs, local.parent = b->parent;
-    local.scratch = b->scratch;
-    local.level_extrema_out = NULL;
+    label_context ctx = label_context_for(job->det);
+    ctx.runs = b->runs, ctx.parent = b->parent;
+    ctx.scratch = &b->scratch;
+    ctx.level_extrema_out = NULL;
     const int base = b->ty0 > 0 ? b->ty0 - 1 : 0;
-    b->n = threshold_rows(&local, job->lw, job->lh, job->factor, 0, job->shadow, b->ty0, b->ty1, base);
+    b->n = threshold_context(&ctx, NULL, job->lw, job->lh, job->factor, 0, job->shadow, b->ty0, b->ty1, base);
     uint8_t *out = job->det->level_extrema_out;
     if (out != NULL) { /* the band's own rows, saved for a later pass over this level (never set with saved input) */
         const size_t at = (size_t)b->ty0 * job->tw, count = (size_t)(b->ty1 - b->ty0) * job->tw;
@@ -2247,11 +2295,12 @@ static int threshold_banded(napa_detector *det, int lw, int lh, int factor, int 
     }
     pool_run(det->pool, band_place, &job, bands);
     n = 0;
+    label_context ctx = label_context_for(det);
     for (int k = 0; k < bands; k++) {
         const napa_band *b = &det->bands[k];
         const int y = b->ty0 * TILE;
-        if (k > 0 && !shadow) join_band_pairs(det, lw, lh, factor, y, n, n + b->n);
-        else if (k > 0) join_band_rows(det, y, n, n + b->n);
+        if (k > 0 && !shadow) join_band_pairs(&ctx, lw, lh, factor, y, n, n + b->n);
+        else if (k > 0) join_band_rows(&ctx, y, n, n + b->n);
         n += b->n;
     }
     return n;

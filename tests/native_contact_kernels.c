@@ -105,11 +105,13 @@ static void check_impl(napa_detector *d, int w, int h, int factor, const char *n
         }
         for (int split = 0; split <= (all_modes ? 2 : 0); split++) for (int hw = 0; hw < 2; hw++) {
             int actual;
+            label_context ctx = label_context_for(d);
+            label_contacts contacts = label_contacts_for(d);
 #ifdef NAPA_SSSE3_DISPATCH
-            if (hw && __builtin_cpu_supports("popcnt")) actual = threshold_index_popcnt(d, w, h, factor, split, shadow, 0, (h + 3) / 4, 0);
+            if (hw && __builtin_cpu_supports("popcnt")) actual = threshold_index_popcnt(&ctx, &contacts, w, h, factor, split, shadow, 0, (h + 3) / 4, 0);
             else
 #endif
-            actual = threshold_index_generic(d, w, h, factor, split, shadow, 0, (h + 3) / 4, 0);
+            actual = threshold_index_generic(&ctx, &contacts, w, h, factor, split, shadow, 0, (h + 3) / 4, 0);
             /* Ordinary labelling stores row-pair runs: check and expand them to single rows. */
             const int paired = !split && !shadow;
             const napa_run *got = d->runs;

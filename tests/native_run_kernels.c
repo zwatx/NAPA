@@ -9,7 +9,7 @@
  * The pixel connectivity oracle separately covers actual nonempty-row unions. */
 static int isolated_labeled_runs(const uint64_t *bits, int width, int y, napa_run *runs,
                                  int prefix, int capacity) {
-    napa_detector det = {0};
+    label_context det = {0};
     det.runs = runs;
     det.parent = malloc((size_t)capacity * sizeof(int32_t));
     int words = (width + 63) / 64 + 2;
