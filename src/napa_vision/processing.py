@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from numbers import Real
@@ -78,12 +79,13 @@ class _ShutterCorrector:
             self._sightings.clear()  # the clock went backwards or repeated: nothing earlier can be trusted
         self._last_timestamp = timestamp
         keys = [(observation.family, observation.tag_id) for observation in observations]
+        counts = Counter(keys)
         velocities: list[np.ndarray | None] = []
         centers = {}
         for key, observation in zip(keys, observations, strict=True):
             corners = np.asarray(observation.corners, dtype=np.float64)
             center = corners if self._per_corner else corners.mean(axis=0)
-            unique = keys.count(key) == 1
+            unique = counts[key] == 1
             velocities.append(self._velocity(key, timestamp, center) if unique else None)
             if unique:
                 centers[key] = center

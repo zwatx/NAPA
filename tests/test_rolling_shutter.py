@@ -100,9 +100,8 @@ def test_uses_the_last_steps_acceleration() -> None:
     # Velocity grows each frame; two earlier sightings extrapolate to the current frame's speed.
     sharp = _corners((0.0, 0.0, 2.0))
     speeds = np.array([[600.0, 0.0], [800.0, 0.0], [1000.0, 0.0]])
-    positions = [sharp, sharp + speeds[1] * DT - np.array([0.0, 0.0]), sharp + speeds[1] * DT + speeds[2] * DT]
-    positions[1] = sharp + 0.5 * (speeds[0] + speeds[1]) * DT
-    positions[2] = positions[1] + 0.5 * (speeds[1] + speeds[2]) * DT
+    positions = [sharp, sharp + 0.5 * (speeds[0] + speeds[1]) * DT]
+    positions.append(positions[1] + 0.5 * (speeds[1] + speeds[2]) * DT)
     rolled = [_rolled(p, speed, "top_to_bottom") for p, speed in zip(positions, speeds, strict=True)]
     detector = Scripted()
     detector.frames = [[FiducialImageObservation(42, corners)] for corners in rolled] + [
@@ -223,7 +222,14 @@ def test_unset_passes_the_detections_straight_to_the_solvers(monkeypatch) -> Non
     ],
 )
 def test_rejects_invalid_settings(arguments: dict) -> None:
-    with pytest.raises(ValueError):
+    name = (
+        "direction"
+        if "direction" in arguments
+        else "max_frame_gap_s"
+        if "max_frame_gap_s" in arguments
+        else "readout_s"
+    )
+    with pytest.raises(ValueError, match=name):
         RollingShutter(**arguments)
 
 
