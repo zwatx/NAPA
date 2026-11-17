@@ -19,6 +19,7 @@ from .types import FiducialImageObservation
 _LIBRARY_ENV = "NAPA_CORE_LIBRARY"
 _LIBRARY_PATTERNS = ("_napa_core*.so", "_napa_core*.pyd", "_napa_core*.dylib")
 _MAX_SIDE = 30000  # napa_core.c NAPA_MAX_SIDE
+_MAX_STRIDE = (1 << 31) - 1  # native row strides are signed C ints
 _TAG_SHAPES = {"tall": 1, "wide": 2}  # napa_core.h NAPA_TAG_SHAPE_*
 _MAX_THREADS = 16  # napa_core.c NAPA_MAX_THREADS
 _OPTION_SOFT_DECODE = 1
@@ -283,7 +284,7 @@ class NapaDetector:
 
     ``regrow_small_tags=True`` (off by default) finds more small tags, up to about 28 pixels across, whose thin
     border comes apart when the search samples every other pixel: a candidate that doesn't fit or read is regrown
-    from the full-resolution frame and tried again, at most 32 per frame. It found 2-10% more small tags in blurred
+    from the full-resolution frame and tried again, at most 32 per pass. It found 2-10% more small tags in blurred
     match footage for about 2% more time, with no false detections in the benchmark; see the detection guide.
 
     ``camera`` (unset by default) is the camera's lens: a ``CameraCalibration``, or ``(camera_matrix,
@@ -485,8 +486,6 @@ class NapaDetector:
                 f"camera calibration was measured at {self._camera_size[0]}x{self._camera_size[1]}, "
                 f"not {gray.shape[1]}x{gray.shape[0]}"
             )
-        if gray.shape[0] > _MAX_SIDE or gray.shape[1] > _MAX_SIDE:
-            raise ValueError(f"frames larger than {_MAX_SIDE} pixels per side are not supported")
         if gray.shape[0] < 16 or gray.shape[1] < 16:
             return []
         count = self._detect(
@@ -500,13 +499,10 @@ class NapaDetector:
             len(self._results),
             *self._shadow_args,
         )
+        if count == -2:
+            raise MemoryError("napa_detect could not allocate working buffers (status -2)")
         if count < 0:
-            if count == -1 and self._params.split_touching == 2:
-                raise NativeLibraryError(
-                    "napa_detect rejected the frame or settings; split_touching='auto' requires an updated native "
-                    "library. Rebuild napa-vision, or use split_touching=False with an older core"
-                )
-            raise RuntimeError(f"napa_detect failed with status {count}")
+            raise RuntimeError(f"napa_detect rejected the frame or settings (status {count})")
         if count == len(self._results):
             warnings.warn(
                 f"a frame filled all {count} results (max_detections), so any further tags in it were dropped; "
@@ -657,11 +653,17 @@ def _grayscale(image: np.ndarray, handle: ctypes.c_void_p | None = None) -> np.n
     image = np.asarray(image)
     if image.dtype != np.uint8:
         raise ValueError("AprilTag detection requires an 8-bit image")
-    if image.ndim == 3 and image.shape[2] in {3, 4}:
-        return _native_gray(image, colour=True, handle=handle)
-    if image.ndim != 2:
+    colour = image.ndim == 3 and image.shape[2] in {3, 4}
+    if image.ndim != 2 and not colour:
         raise ValueError("AprilTag detection requires a grayscale, BGR, or BGRA image")
-    if image.strides[1] != 1 or image.strides[0] < image.shape[1]:
+    height, width = image.shape[:2]
+    if height > _MAX_SIDE or width > _MAX_SIDE:
+        raise ValueError(f"frames larger than {_MAX_SIDE} pixels per side are not supported")
+    if height == 0 or width == 0:
+        return np.empty((height, width), dtype=np.uint8)
+    if colour:
+        return _native_gray(image, colour=True, handle=handle)
+    if image.strides[1] != 1 or not image.shape[1] <= image.strides[0] <= _MAX_STRIDE:
         return _native_gray(image, colour=False, handle=handle)
     return image
 
@@ -674,22 +676,18 @@ def _native_gray(image: np.ndarray, *, colour: bool, handle: ctypes.c_void_p | N
         library = _library()
     except NativeLibraryError:
         library = None
-    if (
-        library is None
-        or not hasattr(library, "napa_gray_from_pixels")
-        or not 0 < height <= _MAX_SIDE
-        or not 0 < width <= _MAX_SIDE  # detect() reports oversized frames itself
-    ):
+    if library is None or not hasattr(library, "napa_gray_from_pixels"):
         return _bgr_to_gray(image) if colour else np.ascontiguousarray(image)
     step = image.strides[1]
     readable = (
-        image.strides[0] > 0
+        0 < image.strides[0] <= _MAX_STRIDE
         and step in ((3, 4) if colour else (1, 2, 3, 4))
         and (not colour or image.strides[2] == 1)
         and image.strides[0] >= (width - 1) * step + (3 if colour else 1)
     )
     if not readable:
-        image = np.ascontiguousarray(image)
+        # Singleton axes may have arbitrary strides even when NumPy marks the view contiguous.
+        image = np.array(image, copy=True, order="C")
         step = image.strides[1]
     gray = np.empty((height, width), np.uint8)
     status = library.napa_gray_from_pixels(

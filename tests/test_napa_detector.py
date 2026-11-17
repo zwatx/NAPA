@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 import warnings
 
 import cv2
@@ -186,10 +187,10 @@ def test_border_bias_binding_does_not_require_regrowth_symbol(monkeypatch) -> No
     assert bound.napa_border_bias_cells.argtypes[:2] == [ctypes.c_void_p, ctypes.c_void_p]
 
 
-def test_auto_rejection_explains_how_to_update_an_older_core(monkeypatch) -> None:
+def test_native_rejection_reports_invalid_frame_or_settings(monkeypatch) -> None:
     detector = NapaDetector()
     monkeypatch.setattr(detector, "_detect", lambda *args: -1)
-    with pytest.raises(napa_detector.NativeLibraryError, match="Rebuild napa-vision"):
+    with pytest.raises(RuntimeError, match=r"rejected the frame or settings \(status -1\)"):
         detector.detect(np.zeros((32, 32), np.uint8))
 
 
@@ -201,13 +202,13 @@ def test_detect_after_close_raises_instead_of_crashing() -> None:
         detector.detect(np.zeros((64, 64), np.uint8))
 
 
-def test_colour_conversion_without_opencv_matches_opencv() -> None:
+def test_colour_conversion_without_opencv_matches_opencv(monkeypatch) -> None:
     rng = np.random.default_rng(3)
+    monkeypatch.setitem(sys.modules, "cv2", None)
     for channels, code in ((3, cv2.COLOR_BGR2GRAY), (4, cv2.COLOR_BGRA2GRAY)):
         image = rng.integers(0, 256, (61, 83, channels), dtype=np.uint8)
-        b, g, r = (image[..., channel].astype(np.int32) for channel in range(3))
-        fallback = (b * 1868 + g * 9617 + r * 4899 + (1 << 13)) >> 14
-        assert np.abs(fallback - cv2.cvtColor(image, code)).max() <= 1
+        expected = cv2.cvtColor(image, code)
+        np.testing.assert_array_equal(napa_detector._bgr_to_gray(image), expected)
 
 
 def test_minimum_size_guarantee_holds_at_every_sampling_phase() -> None:

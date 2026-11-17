@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 
 from napa_vision import NapaDetector, families
-from napa_vision.napa_detector import _grayscale
+from napa_vision.napa_detector import _bgr_to_gray, _grayscale
 from napa_vision.tags import family_layout, tag_image
 
 
@@ -37,7 +37,8 @@ def test_blank_and_noise_frames_have_no_tags() -> None:
 
 @pytest.mark.parametrize("channels", [3, 4])
 @pytest.mark.parametrize("layout", ["contiguous", "cropped", "stepped", "reversed", "transposed", "broadcast"])
-def test_color_fallback_preserves_rounding_and_strides(monkeypatch, channels: int, layout: str) -> None:
+@pytest.mark.parametrize("convert", [_grayscale, _bgr_to_gray], ids=["native", "numpy"])
+def test_color_without_opencv_preserves_rounding_and_strides(monkeypatch, channels: int, layout: str, convert) -> None:
     monkeypatch.setitem(sys.modules, "cv2", None)
     image = np.random.default_rng(7).integers(0, 256, (73, 641, channels), dtype=np.uint8)
     if layout == "cropped":
@@ -55,7 +56,7 @@ def test_color_fallback_preserves_rounding_and_strides(monkeypatch, channels: in
     weighted = sum(image[..., c].astype(np.uint32) * weight for c, weight in enumerate((3735, 19235, 9798)))
     expected = ((weighted + 16384) >> 15).astype(np.uint8)
 
-    actual = _grayscale(image)
+    actual = convert(image)
 
     np.testing.assert_array_equal(actual, expected)
     np.testing.assert_array_equal(image, before)
@@ -63,14 +64,14 @@ def test_color_fallback_preserves_rounding_and_strides(monkeypatch, channels: in
 
 
 @pytest.mark.parametrize("shape", [(0, 5, 3), (5, 0, 4), (1, 1, 3)])
-def test_color_fallback_handles_empty_and_single_pixel_images(monkeypatch, shape: tuple[int, ...]) -> None:
+def test_color_without_opencv_handles_empty_and_single_pixel_images(monkeypatch, shape: tuple[int, ...]) -> None:
     monkeypatch.setitem(sys.modules, "cv2", None)
     image = np.full(shape, 255, dtype=np.uint8)
     np.testing.assert_array_equal(_grayscale(image), np.full(shape[:2], 255, dtype=np.uint8))
 
 
 @pytest.mark.parametrize("channels", [3, 4])
-def test_color_fallback_detects_tags_and_preserves_results_after_empty_frame(monkeypatch, channels: int) -> None:
+def test_color_without_opencv_detects_tags_and_preserves_results_after_empty_frame(monkeypatch, channels: int) -> None:
     monkeypatch.setitem(sys.modules, "cv2", None)
     gray = np.pad(tag_image(7, cell_px=12), 20, constant_values=255)
     image = np.repeat(gray[..., None], channels, axis=2)
