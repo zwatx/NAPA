@@ -218,3 +218,20 @@ def test_a_side_cut_by_the_frame_takes_its_bow_from_the_others() -> None:
         detector.close()
     assert len(errors) == 16
     assert float(np.median(errors)) < 0.25
+
+
+def test_pincushion_tag_cut_by_frame_keeps_subpixel_corners() -> None:
+    # _bowed_crossing_frame, seed 20261127, trial 11: k=-0.15, side=96, overhang=1.5.
+    # Freeze the pixels so interpolation changes between OpenCV versions cannot hide the regression.
+    with np.load(Path(__file__).parent / "fixtures" / "pincushion-frame-cut.npz") as fixture:
+        image, expected = fixture["image"], fixture["truth"]
+    detector = NapaDetector(max_detections=16)
+    try:
+        observations = detector.detect(image)
+    finally:
+        detector.close()
+    assert [observation.tag_id for observation in observations] == [57]
+    error = min(
+        np.linalg.norm(observations[0].corners - np.roll(expected, shift, axis=0), axis=1).max() for shift in range(4)
+    )
+    assert error < 0.5

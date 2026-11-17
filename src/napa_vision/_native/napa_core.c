@@ -3405,8 +3405,9 @@ retake:
              * walk is checked end to end, since its rounded step can drift past a profile that ends
              * right at the border (the floating-point test comes first and also rejects NaN). */
             int32_t fxp = 0, fyp = 0;
-            int inside = sx0 >= 0 && sy0 >= 0 && sx1 >= 0 && sy1 >= 0 && sx0 < w - 1 && sx1 < w - 1 &&
-                         sy0 < h - 1 && sy1 < h - 1;
+            const int complete = sx0 >= 0 && sy0 >= 0 && sx1 >= 0 && sy1 >= 0 && sx0 <= w - 1 && sx1 <= w - 1 &&
+                                 sy0 <= h - 1 && sy1 <= h - 1;
+            int inside = complete && sx0 < w - 1 && sx1 < w - 1 && sy0 < h - 1 && sy1 < h - 1;
             if (inside) {
                 fxp = (int32_t)(sx0 * 65536.0), fyp = (int32_t)(sy0 * 65536.0);
                 int64_t endx = fxp + (int64_t)(K - 1) * pixp, endy = fyp + (int64_t)(K - 1) * piyp;
@@ -3500,6 +3501,10 @@ retake:
             if (use_lens) px[good] = q.x + back_x * pos, py[good] = q.y + back_y * pos;
             else px[good] = bx + pnx * pos, py[good] = by + pny * pos;
             wt[good] = (double)best * (1.0 / (1 << 24));
+            /* Clamping a truncated profile invents a plateau and biases the edge position. It can still
+             * guide the ordinary fit, but cannot measure the shared lens's bow. Keep the sampling-domain
+             * check separate from the rounded fixed-point bounds needed by the fast path above. */
+            if (est_lens != NULL && !use_lens) samples.w[k][good] = complete ? wt[good] : 0;
             if (alternate != NULL && (alternate_crossing || side_changed)) {
                 if (!side_changed) {
                     memcpy(apx, px, (size_t)good * sizeof(double));
@@ -3563,7 +3568,6 @@ retake:
             samples.n[k] = good;
             memcpy(samples.x[k], px, (size_t)good * sizeof(double));
             memcpy(samples.y[k], py, (size_t)good * sizeof(double));
-            memcpy(samples.w[k], wt, (size_t)good * sizeof(double));
         }
         if (capture != NULL) {
             if (good > INITIAL_SIDE_POINTS) return 0;
