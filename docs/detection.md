@@ -259,9 +259,9 @@ detections = detector.detect(gray, estimate_tag_pose=True, camera_params=(fx, fy
 ```
 
 Same constructor, same `Detection` attributes, upstream conventions (corner order, +0.5 px origin, `pose_R/t/err`).
-`decode_sharpening` works; `nthreads`, `quad_decimate`, `quad_sigma`, `refine_edges`, `debug`, `searchpath` are
-accepted and ignored. Extra keyword arguments go to `NapaDetector`. Poses need OpenCV and ignore lens distortion, as
-upstream does.
+`decode_sharpening` works, and `nthreads` sets the worker count (1–16). `quad_decimate`, `quad_sigma`, `refine_edges`,
+`debug`, and `searchpath` are accepted and ignored. Extra keyword arguments go to `NapaDetector`; an explicit `threads`
+overrides `nthreads`. Poses need OpenCV and ignore lens distortion, as upstream does.
 
 ## Printing tags
 

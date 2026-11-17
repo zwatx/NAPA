@@ -100,7 +100,8 @@ feature the loaded native library does not have raises `NativeLibraryError`.
 BGRA (HxWx4) array. Strided views are accepted, so a YUYV frame's luma is `frame[..., 0]` (UYVY: `frame[..., 1]`).
 Colour is converted in the native core with exactly the values of OpenCV's `BGR2GRAY`, with or without OpenCV
 installed. Frames smaller than 16 px on a side return `[]`. A side larger than 30000 px raises `ValueError`, as does a
-frame whose size differs from the `image_size` of a `CameraCalibration` passed as `camera`.
+frame whose size differs from the `image_size` of a `CameraCalibration` passed as `camera`. A failed native allocation
+raises `MemoryError`.
 
 **`close()`** frees the native buffers now. Later `detect` calls raise `RuntimeError`.
 
@@ -677,8 +678,9 @@ Detector(
 ```
 
 `families` is a space-separated list of any of `families()`, as upstream. An unknown family raises `ValueError`. NAPA runs one
-detector per family. `decode_sharpening` sets NAPA's `sharpening`. The other upstream parameters are kept in `params` but have
-no effect. `napa_options` go to `NapaDetector`, for example `min_tag_px=24`.
+detector per family. `decode_sharpening` sets NAPA's `sharpening`, and `nthreads` sets its worker count (1–16).
+The other upstream parameters are kept in `params` but have no effect. `napa_options` go to `NapaDetector`, for example
+`min_tag_px=24`; an explicit `threads` overrides `nthreads`.
 
 **`detect(img, estimate_tag_pose=False, camera_params=None, tag_size=None) -> list[Detection]`** detects tags in a `uint8`
 greyscale image. With `estimate_tag_pose=True`, `camera_params` is `(fx, fy, cx, cy)` and `tag_size` is the side of the

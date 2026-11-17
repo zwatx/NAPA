@@ -60,9 +60,9 @@ class Detector:
     """``pupil_apriltags.Detector``'s interface on Napa's detector.
 
     ``families`` is a space-separated list, as upstream; every upstream family is supported (see
-    ``napa_vision.families()``). ``decode_sharpening`` is used; ``nthreads``,
-    ``quad_decimate``, ``quad_sigma``, ``refine_edges``, ``debug``, and ``searchpath`` are accepted and
-    ignored, since Napa has no equivalent (it never decimates, and always refines edges). Napa's own
+    ``napa_vision.families()``). ``decode_sharpening`` is used; ``nthreads`` sets Napa's worker count (1 to 16).
+    ``threads`` in Napa's options overrides it. ``quad_decimate``, ``quad_sigma``, ``refine_edges``, ``debug``, and
+    ``searchpath`` are accepted and ignored (Napa never decimates, and always refines edges). Napa's own
     options, such as ``min_tag_px`` or ``max_hamming``, can be passed as extra keyword arguments.
     """
 
@@ -83,7 +83,7 @@ class Detector:
         if unsupported or not names:
             raise ValueError(f"unknown families {families!r}; Napa detects {', '.join(napa_families())}")
         self.params = {
-            "families": families.split(),
+            "families": names,
             "nthreads": nthreads,
             "quad_decimate": quad_decimate,
             "quad_sigma": quad_sigma,
@@ -91,6 +91,7 @@ class Detector:
             "decode_sharpening": decode_sharpening,
             "debug": debug,
         }
+        napa_options.setdefault("threads", nthreads)
         self._detectors = [
             NapaDetector(family=family, sharpening=decode_sharpening, **napa_options) for family in names
         ]
@@ -129,9 +130,8 @@ class Detector:
             detection.tag_id = observation.tag_id
             detection.hamming = observation.hamming
             detection.decision_margin = observation.decision_margin
-            homography = _HALF_PIXEL @ observation.homography
-            detection.homography = homography / homography[2, 2]
-            detection.center = observation.center + 0.5
+            detection.homography = _HALF_PIXEL @ observation.homography
+            detection.center = detection.homography[:2, 2].copy()
             detection.corners = observation.corners[_UPSTREAM_ORDER] + 0.5
             if estimate_tag_pose:
                 detection.pose_R, detection.pose_t, detection.pose_err = _estimate_pose(
@@ -188,7 +188,6 @@ def _orthogonal_iteration(
         translation = solve_t @ np.einsum("nij,nj->i", projectors - identity, rotated) / len(points)
         new_error = float(np.sum(np.einsum("nij,nj->ni", residual_maps, rotated + translation) ** 2))
         if new_error >= error - 1e-15:
-            error = min(error, new_error)
             break
         error = new_error
         projected = np.einsum("nij,nj->ni", projectors, rotated + translation)
