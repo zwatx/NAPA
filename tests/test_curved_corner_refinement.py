@@ -166,10 +166,28 @@ def test_small_straight_tags_at_the_frame_take_no_lens_from_noise(noise: float) 
     assert worst < 0.5
 
 
+def test_straight_tag_nearly_parallel_to_frame_keeps_its_corners() -> None:
+    # Mixing gradient centroids with intensity crossings can invent a lens on this straight tag.
+    fixture = Path(__file__).parent / "fixtures" / "straight-frame-cut-shallow.npz"
+    with np.load(fixture) as data:
+        image, expected, tag_id = data["image"], data["truth"], int(data["tag_id"])
+    detector = NapaDetector(max_detections=16)
+    try:
+        observations = detector.detect(image)
+    finally:
+        detector.close()
+    assert [observation.tag_id for observation in observations] == [tag_id]
+    error = min(
+        np.linalg.norm(observations[0].corners - np.roll(expected, shift, axis=0), axis=1).max() for shift in range(4)
+    )
+    assert error < 0.1
+
+
 def _bowed_crossing_frame(
-    rng: np.random.Generator, side: int, overhang: float, edge: int, k: float
+    rng: np.random.Generator, side: int, overhang: float, edge: int, k: float, *, blur_before_crop: bool = False
 ) -> tuple[np.ndarray, np.ndarray]:
     width, height, scale, cell, pad = 640, 480, 3, 32, 240
+    halo = 16 if blur_before_crop else 0
     corners = _frame_corners(rng, side, overhang, edge)
     center, radius = np.array([width / 2, height / 2]), max(width, height) / 2
 
@@ -186,7 +204,7 @@ def _bowed_crossing_frame(
         flags=cv2.INTER_LINEAR,
         borderValue=90,
     ).astype(np.float32)
-    ys, xs = np.mgrid[0 : height * scale, 0 : width * scale]
+    ys, xs = np.mgrid[-halo * scale : (height + halo) * scale, -halo * scale : (width + halo) * scale]
     source = bend(np.dstack(((xs + 0.5) / scale, (ys + 0.5) / scale)))
     image = cv2.remap(
         flat,
@@ -194,7 +212,11 @@ def _bowed_crossing_frame(
         np.float32((source[..., 1] + pad) * scale - 0.5),
         cv2.INTER_LINEAR,
     )
-    image = cv2.GaussianBlur(cv2.resize(image, (width, height), interpolation=cv2.INTER_AREA), (0, 0), 0.8)
+    image = cv2.GaussianBlur(
+        cv2.resize(image, (width + 2 * halo, height + 2 * halo), interpolation=cv2.INTER_AREA), (0, 0), 0.8
+    )
+    if halo:
+        image = image[halo:-halo, halo:-halo]
     return np.clip(image + rng.normal(0, 2.0, (height, width)), 0, 255).astype(np.uint8), corners - 0.5
 
 
@@ -220,10 +242,21 @@ def test_a_side_cut_by_the_frame_takes_its_bow_from_the_others() -> None:
     assert float(np.median(errors)) < 0.25
 
 
-def test_pincushion_tag_cut_by_frame_keeps_subpixel_corners() -> None:
-    # _bowed_crossing_frame, seed 20261127, trial 11: k=-0.15, side=96, overhang=1.5.
+@pytest.mark.parametrize(
+    "fixture_name",
+    [
+        "pincushion-frame-cut.npz",
+        "pincushion-frame-cut-partial.npz",
+        "pincushion-frame-cut-physical.npz",
+        "barrel-frame-cut-partial.npz",
+    ],
+    ids=["complete", "partial", "physical", "barrel"],
+)
+def test_lens_distorted_tag_cut_by_frame_keeps_subpixel_corners(fixture_name: str) -> None:
+    # _bowed_crossing_frame supplies analytic corner truth for both signs of radial distortion.
+    # The physical case blurs before cropping; the others retain the original renderer's reflected boundary.
     # Freeze the pixels so interpolation changes between OpenCV versions cannot hide the regression.
-    with np.load(Path(__file__).parent / "fixtures" / "pincushion-frame-cut.npz") as fixture:
+    with np.load(Path(__file__).parent / "fixtures" / fixture_name) as fixture:
         image, expected = fixture["image"], fixture["truth"]
     detector = NapaDetector(max_detections=16)
     try:

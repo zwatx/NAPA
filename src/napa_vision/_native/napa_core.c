@@ -949,6 +949,7 @@ static inline double sample_bilinear(const image_view *im, double x, double y) {
 #define NAPA_LENS_MIN_KAPPA 0.02
 #define NAPA_LENS_MIN_GAIN 0.3
 #define NAPA_LENS_MAX_EXCESS 1.5
+#define NAPA_LENS_MIN_SIDE_POINTS 6
 /* Empirical noise gate for the extra radial parameter. The F-shaped score uses 48 rather than the asymptotic
  * white-noise reference of about 24 because neighbouring edge samples share blur and pixels. */
 #define NAPA_LENS_MIN_F 48.0
@@ -2454,7 +2455,7 @@ struct fine_whole {
 };
 
 /* Keep the rare illumination fit's sample arrays off the hot refinement stack. */
-static NAPA_NOINLINE void refresh_edge_light(const image_view *im, const vec2 q[4], edge_levels *levels);
+static NAPA_NOINLINE void refresh_edge_light(const image_view *im, const vec2 q[4], edge_levels *levels, int visible_only);
 
 enum { INITIAL_SIDE_POINTS = 6 };
 
@@ -2707,6 +2708,11 @@ static inline int inside_frame(const image_view *view, vec2 p) {
     return p.x >= 1.0 && p.y >= 1.0 && p.x <= view->w - 2.0 && p.y <= view->h - 2.0;
 }
 
+/* Observation domain in pixel-center coordinates, independent of the sampler's address guard. */
+static inline int sample_is_observed(const image_view *im, double x, double y) {
+    return x >= 0 && y >= 0 && x <= im->w - 1 && y <= im->h - 1;
+}
+
 static int compare_doubles(const void *a, const void *b) {
     const double x = *(const double *)a, y = *(const double *)b;
     return (x > y) - (x < y);
@@ -2799,7 +2805,7 @@ static int shared_lens_quad(const image_view *im, side_samples *s, const int sid
         int kept = 0;
         for (int i = 0; i < s->n[k]; i++)
             if (s->w[k][i] > 0) s->x[k][kept] = s->x[k][i], s->y[k][kept] = s->y[k][i], s->w[k][kept] = s->w[k][i], kept++;
-        if (kept < 6) return 0;
+        if (kept < NAPA_LENS_MIN_SIDE_POINTS) return 0;
         side_line(s->x[k], s->y[k], s->w[k], kept, 0, 0, 0, 1, &mx, &my, &dx, &dy);
         for (int i = 0; i < kept; i++) sorted[i] = e[i] = (s->y[k][i] - my) * dx - (s->x[k][i] - mx) * dy;
         qsort(sorted, (size_t)kept, sizeof *sorted, compare_doubles);
@@ -2811,7 +2817,7 @@ static int shared_lens_quad(const image_view *im, side_samples *s, const int sid
         int n = 0;
         for (int i = 0; i < kept; i++)
             if (fabs(e[i]) <= limit) s->x[k][n] = s->x[k][i], s->y[k][n] = s->y[k][i], s->w[k][n] = s->w[k][i], n++;
-        if (n < 6 || !side_quadratic_residual(s->x[k], s->y[k], s->w[k], n, &sse_quadratic)) return 0;
+        if (n < NAPA_LENS_MIN_SIDE_POINTS || !side_quadratic_residual(s->x[k], s->y[k], s->w[k], n, &sse_quadratic)) return 0;
         s->n[k] = n;
     }
     /* A lens maps the whole frame one to one, so 1 + 3 kappa r^2 > 0 out to its corners. */
@@ -3272,6 +3278,36 @@ static double nearest_midpoint_crossing(const int64_t *prof, int K, int jl, int 
     return best_c;
 }
 
+/* A partial profile can locate a measured intensity crossing without observing the gradient's whole
+ * tail. Only use image-supported samples, including every sample the existing balance correction reads.
+ * The caller supplies a midpoint measured from the tag's visible black/white cells. */
+static int observed_profile_edge(const image_view *im, const int64_t *prof, int K, vec2 base, vec2 normal,
+                                 double r_out, double step, double mid, double min_edge,
+                                 double *position, double *weight) {
+    int lo = K, hi = -1;
+    for (int j = 0; j < K; j++) {
+        const double o = -r_out + j * step;
+        if (sample_is_observed(im, base.x + normal.x * o, base.y + normal.y * o)) {
+            if (lo == K) lo = j;
+            hi = j;
+        }
+    }
+    if (lo >= hi) return 0;
+    mid *= 16777216.0;
+    double crossing = nearest_midpoint_crossing(prof + lo, hi - lo + 1, 1, hi - lo - 1,
+                                                mid, r_out / step - lo);
+    /* The balance estimator needs one observed pixel on each side; a bracket alone is insufficient. */
+    if (!(crossing >= 0) || crossing < 1.0 / step || crossing + 1.0 / step > hi - lo) return 0;
+    const int j = lo + (int)crossing;
+    const double strength = (double)(prof[j] - prof[j + 1]) / 16777216.0;
+    /* Same derivative-strength requirement as the ordinary central difference, over one step. */
+    if (!(strength >= 0.25 * min_edge * step)) return 0;
+    crossing = lo + balanced_crossing(prof + lo, hi - lo + 1, step, crossing, mid);
+    *position = -r_out + crossing * step;
+    *weight = 2 * strength;
+    return 1;
+}
+
 /* Rank falling two-plateau fits of an initial profile by their reduction
  * in squared residuals: n_left*n_right/K * (white-black)^2. This ranks
  * splits; it does not certify a dark landing. A sharp sampled step's
@@ -3326,7 +3362,17 @@ static NAPA_FORCE_INLINE int fit_sides_impl(const image_view *im, const vec2 in[
     vec2 plane[4], plane_out[4];
     const int use_lens = im->lens != NULL && !outermost && capture == NULL && lens_frame_init(im->lens, in, &lens_view, plane,
                                                         max_points > 24 ? NAPA_LENS_STRAIGHT_PX : NAPA_LENS_STRAIGHT_COARSE_PX);
-    side_samples samples;
+    side_samples samples, crossing_samples;
+    /* A normal window stays in the frame when every input corner clears its reach. */
+    int partial_possible = 0, needs_partial = 0;
+    const double profile_reach = fmax(r_out, r_in);
+    for (int k = 0; k < 4; k++)
+        partial_possible |= in[k].x < profile_reach || in[k].y < profile_reach ||
+            in[k].x > w - 1 - profile_reach || in[k].y > h - 1 - profile_reach;
+    edge_levels partial_levels = {.black = 255, .white = 0};
+    const family_layout *partial_family = est_lens != NULL && !use_lens && levels != NULL &&
+        (levels->model_pending || levels->has_model) ? levels->model_family : NULL;
+    int partial_levels_ready = 0;
     double side_width[4] = {0, 0, 0, 0};
     int side_widths[4] = {0, 0, 0, 0};
     for (int k = 0; k < 4; k++) {
@@ -3465,7 +3511,7 @@ retake:
                  * a cell from the edge: outside the blurred ramp the window would sit in. */
                 if (alternate != NULL) {
                     if (levels->model_pending) {
-                        refresh_edge_light(im, in, levels);
+                        refresh_edge_light(im, in, levels, 0);
                         levels->model_pending = 0;
                     }
                     if (levels->has_model) {
@@ -3501,10 +3547,33 @@ retake:
             if (use_lens) px[good] = q.x + back_x * pos, py[good] = q.y + back_y * pos;
             else px[good] = bx + pnx * pos, py[good] = by + pny * pos;
             wt[good] = (double)best * (1.0 / (1 << 24));
-            /* Clamping a truncated profile invents a plateau and biases the edge position. It can still
-             * guide the ordinary fit, but cannot measure the shared lens's bow. Keep the sampling-domain
-             * check separate from the rounded fixed-point bounds needed by the fast path above. */
-            if (est_lens != NULL && !use_lens) samples.w[k][good] = complete ? wt[good] : 0;
+            if (est_lens != NULL && !use_lens) {
+                samples.x[k][good] = px[good], samples.y[k][good] = py[good];
+                samples.w[k][good] = complete ? wt[good] : 0;
+                crossing_samples.x[k][good] = px[good], crossing_samples.y[k][good] = py[good];
+                crossing_samples.w[k][good] = 0;
+                if (partial_possible && levels != NULL && levels->white > levels->black) {
+                    if (!partial_levels_ready) {
+                        if (partial_family != NULL) {
+                            partial_levels = (edge_levels){.model_family = partial_family};
+                            refresh_edge_light(im, in, &partial_levels, 1);
+                        } else partial_levels.black = 255, partial_levels.white = 0;
+                        partial_levels_ready = 1;
+                    }
+                    if (partial_levels.white - partial_levels.black >= min_edge) {
+                        const double mid = partial_levels.has_model ? partial_levels.midpoint[0] +
+                            partial_levels.midpoint[1] * (bx - partial_levels.cx) / partial_levels.scale +
+                            partial_levels.midpoint[2] * (by - partial_levels.cy) / partial_levels.scale :
+                            0.5 * (partial_levels.white + partial_levels.black);
+                        double offset, weight;
+                        if (observed_profile_edge(im, prof, K, (vec2){bx, by}, (vec2){pnx, pny},
+                                                  r_out, step, mid, min_edge, &offset, &weight)) {
+                            crossing_samples.x[k][good] = bx + pnx * offset, crossing_samples.y[k][good] = by + pny * offset;
+                            crossing_samples.w[k][good] = weight;
+                        }
+                    }
+                }
+            }
             if (alternate != NULL && (alternate_crossing || side_changed)) {
                 if (!side_changed) {
                     memcpy(apx, px, (size_t)good * sizeof(double));
@@ -3526,7 +3595,7 @@ retake:
             /* A frame boundary is in pixels, not the lens fit's tangent plane. */
             if (use_lens || frame_sides == NULL || !frame_side(im, a, b, r_out, &lx[k], &ly[k], &dx[k], &dy[k])) return 0;
             *frame_sides |= 1 << k;
-            curves[k].qualified = 0, samples.n[k] = 0;
+            curves[k].qualified = 0, samples.n[k] = crossing_samples.n[k] = 0;
             side_width[k] = 0, side_widths[k] = 0;
             alx[k] = lx[k], aly[k] = ly[k], adx[k] = dx[k], ady[k] = dy[k];
             if (capture != NULL) capture->count[k] = 0;
@@ -3565,9 +3634,12 @@ retake:
         /* TLS compacts its arrays, so assess curvature from the original weighted samples first. */
         if (curved != NULL) fit_curve_side(&curves[k], fit_a, use_lens ? plane[(k + 1) & 3] : b, px, py, wt, good);
         if (est_lens != NULL && !use_lens) {
-            samples.n[k] = good;
-            memcpy(samples.x[k], px, (size_t)good * sizeof(double));
-            memcpy(samples.y[k], py, (size_t)good * sizeof(double));
+            samples.n[k] = crossing_samples.n[k] = good;
+            /* Prefer complete gradients. If one side needs recovery, use crossings on all four sides:
+             * mixing the two position estimators can make pixel-phase differences look like a lens. */
+            int complete_points = 0;
+            for (int i = 0; i < good; i++) complete_points += samples.w[k][i] > 0;
+            needs_partial |= complete_points < NAPA_LENS_MIN_SIDE_POINTS;
         }
         if (capture != NULL) {
             if (good > INITIAL_SIDE_POINTS) return 0;
@@ -3655,7 +3727,7 @@ retake:
             near_frame |= !corner_clear[k];
         }
         for (int k = 0; k < 4; k++) side_clear[k] = corner_clear[k] && corner_clear[(k + 1) & 3];
-        *est_ok = near_frame && shared_lens_quad(im, &samples, side_clear, in, reach, est_lens);
+        *est_ok = near_frame && shared_lens_quad(im, needs_partial ? &crossing_samples : &samples, side_clear, in, reach, est_lens);
     }
     return 1;
 }
@@ -4426,10 +4498,11 @@ static int light_plane(double points[][3], int n, int white, double out[3]) {
     return 1;
 }
 
+/* A visible-only fit excludes clamped cell samples and also measures fallback levels from those left. */
 static void edge_light_model(const family_layout *L, const double H[9], const vec2 q[4],
-                             const double *ring, const double *border, edge_levels *levels) {
+                             const double *ring, const double *border, edge_levels *levels, const image_view *visible) {
     double bp[64][3], wp[68][3], b[3], w[3];
-    int nb = 0, nw = 0, W = L->width;
+    int nb = 0, nw = 0, bi = 0, wi = 0, W = L->width;
     levels->cx = levels->cy = levels->scale = 0;
     for (int k = 0; k < 4; k++) {
         levels->cx += q[k].x * 0.25; levels->cy += q[k].y * 0.25;
@@ -4438,18 +4511,34 @@ static void edge_light_model(const family_layout *L, const double H[9], const ve
     if (!(levels->scale > 0)) return;
     for (int r = 0; r < W; r++) for (int c = 0; c < W; c += (r == 0 || r == W - 1) ? 1 : W - 1) {
         vec2 pos = project(H, (c+0.5)/L->cells, (r+0.5)/L->cells);
+        const double value = border[bi++];
+        if (visible != NULL && !sample_is_observed(visible, pos.x, pos.y)) continue;
         bp[nb][0] = (pos.x-levels->cx)/levels->scale; bp[nb][1] = (pos.y-levels->cy)/levels->scale;
-        bp[nb][2] = border[nb]; nb++;
+        bp[nb][2] = value; nb++;
     }
     for (int i = 0; i < W + 2; i++) for (int side = 0; side < 2; side++) {
         vec2 pos = project(H, (i-0.5)/L->cells, (side ? W+0.5 : -0.5)/L->cells);
+        const double value = ring[wi++];
+        if (visible != NULL && !sample_is_observed(visible, pos.x, pos.y)) continue;
         wp[nw][0] = (pos.x-levels->cx)/levels->scale; wp[nw][1] = (pos.y-levels->cy)/levels->scale;
-        wp[nw][2] = ring[nw]; nw++;
+        wp[nw][2] = value; nw++;
     }
     for (int i = 1; i < W + 1; i++) for (int side = 0; side < 2; side++) {
         vec2 pos = project(H, (side ? W+0.5 : -0.5)/L->cells, (i-0.5)/L->cells);
+        const double value = ring[wi++];
+        if (visible != NULL && !sample_is_observed(visible, pos.x, pos.y)) continue;
         wp[nw][0] = (pos.x-levels->cx)/levels->scale; wp[nw][1] = (pos.y-levels->cy)/levels->scale;
-        wp[nw][2] = ring[nw]; nw++;
+        wp[nw][2] = value; nw++;
+    }
+    if (visible != NULL) {
+        if (nb < 3 || nw < 3) return;
+        double values[68];
+        for (int i = 0; i < nb; i++) values[i] = bp[i][2];
+        qsort(values, (size_t)nb, sizeof *values, compare_doubles);
+        levels->black = 0.5 * (values[(nb - 1) / 2] + values[nb / 2]);
+        for (int i = 0; i < nw; i++) values[i] = wp[i][2];
+        qsort(values, (size_t)nw, sizeof *values, compare_doubles);
+        levels->white = 0.5 * (values[(nw - 1) / 2] + values[nw / 2]);
     }
     if (light_plane(bp, nb, 0, b) && light_plane(wp, nw, 1, w)) {
         for (int k = 0; k < 3; k++) if (!isfinite(b[k]) || !isfinite(w[k])) return;
@@ -4471,11 +4560,16 @@ static void edge_light_model(const family_layout *L, const double H[9], const ve
     }
 }
 
-static NAPA_NOINLINE void refresh_edge_light(const image_view *im, const vec2 q[4], edge_levels *levels) {
+static NAPA_NOINLINE void refresh_edge_light(const image_view *im, const vec2 q[4], edge_levels *levels, int visible_only) {
     double H[9], grid[256], border[64], ring[68], black, white;
+    if (visible_only) {
+        levels->black = 255, levels->white = 0;
+        levels->has_model = levels->model_pending = 0;
+    }
     square_to_quad(q, H);
-    if (read_border(levels->model_family, im, H, 0, grid, border, &black, &white, ring) >= 0 && white > black)
-        edge_light_model(levels->model_family, H, q, ring, border, levels);
+    const int dark = read_border(levels->model_family, im, H, 0, grid, border, &black, &white, ring);
+    if (visible_only || (dark >= 0 && white > black))
+        edge_light_model(levels->model_family, H, q, ring, border, levels, visible_only ? im : NULL);
 }
 
 /* Keep a decode attempt for the soft decoder if it could be a tiny tag. The cells are the unsharpened samples. */
