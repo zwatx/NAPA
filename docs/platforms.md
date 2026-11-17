@@ -15,14 +15,14 @@ does not leave you with a package that has no detector.
 The whole C API is in `src/napa_vision/_native/napa_core.h`. Create a detector, call `napa_detect` on a greyscale
 buffer with a stride, and destroy the detector. `napa_create()` reads tag36h11. `napa_create_family("tag25h9")`
 reads another family. `napa_family_count`, `napa_family_name`, and `napa_family_info` describe the nine families,
-and `napa_family_code` returns a code for drawing tags. The library needs nothing beyond the C standard library and
-`libm`.
+and `napa_family_code` returns a code for drawing tags. The library uses the C standard library,
+`libm`, and POSIX or Windows threads.
 
 Initialise `napa_params` with designated initialisers or zeros, as `examples/c/detect_pgm.c` does. Fields added in
 later versions (such as `split_touching`) then start at 0, which is off. Rebuild against the new header when you
 update the library.
 
-The experimental options have their own entry points, so the original ABI never changes:
+Experimental options have separate entry points:
 
 | Entry point | Adds |
 | --- | --- |
@@ -36,6 +36,9 @@ The experimental options have their own entry points, so the original ABI never 
 | `napa_set_lens` | Corner fitting through the camera's lens (OpenCV's standard or fisheye model) for every later call on the detector. |
 | `napa_set_threads` | Worker threads for every later call on the detector, 1 to 16. Results are identical at every count. |
 | `napa_gray_from_pixels` | Greyscale from BGR or BGRA (OpenCV's `BGR2GRAY` values exactly) or from one byte of each interleaved pixel, such as YUYV's luma, for `napa_detect`. |
+
+`napa_params_size()` reports the library's parameter-struct size. Python checks it before detection; older libraries
+without this query can only be used with `split_touching=False`.
 
 Calling one of the newer symbols needs a newer library. From Python, asking for a feature an old library lacks
 raises `NativeLibraryError` and tells you to rebuild. The header documents each function's return values. In short,

@@ -667,6 +667,8 @@ int napa_family_code(const char *family, int id, uint64_t *code) {
     return 0;
 }
 
+int napa_params_size(void) { return (int)sizeof(napa_params); }
+
 int napa_family_count(void) { return NAPA_FAMILY_COUNT; }
 
 const char *napa_family_name(int index) {

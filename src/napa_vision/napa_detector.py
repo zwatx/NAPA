@@ -121,6 +121,9 @@ def _library() -> ctypes.CDLL:
         except OSError as exc:
             errors.append(f"{candidate}: {exc}")
             continue
+        if hasattr(library, "napa_params_size"):
+            library.napa_params_size.restype = ctypes.c_int
+            library.napa_params_size.argtypes = []
         library.napa_create.restype = ctypes.c_void_p
         library.napa_create.argtypes = []
         library.napa_destroy.restype = None
@@ -378,6 +381,14 @@ class NapaDetector:
             raise ValueError(f"threads must be an integer from 1 to {_MAX_THREADS}")
         lens = None if camera is None else _lens_arguments(camera)
         library = _library()
+        if hasattr(library, "napa_params_size"):
+            if library.napa_params_size() != ctypes.sizeof(_Params):
+                raise NativeLibraryError("native napa_params layout does not match Python; rebuild napa-vision")
+        elif split_touching is not False:
+            raise NativeLibraryError(
+                "split_touching needs a native parameter-layout check; rebuild napa-vision, "
+                "or use split_touching=False with an older core"
+            )
         if recover_shadows and not hasattr(library, "napa_detect_shadows"):
             raise NativeLibraryError("recover_shadows requires an updated native library; rebuild napa-vision")
         self._detect = library.napa_detect_shadows if recover_shadows else library.napa_detect

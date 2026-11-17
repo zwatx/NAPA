@@ -54,6 +54,10 @@ typedef struct {
     int8_t x[64], y[64];
 } napa_family_layout;
 
+/* Size of the napa_params layout this library reads. Callers must use a matching header.
+ * Libraries predating this query require a rebuild to use split_touching. */
+NAPA_API int napa_params_size(void);
+
 /* A detector for tag36h11, the default family. */
 NAPA_API napa_detector *napa_create(void);
 /* A detector for one family by name ("tag36h11", "tag16h5", "tag25h9", "tag36h10", "tagStandard41h12",
