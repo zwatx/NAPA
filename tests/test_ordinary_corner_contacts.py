@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 from napa_vision import NapaDetector
+from napa_vision.tags import tag_image
 from tests.test_napa_detector import _aprilgrid, _scene
 
 
@@ -33,13 +34,17 @@ def test_ordinary_tag_touching_a_filled_corner(minimum, tag_id, turns):
 @pytest.mark.parametrize("capacity", [1, 5, 64])
 def test_recovery_preserves_ordinary_board_prefix(minimum, angle, capacity):
     image, _ = _aprilgrid(list(range(100, 136)), columns=6, tag_px=48, angle_deg=angle)
+    # Isolated tags make the ordinary prefix nonempty even when the rotated board merges into one blob.
+    for tag_id in range(6):
+        image[20:100, 20 + tag_id * 120 : 100 + tag_id * 120] = tag_image(tag_id, cell_px=8)
     ordinary_detector = NapaDetector(min_tag_px=minimum, max_detections=capacity, split_touching=False)
     try:
         ordinary = ordinary_detector.detect(image)
     finally:
         ordinary_detector.close()
+    assert len(ordinary) >= min(6, capacity)
     if angle == 0:
-        assert len(ordinary) == min(36, capacity)
+        assert len(ordinary) == min(42, capacity)
     for shadow, split in [(False, True), (True, False), (True, True)]:
         detector = NapaDetector(
             min_tag_px=minimum, max_detections=capacity, recover_shadows=shadow, split_touching=split

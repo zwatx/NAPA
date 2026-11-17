@@ -140,3 +140,16 @@ def test_field_corner_cache_refreshes_after_layout_mutation() -> None:
 
     assert not np.array_equal(updated_points[:4], original_points[:4])
     assert np.array_equal(updated_points[4:], original_points[4:])
+
+
+@pytest.mark.parametrize("corners", [np.full((4, 2), np.nan), np.zeros((3, 2))], ids=["nonfinite", "wrong-shape"])
+def test_camera_pose_diagnoses_invalid_unique_tag_corners(corners):
+    profile, expected, layout, observations = _scene()
+    invalid_id = observations[-1].tag_id
+    observations[-1].corners = corners
+    solver = CameraPoseSolver()
+    result = solver.solve(observations, [], profile.camera, profile.tag_size_m, layout)
+    assert result is not None
+    assert invalid_id not in result.tag_ids
+    assert result.field_to_camera_0 == pytest.approx(expected, abs=1e-6)
+    assert solver.last_diagnostics.rejected_tag_reasons[invalid_id] == "corners must be a finite 4x2 array"

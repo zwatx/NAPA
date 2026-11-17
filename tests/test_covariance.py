@@ -466,6 +466,19 @@ def test_tiny_rotations_keep_their_first_order_term() -> None:
     assert pose_difference(np.eye(4), rotated)[3:] == pytest.approx(vector, rel=1e-6, abs=1e-20)
 
 
+def test_pose_difference_uses_parent_frame_translation_and_left_rotation() -> None:
+    transform = np.eye(4)
+    transform[:3, :3] = cv2.Rodrigues(np.array([0.4, -0.2, 0.7]))[0]
+    transform[:3, 3] = [1.2, -0.4, 3.1]
+    offsets = np.array([[0.1, -0.3, 0.2, 0.2, 0.1, -0.15], [-0.2, 0.4, 0.3, -0.1, 0.3, 0.25]])
+    others = np.repeat(transform[None], len(offsets), axis=0)
+    for other, delta in zip(others, offsets, strict=True):
+        other[:3, 3] += delta[:3]
+        other[:3, :3] = cv2.Rodrigues(delta[3:])[0] @ transform[:3, :3]
+    np.testing.assert_allclose(pose_difference(transform, others), offsets, atol=1e-14)
+    np.testing.assert_allclose(pose_difference(others, transform), -offsets, atol=1e-14)
+
+
 def test_covariances_are_computed_only_when_read(monkeypatch: pytest.MonkeyPatch) -> None:
     import pickle
 

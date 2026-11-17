@@ -8,6 +8,7 @@ from napa_vision import NapaDetector, families
 from napa_vision.tags import family_layout, tag_cells, tag_image
 
 # AprilRobotics' official images for ID 0 ("#" black; blank cells of the circle tag are white paper).
+# The three large families use code 0 and bit coordinates from AprilTag b7c0ebe9, independently of Napa's tables.
 OFFICIAL_ID_0 = {
     "tag16h5": ["........", ".######.", ".###.##.", ".###..#.", ".####.#.", ".#.#..#.", ".######.", "........"],
     "tagStandard41h12": [
@@ -31,6 +32,43 @@ OFFICIAL_ID_0 = {
         ".#.....#.",
         ".#######.",
         "...###...",
+    ],
+    "tagStandard52h13": [
+        "#.#######.",
+        ".#########",
+        ".#......##",
+        ".#...##.#.",
+        ".#.###..##",
+        ".#.#.#..#.",
+        ".#.###..##",
+        ".#......##",
+        ".#########",
+        ".#.##..#.#",
+    ],
+    "tagCircle49h12": [
+        "....#......",
+        "..###..#...",
+        "..########.",
+        ".##.....#..",
+        "###..##.###",
+        "#.#..##.##.",
+        "###.#...#.#",
+        "..#.....##.",
+        ".#########.",
+        "..####..#..",
+        "...........",
+    ],
+    "tagCustom48h12": [
+        "..#.#..#..",
+        "##########",
+        ".#......##",
+        ".#..##..##",
+        ".#.#....#.",
+        ".#.#..#.##",
+        ".#.#.#..#.",
+        ".#......##",
+        ".########.",
+        "..#..#...#",
     ],
 }
 

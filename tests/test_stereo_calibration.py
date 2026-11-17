@@ -178,5 +178,9 @@ def test_stereo_fit_rejects_unmatched_or_nonfinite_points() -> None:
     with pytest.raises(CalibrationError, match="finite"):
         calibrate_stereo_points(world, pixels, pixels, camera, camera, source="paired run")
     valid_pixels = [np.zeros((4, 2)) for _ in range(3)]
+    with pytest.raises(CalibrationError, match="at least 3 matched views"):
+        calibrate_stereo_points(world, valid_pixels[:2], valid_pixels, camera, camera, source="paired run")
+    with pytest.raises(CalibrationError, match="matching object and image corner counts"):
+        calibrate_stereo_points(world, [np.zeros((5, 2))] * 3, valid_pixels, camera, camera, source="paired run")
     with pytest.raises(CalibrationError, match="at least 3"):
         calibrate_stereo_points(world[:2], valid_pixels[:2], valid_pixels[:2], camera, camera, source="paired run")
