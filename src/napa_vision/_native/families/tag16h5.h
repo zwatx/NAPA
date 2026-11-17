@@ -1,5 +1,5 @@
-/* tag16h5 codewords in Napa's bit order (see gen_families.py): data cells row-major over the tag, most
- * significant bit first, a set bit for a white cell of the printed tag. Generated from upstream AprilTag
+/* tag16h5 codewords: data cells row-major over the tag, most significant bit first, a set bit for white.
+ * The artwork is rotated 180 degrees from upstream. Generated from upstream AprilTag
  * tag16h5.c at commit b7c0ebe9aa20f82ec7a828579004f9e706bfecd9; do not edit. Upstream notice:
  *
  * Copyright (C) 2013-2016, The Regents of The University of Michigan.
