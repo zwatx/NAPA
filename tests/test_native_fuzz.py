@@ -12,14 +12,15 @@ SANITIZE = ["-fsanitize=address,undefined", "-fno-sanitize-recover=undefined", "
 
 
 @pytest.mark.parametrize("scalar", [False, True], ids=["native", "scalar"])
-def test_fuzz_driver(tmp_path: Path, scalar: bool) -> None:
+@pytest.mark.parametrize("driver", ["fuzz/napa_fuzz.c", "native_shadow_cache.c"])
+def test_fuzz_driver(tmp_path: Path, scalar: bool, driver: str) -> None:
     compiler = shutil.which("cc")
     if compiler is None:
         pytest.skip("the fuzz driver requires a cc compiler")
     if not (ROOT / "src/napa_vision/_native/napa_core.c").is_file():
         pytest.skip("the fuzz driver requires a source checkout")
     executable = tmp_path / "napa_fuzz"
-    sources = [str(ROOT / "tests/fuzz/napa_fuzz.c"), str(ROOT / "src/napa_vision/_native/napa_core.c")]
+    sources = [str(ROOT / "tests" / driver), str(ROOT / "src/napa_vision/_native/napa_core.c")]
     command = [compiler, "-std=c99", "-g", "-O1", "-pthread", "-fno-wrapv", *(["-DNAPA_NO_SIMD"] if scalar else [])]
     # Sanitizers where the toolchain has them (CI's native-sanitizers job always does); a plain build still checks
     # the API contract. A toolchain without them fails on a trivial program too, so the probe tells the two apart.
@@ -32,5 +33,8 @@ def test_fuzz_driver(tmp_path: Path, scalar: bool) -> None:
     options = {"ASAN_OPTIONS": "detect_leaks=1:abort_on_error=1", "UBSAN_OPTIONS": "print_stacktrace=1"}
     result = subprocess.run([str(executable), "150"], capture_output=True, text=True, env={**os.environ, **options})
     assert result.returncode == 0, result.stderr[-4000:]
-    assert "150 random fuzz inputs passed" in result.stdout
-    assert ", 0 detections" not in result.stdout  # drawn tags must reach decoding, not just the search
+    if driver == "fuzz/napa_fuzz.c":
+        assert "150 random fuzz inputs passed" in result.stdout
+        assert ", 0 detections" not in result.stdout  # drawn tags must reach decoding, not just the search
+    else:
+        assert "shadow cache frame transitions passed" in result.stdout

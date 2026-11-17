@@ -405,6 +405,7 @@ struct napa_detector {
     uint8_t *level_extrema_out; /* where this level's extrema go, or NULL */
     const uint8_t *level_extrema_in; /* the saved extrema to reuse, or NULL */
     int extrema_wanted, extrema_ready;
+    uint8_t saved_valid[32]; /* populated during this frame, not merely allocated */
     int saved_boxed[32]; /* whether that level was replaced by box averages */
     uint8_t level_contrast_min;
     label_scratch scratch;
@@ -6625,7 +6626,7 @@ static int sample_threshold_level(napa_detector *det, const pass_config *config,
     /* Keyed by sampling step: the passes can start from different steps. */
     const int level_index = level->s < 32 ? level->s : 32;
     det->level_extrema_out = NULL;
-    det->level_extrema_in = ((shadow && det->extrema_ready) || (!shadow && level->redo && det->extrema_wanted)) && level_index < 32 && !boxed && !det->saved_boxed[level_index] ? det->saved_extrema[level_index] : NULL;
+    det->level_extrema_in = ((shadow && det->extrema_ready) || (!shadow && level->redo && det->extrema_wanted)) && level_index < 32 && det->saved_valid[level_index] && !boxed && !det->saved_boxed[level_index] ? det->saved_extrema[level_index] : NULL;
     if (det->extrema_wanted && !det->level_extrema_in && level_index < 32) {
         if (2 * tiles > det->saved_extrema_capacity[level_index]) {
             uint8_t *p = (uint8_t *)realloc(det->saved_extrema[level_index], 2 * tiles);
@@ -6637,6 +6638,7 @@ static int sample_threshold_level(napa_detector *det, const pass_config *config,
         det->saved_boxed[level_index] = boxed;
     }
     level->nruns = threshold_level(det, level->lw, level->lh, level->s / sampling->floor_stride, split ? 1 + outputs->necks : 0, shadow);
+    if (level->nruns >= 0 && det->level_extrema_out) det->saved_valid[level_index] = 1;
     det->level_view = NULL; /* clear even on threshold allocation failure */
     det->level_extrema_out = NULL, det->level_extrema_in = NULL;
     if (level->nruns < 0) return -2;
@@ -7435,6 +7437,7 @@ int napa_detect_shadows_configured(napa_detector *det, const uint8_t *img, int w
     if (max_out > 0 && out == NULL) return -1;
     if (det == NULL) return -1;
     /* Recovery samples the same levels, so it reuses their extrema unless it samples more coarsely. */
+    memset(det->saved_valid, 0, sizeof det->saved_valid);
     det->extrema_ready = 0;
     det->extrema_wanted = det->fam.piece_hamming >= 0;
     int n = detect_ordinary(det, img, width, height, stride, params, out, max_out);
