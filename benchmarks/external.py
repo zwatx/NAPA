@@ -39,9 +39,8 @@ CONFIGS = (
     ),
 )
 FILES = ("train-00000-of-00001.parquet", "rich_truth.json", "manifest.json", "checksums.json")
-# NAPA settings: default (min_tag_px=22; 32 before 2026-11-11) and min_tag_px=16, each also with split_touching
-# (for tags touching other shapes).
-NAPA_BACKENDS = ("napa", "napa16", "napa-split", "napa16-split")
+# Defaults and min_tag_px=16, with automatic, forced, or disabled splitting.
+NAPA_BACKENDS = ("napa", "napa16", "napa-split", "napa16-split", "napa-nosplit", "napa16-nosplit")
 
 
 def files_for(config: str) -> tuple[str, ...]:
@@ -226,6 +225,20 @@ def summarize(rows: list[dict]) -> dict:
     }
 
 
+def napa_detector(name: str, family: str) -> NapaDetector:
+    options = {}
+    if name.endswith("-nosplit"):
+        options["split_touching"] = False
+    elif name.endswith("-split"):
+        options["split_touching"] = True
+    return NapaDetector(
+        family=family,
+        min_tag_px=16 if name.startswith("napa16") else cb.NAPA_DEFAULT_MIN_TAG_PX,
+        max_detections=1024,
+        **options,
+    )
+
+
 def evaluate(root: Path, configs: list[str], names: list[str], repeats: int) -> dict:
     rows, settings, provenance = [], {}, {}
     rng = random.Random(2468)
@@ -235,12 +248,7 @@ def evaluate(root: Path, configs: list[str], names: list[str], repeats: int) -> 
         owned = []
         for name in names:
             if name in NAPA_BACKENDS:
-                det = NapaDetector(
-                    family=family,
-                    min_tag_px=16 if name.startswith("napa16") else 22,
-                    max_detections=1024,
-                    split_touching=name.endswith("-split"),
-                )
+                det = napa_detector(name, family)
                 owned.append(det)
                 detectors[name] = lambda image, det=det: [(o.tag_id, o.corners) for o in det.detect(image)]
                 settings[f"{config}/{name}"] = {
@@ -300,7 +308,7 @@ def evaluate(root: Path, configs: list[str], names: list[str], repeats: int) -> 
     for row in rows:
         subset = row["image_id"].split("/")[0] + "/" if row["config"].startswith("icra-") else ""
         grouped[f"{row['config']}/{subset}{row['backend']}"].append(row)
-    libraries = [str(Path(_library()._name).resolve())]
+    libraries = [str(cb.napa_library_path(_library()))] if any(name in NAPA_BACKENDS for name in names) else []
     return {
         "dataset": "ICRA2020" if configs[0].startswith("icra-") else REPO,
         "revision": "6c7653385d480351fe8235d010dedc18fbc0b992" if configs[0].startswith("icra-") else REVISION,

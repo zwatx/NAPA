@@ -135,12 +135,24 @@ def evaluate_hard(root: Path, detect) -> list[dict]:
 def detector(name: str):
     if name in NAPA_SETTINGS:
         napa = NapaDetector(family="tag36h11", max_detections=1024, **NAPA_SETTINGS[name])
-        return lambda image: [(o.tag_id, np.asarray(o.corners, float)) for o in napa.detect(image)]
+
+        def detect(image):
+            return [(o.tag_id, np.asarray(o.corners, float)) for o in napa.detect(image)]
+
+        detect.config = cb.napa_config(napa)
+        detect.close = napa.close
+        return detect
     backends, skipped = cb.build_backends([name], 1)
     if not backends:
         raise SystemExit(f"{name} is unavailable: {skipped}")
-    call = backends[0].factory()
-    return lambda image: [(int(tag), np.asarray(q, float).reshape(4, 2)) for tag, q in call(image)]
+    backend = backends[0]
+    call = backend.factory()
+
+    def detect(image):
+        return [(int(tag), np.asarray(q, float).reshape(4, 2)) for tag, q in call(image)]
+
+    detect.config = {"family": "tag36h11", **backend.config}
+    return detect
 
 
 def main() -> None:
@@ -152,20 +164,38 @@ def main() -> None:
     args = parser.parse_args()
     if args.output.exists():
         raise SystemExit(f"{args.output} exists; results are not overwritten")
-    results = []
+    inputs = []
+    if "scenes" in args.sets:
+        inputs.extend(args.root / "scenes" / f"scenes_{resolution}.json" for resolution in SCENE_RESOLUTIONS)
+    if "hard" in args.sets:
+        inputs.append(args.root / "synthetic-hard" / "data" / "hard" / "metadata.jsonl")
+    input_sha256 = {str(path.relative_to(args.root)): cb.sha256(path) for path in inputs}
+    results, settings = [], {}
     for name in args.backends:
         detect = detector(name)
-        for dataset in args.sets:
-            rows = (
-                evaluate_scenes(args.root / "scenes", detect)
-                if dataset == "scenes"
-                else evaluate_hard(args.root / "synthetic-hard" / "data" / "hard", detect)
-            )
-            results.append({"backend": name, "set": dataset, "rows": rows})
-            tags, found = sum(r["tags"] for r in rows), sum(r["found"] for r in rows)
-            print(f"{dataset} {name}: {found} of {tags}, wrong IDs {sum(r['wrong_ids'] for r in rows)}", flush=True)
+        try:
+            settings[name] = detect.config
+            for dataset in args.sets:
+                rows = (
+                    evaluate_scenes(args.root / "scenes", detect)
+                    if dataset == "scenes"
+                    else evaluate_hard(args.root / "synthetic-hard" / "data" / "hard", detect)
+                )
+                results.append({"backend": name, "set": dataset, "rows": rows})
+                tags, found = sum(r["tags"] for r in rows), sum(r["found"] for r in rows)
+                print(f"{dataset} {name}: {found} of {tags}, wrong IDs {sum(r['wrong_ids'] for r in rows)}", flush=True)
+        finally:
+            if hasattr(detect, "close"):
+                detect.close()
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps({"source_commit": COMMIT, "results": results}, indent=1) + "\n")
+    record = {
+        "source_commit": COMMIT,  # upstream dataset, retained for existing result readers
+        "repository_commit": cb._git_head(ROOT),
+        "settings": settings,
+        "input_sha256": input_sha256,
+        "results": results,
+    }
+    args.output.write_text(cb.public_text(json.dumps(record, indent=1)) + "\n")
 
 
 if __name__ == "__main__":

@@ -22,8 +22,8 @@ For scoring NAPA on your own camera footage instead, see
 
 Every frame is rendered on its own. No image is reused, and none is a copy of another with a different label. Each
 tag gets a random ID from all 587, a random position, any in-plane angle, a random 3D tilt (and therefore
-perspective), and random black and white levels. Tags never overlap, and each keeps its white quiet zone inside the
-frame.
+perspective), and random black and white levels. Tags never overlap. Their quiet zones stay inside the frame except
+in `frame-edge`, where a quiet zone can extend a few pixels beyond it.
 
 Tags are rendered with exact sub-pixel ground truth. Every pixel is the mean of a 4x4 grid of point samples, as a
 sensor integrates light. The benchmark therefore scores three things: whether each tag was found, any invented ID,
@@ -36,7 +36,7 @@ and how far each corner landed from where it really is.
 | `decoys` | Black-bordered squares with random payloads. Tag-shaped, but not valid codes. |
 | `one-tag` | One tag on a plain background |
 | `many-tags` | 2 to 12 tags of mixed sizes on mixed backgrounds |
-| `small-tags` | 1 to 4 tags with a 32 to 53 px black square, at and just above `min_tag_px=32` |
+| `small-tags` | 1 to 4 tags with a 32 to 53 px black square |
 | `large-tags` | One tag filling 45 to 80% of the frame height |
 | `steep-angle` | Tags tilted 40 to 65 degrees away from the camera |
 | `blur` | Gaussian defocus, sigma 0.8 to 2.0 px |
@@ -48,7 +48,7 @@ and how far each corner landed from where it really is.
 | `overexposed` | Gain of 1.3 to 1.8, with clipping |
 | `jpeg` | JPEG compression at quality 25 to 70 |
 | `busy-background` | Tags on text, shapes, or checkerboards |
-| `frame-edge` | Tags whose quiet zone touches the edge of the frame |
+| `frame-edge` | Tags whose quiet zone touches or extends a few pixels beyond the frame |
 | `noise-free` | 1 to 3 tags on a plain background with no noise at all. The best case for every detector. |
 | `dark-background` | Tags whose one-cell white margin is all that separates them from a dark or mid-grey background |
 
@@ -335,8 +335,9 @@ python -m benchmarks.external --output work/external/locus-results.json
 python -m benchmarks.external --backends napa napa16 --output work/external/napa-results.json  # NAPA only
 ```
 
-`napa-split`/`napa16-split` add `split_touching=True` for its AprilGrid boards
-([report](results/2026-10-31_split_touching/report.md)).
+`napa`/`napa16` use automatic splitting. `napa-split`/`napa16-split` force it on;
+`napa-nosplit`/`napa16-nosplit` turn it off. The [older splitting comparison](results/2026-10-31_split_touching/report.md)
+predates the automatic mode. New result files record the effective settings.
 
 **ICRA 2020 accuracy dataset.** Extract a scenario archive (mirror `6c765338`) under `work/external/icra/`, then:
 
@@ -350,16 +351,14 @@ exclusion, never a silent smaller denominator.
 
 **bdcudatag sets.** Regenerate into `work/` (scene generator at `4ff7a31a`, 32 scenes, 30 hard frames), then
 `python -m benchmarks.bdcudatag --backends napa napa16 apriltag3-d1 --output work/external/bdcudatag.json`. Scored by
-their rules (right ID, centre within 0.75 tag sides). On the 2,389-tag hard corpus NAPA finds 98.5% at the default vs
-96.0% in bdcudatag's published table. Their truth cannot rank corner accuracy, and their GPU timings are not
-like-for-like. [Report](results/2026-11-11_bdcudatag/report.md).
+their rules (right ID, centre within 0.75 tag sides). The [saved comparison](results/2026-11-11_bdcudatag/report.md)
+includes bdcudatag's published GPU results; those timings come from another computer.
 
 **vkapriltag corpus.** A Vulkan detector's rendered corpus with exact corner truth: 4,313 frames, 9,991 tags. Generate
 with its `gen_corpus.py` (vkapriltag `956d5029`, AprilTag sources `b7c0ebe9`), then
 `python -m benchmarks.vkapriltag_corpus --backends napa napa16 apriltag3-d1 --output work/external/vkapriltag-results/napa.json`.
-Optional `vkapriltag-d1/d2` backends need a Vulkan device and report accuracy only. NAPA finds 98.3% at the default vs
-vkapriltag's 97.8/98.0% and full-resolution AprilTag's 96.8%, with no false detections from any of them. Corners are a
-wash on sharp frames; NAPA is better under blur. [Report](results/2026-11-11_vkapriltag/report.md).
+Optional `vkapriltag-d1/d2` backends need a Vulkan device and report accuracy only.
+[Saved comparison](results/2026-11-11_vkapriltag/report.md).
 
 Detector-labelled sets (e.g. the willtoth FRC collection) measure agreement with that detector, not accuracy. Keep them
 separate. See the [independent baseline report](results/2026-10-31_external_baseline/report.md).

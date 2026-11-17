@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+import io
+import json
+import os
+import shutil
+import struct
+import subprocess
 import sys
 from pathlib import Path
 
@@ -24,6 +30,223 @@ def test_scoring_separates_false_ids_duplicates_geometry_and_order() -> None:
     assert match["worst_px"] == pytest.approx(0.3 * np.sqrt(2))
     assert match["alignment"] == "rs1" and match["offset"] == pytest.approx([0.3, 0.3])
     assert cc.score_detail(truth, [(2, SQUARE + 20)])["matched"][2]["alignment"] == "s0"
+
+
+def test_adapter_attribute_errors_are_not_reported_as_missing_libraries(monkeypatch):
+    def broken():
+        raise AttributeError("adapter configuration is broken")
+
+    monkeypatch.setattr(cb, "registry", lambda threads: {"napa": broken})
+    with pytest.raises(AttributeError, match="adapter configuration"):
+        cb.build_backends(["napa"], 1)
+
+
+def test_opencv_without_aruco_is_an_explicit_optional_skip(monkeypatch):
+    from types import SimpleNamespace
+
+    monkeypatch.setitem(sys.modules, "cv2", SimpleNamespace(setNumThreads=lambda threads: None))
+    backends, skipped = cb.build_backends(["opencv"], 1)
+    assert backends == []
+    assert "cv2.aruco" in skipped["opencv"]
+
+
+def test_source_archives_do_not_inherit_an_unrelated_parent_git_revision(tmp_path):
+    git = shutil.which("git")
+    if git is None:
+        pytest.skip("revision provenance check requires git")
+    repo = tmp_path / "repo"
+    subprocess.run([git, "init", "-q", str(repo)], check=True, capture_output=True)
+    subprocess.run(
+        [
+            git,
+            "-C",
+            str(repo),
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+            "-c",
+            f"core.hooksPath={tmp_path / 'no-hooks'}",
+            "commit",
+            "--allow-empty",
+            "-qm",
+            "test: record fixture",
+        ],
+        check=True,
+        capture_output=True,
+    )
+    assert cb._git_head(repo)
+    archive = repo / "work/source-archive"
+    archive.mkdir(parents=True)
+    assert cb._git_head(archive) is None
+
+
+def test_napa_adapters_honor_the_requested_native_thread_count(monkeypatch):
+    from napa_vision import napa_detector
+
+    constructor = napa_detector.NapaDetector
+    created = []
+
+    def detector(**options):
+        instance = constructor(**options)
+        created.append(instance)
+        return instance
+
+    monkeypatch.setattr(napa_detector, "NapaDetector", detector)
+    try:
+        backends, skipped = cb.build_backends(["napa", "napa-mtp16"], threads=4)
+        assert skipped == {}
+        for backend in backends:
+            assert backend.config["threads"] == 4
+            assert backend.factory()(np.zeros((16, 16), np.uint8)) == []
+        assert len(created) == 4 and all(instance.threads == 4 for instance in created)
+    finally:
+        for instance in created:
+            instance.close()
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="loader-name regression uses Linux LD_LIBRARY_PATH")
+@pytest.mark.parametrize("shadow", [False, True])
+def test_napa_provenance_identifies_the_mapped_library_not_a_same_named_cwd_file(tmp_path, shadow):
+    from napa_vision.napa_detector import _library
+
+    libraries, cwd = tmp_path / "libraries", tmp_path / "cwd"
+    libraries.mkdir()
+    cwd.mkdir()
+    loaded = libraries / "benchmark-core.so"
+    shutil.copyfile(Path(_library()._name).resolve(), loaded)
+    if shadow:
+        (cwd / loaded.name).write_bytes(b"an unrelated file")
+    env = os.environ.copy()
+    env["NAPA_CORE_LIBRARY"] = loaded.name
+    env["LD_LIBRARY_PATH"] = str(libraries) + os.pathsep + env.get("LD_LIBRARY_PATH", "")
+    root = Path(__file__).resolve().parents[1]
+    env["PYTHONPATH"] = os.pathsep.join(map(str, (root, root / "src")))
+    script = """
+import sys
+from pathlib import Path
+from benchmarks import cpu_backends as cb
+from napa_vision import NapaDetector
+detector = NapaDetector()
+try:
+    config = cb.napa_config(detector)
+    expected = Path(sys.argv[1])
+    assert config['core_library_loaded'] == [cb.public_text(str(expected))]
+    assert config['core_library_sha256'] == [cb.sha256(expected)]
+finally:
+    detector.close()
+"""
+    subprocess.run([sys.executable, "-c", script, str(loaded)], cwd=cwd, env=env, check=True, capture_output=True)
+
+
+@pytest.mark.parametrize(
+    "payload,message",
+    [(b"", "count"), (struct.pack("<i", -1), "negative"), (struct.pack("<i", 1) + bytes(40), "truncated")],
+)
+def test_vulkan_worker_failures_are_reported_as_protocol_errors(tmp_path, monkeypatch, payload, message):
+    (tmp_path / "vkapriltag_worker").touch()
+    monkeypatch.setattr(cb, "SHIM_DIR", tmp_path)
+
+    class Worker:
+        def __init__(self, *args, **kwargs):
+            self.stdin = io.BytesIO()
+            self.stdout = io.BytesIO(b"ready\n" + payload)
+
+        def wait(self, timeout=None):
+            return 0
+
+    monkeypatch.setattr(cb.subprocess, "Popen", Worker)
+    detect = cb.vkapriltag_backend("vkapriltag-d1", 1).factory()
+    with pytest.raises(RuntimeError, match=message):
+        detect(np.zeros((16, 16), np.uint8))
+
+
+@pytest.mark.parametrize("module", ["benchmarks.cpu_backends", "benchmarks.cpu_comparison"])
+@pytest.mark.parametrize("preset", [None, "3"])
+def test_openblas_is_configured_before_numpy_import(module, preset):
+    script = """
+import builtins
+import importlib
+import os
+import sys
+original = builtins.__import__
+observed = []
+def checked(name, *args, **kwargs):
+    if name == "numpy" and "numpy" not in sys.modules:
+        assert os.environ.get("OPENBLAS_NUM_THREADS") == sys.argv[2]
+        observed.append(name)
+    return original(name, *args, **kwargs)
+builtins.__import__ = checked
+importlib.import_module(sys.argv[1])
+assert observed
+"""
+    env = os.environ.copy()
+    env.pop("OPENBLAS_NUM_THREADS", None)
+    if preset:
+        env["OPENBLAS_NUM_THREADS"] = preset
+    root = Path(__file__).resolve().parents[1]
+    env["PYTHONPATH"] = os.pathsep.join(map(str, (root, root / "src")))
+    subprocess.run([sys.executable, "-c", script, module, preset or "1"], env=env, check=True, capture_output=True)
+
+
+def _real_row(path):
+    return {
+        "frame": "real-unannotated-32x24-000",
+        "scenario": cc.REAL,
+        "resolution": "32x24",
+        "backend": "napa",
+        "tags": 0,
+        "true_positive": 0,
+        "tp_ids": "",
+        "corner_errors_px": "",
+        "alignments": "",
+        "detected_ids": "1",
+        "stable_across_repetitions": True,
+        "median_ms": 1.0,
+        "samples_ns": "1000000",
+        "cpu_ns": "1000000",
+        "detail_path": str(path),
+        "detections_json": json.dumps([[1, SQUARE.tolist()]]),
+    }
+
+
+def test_real_report_shows_outputs_without_scoring_unlabelled_frames():
+    report = {"backends": {"napa": {}}, **cc.aggregate([_real_row("image.png")])}
+    text = cc.markdown_report(report, {}, [cc.REAL])
+    assert "Outputs" in text and "1.000" in text
+    assert "Recall" not in text and "Corner err" not in text
+
+
+@pytest.mark.parametrize("relative", [False, True])
+def test_real_agreement_resolves_recorded_paths_from_any_working_directory(tmp_path, monkeypatch, relative):
+    root = tmp_path / "repo"
+    image = root / "frames/image.png"
+    image.parent.mkdir(parents=True)
+    coords = " ".join(f"({x + 0.5} {y + 0.5})" for x, y in SQUARE)
+    image.with_suffix(".txt").write_text(f"1, {coords}\n")
+    monkeypatch.setattr(cc, "ROOT", root)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    recorded = image.relative_to(root) if relative else image
+    result = cc.real_agreement([_real_row(recorded)])["backends"]["napa"]
+    assert result["matched"] == result["reference_tags"] == 1
+    assert result["median_worst_corner_vs_reference_px"] == 0
+
+
+def test_real_frame_can_be_selected_without_reloading_other_inputs(tmp_path):
+    import cv2
+
+    image = np.arange(17 * 23, dtype=np.uint8).reshape(17, 23)
+    path = tmp_path / "image.png"
+    assert cv2.imwrite(str(path), image)
+    frame = cc.frame_by_name("real-unannotated-23x17-001", real_images=[tmp_path / "unused.png", path])
+    assert frame.name == "real-unannotated-23x17-001"
+    np.testing.assert_array_equal(frame.image, image)
+    with pytest.raises(ValueError, match="real-images"):
+        cc.frame_by_name("real-unannotated-23x17-001")
 
 
 def test_stress_frames_are_reproducible_and_keep_their_bands() -> None:

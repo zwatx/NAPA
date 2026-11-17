@@ -14,6 +14,7 @@ import argparse
 import json
 import sys
 from collections.abc import Callable
+from contextlib import ExitStack
 from pathlib import Path
 
 import cv2
@@ -23,7 +24,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT), str(ROOT / "src")]
 
 from benchmarks import cpu_backends as cb  # noqa: E402
-from napa_vision.napa_detector import NapaDetector, _library  # noqa: E402
+from napa_vision.napa_detector import NapaDetector  # noqa: E402
 
 COMMIT = "956d502943306b1d408ab90104ba0a64f23dfe19"
 SCENARIOS = 26
@@ -74,56 +75,74 @@ def to_corpus(corners: np.ndarray, sign: float) -> np.ndarray:
 def detector(name: str, family: str) -> Callable[[np.ndarray], Found] | None:
     if name in NAPA_SETTINGS:
         napa = NapaDetector(family=family, max_detections=1024, **NAPA_SETTINGS[name])
-        return lambda image: [(o.tag_id, o.corners) for o in napa.detect(image)]
+
+        def detect(image):
+            return [(o.tag_id, o.corners) for o in napa.detect(image)]
+
+        detect.config = cb.napa_config(napa)
+        detect.close = napa.close
+        return detect
     if name in VULKAN:
-        call = cb.vkapriltag_backend(name, VULKAN[name], family).factory()
+        backend = cb.vkapriltag_backend(name, VULKAN[name], family)
     elif family != "tag36h11":
         return None  # the other adapters are tag36h11 only
     else:
         backends, skipped = cb.build_backends([name], 1)
         if not backends:
             raise SystemExit(f"{name} is unavailable: {skipped}")
-        call = backends[0].factory()
-    return lambda image: [(int(i), np.asarray(q, float)) for i, q in call(image)]
+        backend = backends[0]
+    call = backend.factory()
+
+    def detect(image):
+        return [(int(i), np.asarray(q, float)) for i, q in call(image)]
+
+    detect.config = {"family": family, **backend.config}
+    return detect
 
 
-def evaluate(root: Path, name: str) -> dict[str, dict]:
+def evaluate(root: Path, name: str, *, settings: dict | None = None) -> dict[str, dict]:
     scenarios = sorted(path.name for path in root.iterdir() if (path / "gt.json").exists())
     if len(scenarios) != SCENARIOS:
         raise ValueError(f"expected {SCENARIOS} scenarios, found {len(scenarios)}")
     out, frames, main_tags = {}, 0, 0
     detectors: dict[str, Callable[[np.ndarray], Found] | None] = {}  # one per family: vkapriltag's is a process
-    for scenario in scenarios:
-        family = "tag16h5" if scenario == SHORT_FAMILY_SET else "tag36h11"
-        truth = json.loads((root / scenario / "gt.json").read_text())
-        frames += len(truth)
-        if family == "tag36h11":
-            main_tags += sum(len(entry["tags"]) for entry in truth.values())
-        if family not in detectors:
-            detectors[family] = detector(name, family)
-        detect = detectors[family]
-        if detect is None:
-            continue
-        sign = next(
-            (np.sign(signed_area(np.array(t["corners"], float))) for v in truth.values() for t in v["tags"]), 1.0
-        )
-        tags, false, errors = 0, 0, []
-        for frame in sorted(truth):
-            image = cv2.imread(str(root / scenario / frame), cv2.IMREAD_GRAYSCALE)
-            if image is None:
-                raise FileNotFoundError(root / scenario / frame)
-            found = [(i, to_corpus(q, sign)) for i, q in detect(np.ascontiguousarray(image))]
-            frame_errors, frame_false = score_frame(truth[frame]["tags"], found)
-            tags += len(truth[frame]["tags"])
-            false += frame_false
-            errors += frame_errors
-        out[scenario] = {
-            "tags": tags,
-            "found": len(errors),
-            "false": false,
-            "worst_corner_median_px": float(np.median(errors)) if errors else None,
-            "worst_corner_p95_px": float(np.percentile(errors, 95)) if errors else None,
-        }
+    with ExitStack() as cleanup:
+        for scenario in scenarios:
+            family = "tag16h5" if scenario == SHORT_FAMILY_SET else "tag36h11"
+            truth = json.loads((root / scenario / "gt.json").read_text())
+            frames += len(truth)
+            if family == "tag36h11":
+                main_tags += sum(len(entry["tags"]) for entry in truth.values())
+            if family not in detectors:
+                detectors[family] = detector(name, family)
+                if detectors[family] is not None:
+                    if settings is not None:
+                        settings[family] = detectors[family].config
+                    if hasattr(detectors[family], "close"):
+                        cleanup.callback(detectors[family].close)
+            detect = detectors[family]
+            if detect is None:
+                continue
+            sign = next(
+                (np.sign(signed_area(np.array(t["corners"], float))) for v in truth.values() for t in v["tags"]), 1.0
+            )
+            tags, false, errors = 0, 0, []
+            for frame in sorted(truth):
+                image = cv2.imread(str(root / scenario / frame), cv2.IMREAD_GRAYSCALE)
+                if image is None:
+                    raise FileNotFoundError(root / scenario / frame)
+                found = [(i, to_corpus(q, sign)) for i, q in detect(np.ascontiguousarray(image))]
+                frame_errors, frame_false = score_frame(truth[frame]["tags"], found)
+                tags += len(truth[frame]["tags"])
+                false += frame_false
+                errors += frame_errors
+            out[scenario] = {
+                "tags": tags,
+                "found": len(errors),
+                "false": false,
+                "worst_corner_median_px": float(np.median(errors)) if errors else None,
+                "worst_corner_p95_px": float(np.percentile(errors, 95)) if errors else None,
+            }
     if frames != FRAMES or main_tags != MAIN_TAGS:
         raise ValueError(f"expected {FRAMES} frames and {MAIN_TAGS} tag36h11 tags, found {frames} and {main_tags}")
     return out
@@ -137,9 +156,11 @@ def main() -> None:
     args = parser.parse_args()
     if args.output.exists():
         raise SystemExit(f"{args.output} exists; results are not overwritten")
-    results = {}
+    input_sha256 = {str(path.relative_to(args.root)): cb.sha256(path) for path in sorted(args.root.glob("*/gt.json"))}
+    results, settings = {}, {}
     for name in args.backends:
-        results[name] = evaluate(args.root, name)
+        settings[name] = {}
+        results[name] = evaluate(args.root, name, settings=settings[name])
         main_sets = {k: v for k, v in results[name].items() if k != SHORT_FAMILY_SET}
         print(
             f"{name}: {sum(v['found'] for v in main_sets.values())} of {sum(v['tags'] for v in main_sets.values())}, "
@@ -147,9 +168,14 @@ def main() -> None:
             flush=True,
         )
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    core = Path(_library()._name).resolve()
-    record = {"source_commit": COMMIT, "core_library": cb.public_text(str(core)), "core_sha256": cb.sha256(core)}
-    args.output.write_text(json.dumps({**record, "results": results}, indent=1) + "\n")
+    record = {
+        "source_commit": COMMIT,  # upstream dataset, retained for existing result readers
+        "repository_commit": cb._git_head(ROOT),
+        "settings": settings,
+        "input_sha256": input_sha256,
+        "results": results,
+    }
+    args.output.write_text(cb.public_text(json.dumps(record, indent=1)) + "\n")
 
 
 if __name__ == "__main__":
