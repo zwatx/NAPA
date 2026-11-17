@@ -213,6 +213,7 @@ def estimate_rolling_shutter(
     width, height = calibration.image_size
     moving: dict[int, list[tuple]] = {0: [], 1: []}
     for timestamp, image in frames:
+        calibration.validate_for_image_size(image.shape[1], image.shape[0])
         observations = detector.detect(image)
         velocities = tracker.velocities(observations, timestamp)
         if layout is not None:

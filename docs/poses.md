@@ -68,7 +68,8 @@ shifted to the moment the middle line was read, then solved. `image_observations
 - Get `readout_s` and `direction` from the data sheet or measure them (below). 30% off still removes ~2/3 of the
   error. The wrong direction doubles it.
 - Tags need a recent previous sighting (`max_frame_gap_s`, default 0.1 s). Tags without one appear in
-  `uncorrected_tag_ids`, are solved as detected, and stay out of that frame's multi-tag pose.
+  `uncorrected_tag_ids` and are solved as detected. When some tags have history, only those tags enter the
+  corrected multi-tag pose. When none has history, the multi-tag pose uses all tags as detected.
 
 In simulation (1280x800, 16.5 cm tags at 1.5-5 m, 50 fps), correction took single-tag error from 38 mm to under 2 mm
 at 15 ms and 2 rad/s, and held up to 5 rad/s and sideways motion. One real check agrees on the effect, not the size:

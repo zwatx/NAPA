@@ -6,6 +6,7 @@ import pytest
 
 from napa_vision import (
     ArtifactProvenance,
+    CalibrationError,
     CameraCalibration,
     FiducialImageObservation,
     ProvenanceKind,
@@ -293,6 +294,21 @@ def test_reads_the_readout_and_direction_from_motion(direction: str, yaw: float,
     assert estimate.rolling_shutter is not None and estimate.rolling_shutter.direction == direction
     assert estimate.readout_s == pytest.approx(0.015, abs=0.002)
     assert estimate.low <= estimate.readout_s <= estimate.high + 1e-3
+
+
+@pytest.mark.parametrize("valid_frames", [0, 1], ids=["first-frame", "resized-recording"])
+@pytest.mark.parametrize("shape", [(HEIGHT, WIDTH // 2), (HEIGHT // 2, WIDTH)])
+def test_readout_estimation_rejects_a_frame_at_the_wrong_resolution(valid_frames: int, shape: tuple[int, int]) -> None:
+    frames = [(i * DT, IMAGE) for i in range(valid_frames)]
+    frames.append((valid_frames * DT, np.zeros(shape, np.uint8)))
+    detector = Scripted()
+    detector.frames = [[] for _ in frames]
+
+    with pytest.raises(CalibrationError, match="calibration was measured at 640x480, not"):
+        estimate_rolling_shutter(frames, calibration=CALIBRATION, tag_size_m=SIZE, detector=detector)
+
+    # Valid earlier frames were consumed, but detection never saw the mismatched one.
+    assert len(detector.frames) == 1
 
 
 def test_a_global_shutter_reads_as_one() -> None:
