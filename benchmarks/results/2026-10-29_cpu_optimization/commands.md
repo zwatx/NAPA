@@ -38,6 +38,11 @@ work/venv/bin/python benchmarks/results/2026-10-29_cpu_optimization/make_report.
 `source_manifest.json` identifies the tested source and binaries. Debug paths can make file hashes differ between
 checkouts. `implementation.patch` records the native changes and regression tests against the base commit.
 
+The license headers of `diagnostic_napa_core.c` and `unpacked_napa_core.c` were updated after measurement.
+Their current file hashes therefore differ from the manifest. The exact measured snapshots are at commit
+`ed7fecd`; retrieve them with `git show ed7fecd:benchmarks/results/2026-10-29_cpu_optimization/<filename>`.
+The recorded hashes and measurements have not been changed.
+
 `rerun.py` reuses the existing CPU comparison renderer, scoring, timing and adapters. It loads each requested
 NAPA core through the public Python API, checks the actual mapped path, and records its binary hash. Factory
 creation is sequential; the temporary library override never runs inside a timed call. Detector instances and

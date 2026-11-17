@@ -1,5 +1,7 @@
 # split_touching on independent benchmarks — 2026-10-31
 
+Correction: the random-payload separation claim below is inaccurate. See the [erratum](errata.md).
+
 `split_touching=True` finds tags whose border touches another dark shape at a corner, as in AprilGrid boards and
 tags set in a checkerboard. It is off by default. With it off, detection is unchanged (same output, same speed).
 With it on, every ordinary detection is still returned first, unchanged, and the new tags are appended.
