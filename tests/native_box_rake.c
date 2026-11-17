@@ -15,14 +15,30 @@ static int expected(const uint8_t *img, int w, int h, int stride, int s, int ker
     for (int r = r0; r < r1; r++)
         for (int c = c0; c < c1; c++) sum += img[(size_t)r * stride + c];
     int count = (c1 - c0) * (r1 - r0);
-    if (count == kernel * kernel) {
-        uint32_t m = (65536u + (uint32_t)(kernel * kernel) / 2) / (uint32_t)(kernel * kernel);
-        return (int)(((uint32_t)sum * m + 32768u) >> 16);
-    }
     return (sum + count / 2) / count;
 }
 
 int main(void) {
+    /* Real blocks for every representable sum, including ties; no reciprocal in the oracle. */
+    for (int k = 2; k <= 16; k++) {
+        for (int clipped = 0; clipped <= 1; clipped++) {
+            uint8_t img[32 * 32] = {0}, level[4];
+            uint16_t rows[64];
+            int half = (k - 1) / 2, start = k - half, cols = k - clipped;
+            int w = clipped ? start + cols : 2 * k, h = 2 * k, count = cols * k;
+            for (int sum = 0; sum <= 255 * count; sum++) {
+                if (sum) {
+                    int cell = (sum - 1) / 255;
+                    img[(start + cell / cols) * w + start + cell % cols]++;
+                }
+                box_rake(level, 2, 2, img, w, h, w, k, k, rows, rows + w);
+                if (level[3] != (sum + count / 2) / count) return 1;
+                for (int y = 0; y < 2; y++)
+                    for (int x = 0; x < 2; x++)
+                        if (level[y * 2 + x] != expected(img, w, h, w, k, k, x, y)) return 1;
+            }
+        }
+    }
     for (int trial = 0; trial < 6000; trial++) {
         int w = 16 + (int)(rnd() % 200), h = 16 + (int)(rnd() % 80), stride = w + (rnd() % 3 ? 0 : (int)(rnd() % 9));
         int s = 2 + (int)(rnd() % 15), kernel = s == 2 && rnd() % 2 ? 3 : s, mode = (int)(rnd() % 3);

@@ -227,6 +227,25 @@ typedef struct {
     uint16_t minx, maxx, miny, maxy;
 } blob_box;
 
+/* Candidate stages retain the trace's numeric values; waiting for neck splitting has no trace event. */
+enum {
+    CANDIDATE_UNTRIED = 0,
+    CANDIDATE_WAITING_FOR_NECKS = 1,
+    CANDIDATE_SKIPPED = 5,
+    CANDIDATE_ROUGH_REJECTED = 6,
+    CANDIDATE_FIT_FAILED = 7,
+    CANDIDATE_DECODE_FAILED = 8,
+    CANDIDATE_REFINE_FIT_FAILED = 9,
+    CANDIDATE_REFINE_DECODE_FAILED = 10,
+    CANDIDATE_DUPLICATE = 11,
+    CANDIDATE_DECODED = 12
+};
+
+static int suppresses_pieces(int fate) {
+    return fate == CANDIDATE_ROUGH_REJECTED || fate == CANDIDATE_REFINE_FIT_FAILED ||
+           fate == CANDIDATE_REFINE_DECODE_FAILED || fate == CANDIDATE_DUPLICATE || fate == CANDIDATE_DECODED;
+}
+
 typedef struct {
     int count;
     int minx, maxx, miny, maxy;
@@ -241,7 +260,7 @@ typedef struct {
             int pair_y, top_x0, top_x1, bot_x0, bot_x1;
         } rows;
         struct {
-            int fate; /* trace stage reached, or 1 for a piece deferred until neck splitting */
+            int fate; /* candidate stage, retained when the level is redone with neck splitting */
             int piece_count;
         } candidate;
     } work;
@@ -362,6 +381,15 @@ typedef struct {
 
 typedef struct soft_tables soft_tables;
 
+/* One sampling step's tile extrema from the ordinary pass, and what its samples were made from. */
+typedef struct {
+    uint8_t *tiles; /* the tile minima, then the maxima */
+    size_t capacity;
+    int base;  /* the pass's first sampling step */
+    int boxed; /* this level, or a finer one it was sampled from, was replaced by box averages */
+    int valid; /* written during this frame, not merely allocated */
+} saved_extrema;
+
 struct napa_detector {
     family_layout fam;
     int threads;      /* napa_set_threads: 1 (the default) runs on the calling thread only */
@@ -399,14 +427,10 @@ struct napa_detector {
 
     uint8_t *level; /* owned scratch, even when the finest gray pixels are borrowed */
     const uint8_t *level_view; /* non-owning, only during threshold_level; NULL uses owned scratch */
-    /* Each level's tile extrema from the ordinary pass, reused by recovery on the same samples. */
-    uint8_t *saved_extrema[32];
-    size_t saved_extrema_capacity[32];
+    saved_extrema saved[32]; /* by sampling step, for recovery to reuse where its samples are the same */
     uint8_t *level_extrema_out; /* where this level's extrema go, or NULL */
     const uint8_t *level_extrema_in; /* the saved extrema to reuse, or NULL */
     int extrema_wanted, extrema_ready;
-    uint8_t saved_valid[32]; /* populated during this frame, not merely allocated */
-    int saved_boxed[32]; /* whether that level was replaced by box averages */
     uint8_t level_contrast_min;
     label_scratch scratch;
     napa_run *runs;
@@ -501,8 +525,9 @@ static int build_index(code_index *ix, const uint64_t *codes, int n, int nbits, 
     return 0;
 }
 
-/* Index of the rotated code within max_bits (at most 5) of `code`, or -1. When codes are at least
- * 2 * max_bits + 1 apart (the final decode), any match is unique. */
+/* Index of the rotated code nearest `code` within max_bits (at most 5), the first in table order on a tie, or -1.
+ * A code within the family's max_hamming is the only one that near (codes are 2 * max_hamming + 1 apart), so the
+ * search stops there; a farther match must be compared with every other code within max_bits. */
 static int nearest_code(napa_detector *det, uint64_t code, int max_bits, int *distance) {
     family_layout *L = &det->fam;
     const code_index *ix = max_bits <= 3 ? &L->index3 : &L->index5;
@@ -510,6 +535,7 @@ static int nearest_code(napa_detector *det, uint64_t code, int max_bits, int *di
         memset(L->stamp, 0, sizeof(uint32_t) * (size_t)L->nrot);
         L->stamp_now = 1;
     }
+    int best = -1, best_d = max_bits + 1;
     for (int b = 0; b < ix->blocks; b++) {
         const uint32_t *st = ix->start[b];
         const uint32_t *ls = ix->list[b];
@@ -521,14 +547,16 @@ static int nearest_code(napa_detector *det, uint64_t code, int max_bits, int *di
                 if (L->stamp[i] == L->stamp_now) continue;
                 L->stamp[i] = L->stamp_now;
                 int d = napa_popcount64(code ^ L->codes[i]);
-                if (d <= max_bits) {
+                if (d <= L->max_hamming && d <= max_bits) {
                     *distance = d;
                     return (int)i;
                 }
+                if (d < best_d || (d == best_d && (int)i < best)) best = (int)i, best_d = d;
             }
         }
     }
-    return -1;
+    if (best >= 0) *distance = best_d;
+    return best;
 }
 
 static int errors_connected(const family_layout *L, uint64_t diff);
@@ -723,7 +751,7 @@ void napa_destroy(napa_detector *det) {
     pool_destroy(det->pool);
     band_free(det);
     free(det->floor_hist);
-    for (int i = 0; i < 32; i++) free(det->saved_extrema[i]);
+    for (int i = 0; i < 32; i++) free(det->saved[i].tiles);
     free(det->level);
     free(det->failed);
     free(det->memo);
@@ -921,6 +949,9 @@ static inline double sample_bilinear(const image_view *im, double x, double y) {
 #define NAPA_LENS_MIN_KAPPA 0.02
 #define NAPA_LENS_MIN_GAIN 0.3
 #define NAPA_LENS_MAX_EXCESS 1.5
+/* Empirical noise gate for the extra radial parameter. The F-shaped score uses 48 rather than the asymptotic
+ * white-noise reference of about 24 because neighbouring edge samples share blur and pixels. */
+#define NAPA_LENS_MIN_F 48.0
 /* The constants above are for a lens estimated from one tag's own bowed sides; those below, for the calibrated lens
  * given by napa_set_lens. With one, tags whose sides it bows less than this (pixels, at the middle) are fitted in
  * pixels. */
@@ -1229,7 +1260,10 @@ static void block_sums(const uint8_t *row, uint16_t *sum, int count, int kernel)
 static void box_rake(uint8_t *level, int lw, int lh, const uint8_t *img, int w, int h, int stride, int s, int kernel,
                      uint16_t *acc, uint16_t *hs) {
     int half = (kernel - 1) / 2;
-    uint32_t m = (65536u + (uint32_t)(kernel * kernel) / 2) / (uint32_t)(kernel * kernel); /* 1 / kernel^2 in 0.16 fixed point */
+    uint32_t count = (uint32_t)(kernel * kernel);
+    /* ceil(2^32 / count): for n = sum + count/2 <= 65408, reciprocal error
+     * is < n/2^32 < 1/count, so floor(n*m/2^32) equals floor(n/count). */
+    uint64_t m = ((UINT64_C(1) << 32) + count - 1) / count;
     /* Blocks of a power-of-two width that tile the row are summed along the row first, which reads each pixel once. */
     int shift = 0;
     if (kernel == s && (s == 2 || s == 4 || s == 8 || s == 16)) shift = s == 2 ? 2 : s == 4 ? 4 : s == 8 ? 6 : 8;
@@ -1293,7 +1327,7 @@ static void box_rake(uint8_t *level, int lw, int lh, const uint8_t *img, int w, 
         int x_lo = (half + s - 1) / s, x_hi = (w - kernel + half) / s + 1;
         if (x_hi > lw) x_hi = lw;
         if (r1 - r0 < kernel) x_lo = x_hi = 0; /* a clipped row band: every block is partial */
-        for (int x = x_lo; x < x_hi; x++) dst[x] = (uint8_t)((hs[x * s - half] * m + 32768u) >> 16);
+        for (int x = x_lo; x < x_hi; x++) dst[x] = (uint8_t)(((hs[x * s - half] + count / 2) * m) >> 32);
         for (int x = 0; x < lw; x++) {
             if (x == x_lo && x_lo < x_hi) x = x_hi;
             if (x >= lw) break;
@@ -1561,10 +1595,7 @@ static NAPA_FORCE_INLINE void join_rows(const label_context *ctx, const label_co
     }
 }
 
-/* Exact 4x4 tile extrema, with short bands and the final partial tile repeated at their edges.
- * Adapted with sampling/median and edge indexing from PR23,
- * 7735f7a2e41b40584cd48a7f07c0bd947c4993c2 (same project/license).
- * Split-piece ordering and restart bookkeeping keep the existing representation. */
+/* Exact 4x4 tile extrema, with short bands and the final partial tile repeated at their edges. */
 static void tile_row_minmax(const uint8_t *L, size_t lstride, int lw, int lh, int ty, int tw, uint8_t *vmin,
                             uint8_t *vmax, uint8_t *tmin, uint8_t *tmax) {
     int y0 = ty * TILE;
@@ -2139,7 +2170,7 @@ static NAPA_FORCE_INLINE int threshold_index_impl(const label_context *ctx, cons
             if (prev_y == y - 1 && split) {
                 /* Two adjacent rows touch at most once per run of either. */
                 size_t most = 2 * ((size_t)(prev_end - prev_start) + (size_t)(n - start));
-                if (split && *contacts->diag_n + most > *contacts->diag_capacity) {
+                if (*contacts->diag_n + most > *contacts->diag_capacity) {
                     size_t cap = *contacts->diag_capacity ? 2 * *contacts->diag_capacity : 4096;
                     while (cap < *contacts->diag_n + most) cap *= 2;
                     int32_t *p = (int32_t *)realloc(*contacts->diag, cap * sizeof(int32_t));
@@ -2322,7 +2353,8 @@ static int threshold_level(napa_detector *det, int lw, int lh, int factor, int s
 }
 
 
-/* PR23 7735f7a2e41b40584cd48a7f07c0bd947c4993c2: exact four-point interpolation. */
+/* Bilinear profiles at 16.16 positions, returned at 40.24 precision. The caller checks image bounds and pads
+ * prof to a multiple of four: the SIMD path writes all four lanes of the final group, even past K. */
 static void profile_fixed(const uint8_t *img, int stride, int32_t fxp, int32_t fyp, int32_t ixp, int32_t iyp, int K,
                           int64_t *prof) {
 #ifdef NAPA_SSE2
@@ -2390,9 +2422,6 @@ static NAPA_NOINLINE int frame_side(const image_view *im, vec2 a, vec2 b, double
     return 1;
 }
 
-/* Fit each side to the outer border edge searched from r_out outside to r_in inside the given quad. Sides taken
- * from the frame edge instead are added to *frame_sides (bit k: side k, from in[k] to in[k + 1]); with frame_sides
- * NULL, a side with no edge fails the fit, as before. */
 /* Edge levels for the midpoint-crossing estimator; black >= white disables it. */
 typedef struct {
     double black, white;
@@ -2427,11 +2456,13 @@ struct fine_whole {
 /* Keep the rare illumination fit's sample arrays off the hot refinement stack. */
 static NAPA_NOINLINE void refresh_edge_light(const image_view *im, const vec2 q[4], edge_levels *levels);
 
+enum { INITIAL_SIDE_POINTS = 6 };
+
 /* Initial-fit samples before total least squares compacts the arrays. */
 typedef struct {
     int count[4];
     unsigned rejection_mask;
-    double x[4][6], y[4][6], weight[4][6];
+    double x[4][INITIAL_SIDE_POINTS], y[4][INITIAL_SIDE_POINTS], weight[4][INITIAL_SIDE_POINTS];
 } initial_capture;
 
 static NAPA_FORCE_INLINE int fit_side_line_impl(double px[], double py[], double wt[], int good, double reach,
@@ -2475,6 +2506,14 @@ static NAPA_FORCE_INLINE int fit_side_line_impl(double px[], double py[], double
             int kept = 0;
             for (int i = 0; i < good; i++) {
                 double dist = fabs((px[i] - mx) * (-(*dy)) + (py[i] - my) * (*dx));
+                if (dist <= 1.0 + 0.1 * reach) kept++;
+            }
+            if (rejected != NULL) *rejected = kept != good;
+            /* Keep the original fit and samples unless enough inliers support a refit. */
+            if (kept == good || kept < 3 || 2 * kept < good) break;
+            kept = 0;
+            for (int i = 0; i < good; i++) {
+                double dist = fabs((px[i] - mx) * (-(*dy)) + (py[i] - my) * (*dx));
                 if (dist <= 1.0 + 0.1 * reach) {
                     px[kept] = px[i];
                     py[kept] = py[i];
@@ -2482,11 +2521,7 @@ static NAPA_FORCE_INLINE int fit_side_line_impl(double px[], double py[], double
                     kept++;
                 }
             }
-            if (rejected != NULL) *rejected = kept != good;
-            /* Shorten the second pass only with enough inliers. Otherwise it uses the
-             * full array, including the partially compacted prefix. */
-            if (kept == good) break; /* unchanged samples would produce the same fit again */
-            if (kept >= 3 && 2 * kept >= good) good = kept;
+            good = kept;
         }
     }
     return 1;
@@ -2644,25 +2679,27 @@ static int intersect_curves(const curve_side sides[4], const vec2 in[4], const v
     return 1;
 }
 
-static NAPA_NOINLINE int confidence_quad(initial_capture *capture, const vec2 rough[4],
-                                         double reach, vec2 out[4]) {
+static NAPA_NOINLINE int confidence_quad(const initial_capture *capture, const vec2 rough[4],
+                                        double reach, vec2 out[4]) {
     if (capture->rejection_mask == 0) return 0;
-    double lx[4],ly[4],dx[4],dy[4];
-    for (int k=0;k<4;k++) {
-        int n=capture->count[k];
-        if(n<3 || n>6)return 0;
-        for(int i=0;i<n;i++) capture->weight[k][i]*=capture->weight[k][i];
-        if(!fit_side_line(capture->x[k],capture->y[k],capture->weight[k],n,reach,
-                         &lx[k],&ly[k],&dx[k],&dy[k]))return 0;
+    double lx[4], ly[4], dx[4], dy[4];
+    for (int k = 0; k < 4; k++) {
+        const int n = capture->count[k];
+        if (n < 3 || n > INITIAL_SIDE_POINTS) return 0;
+        double x[INITIAL_SIDE_POINTS], y[INITIAL_SIDE_POINTS], weight[INITIAL_SIDE_POINTS];
+        memcpy(x, capture->x[k], (size_t)n * sizeof *x);
+        memcpy(y, capture->y[k], (size_t)n * sizeof *y);
+        for (int i = 0; i < n; i++) weight[i] = capture->weight[k][i] * capture->weight[k][i];
+        if (!fit_side_line(x, y, weight, n, reach, &lx[k], &ly[k], &dx[k], &dy[k])) return 0;
     }
-    for(int k=0;k<4;k++) {
-        int p=(k+3)&3;
-        double cross=dx[p]*dy[k]-dy[p]*dx[k];
-        if(!(fabs(cross)>=0.2))return 0;
-        double t=((lx[k]-lx[p])*dy[k]-(ly[k]-ly[p])*dx[k])/cross;
-        out[k].x=lx[p]+t*dx[p];out[k].y=ly[p]+t*dy[p];
-        double move=fabs(out[k].x-rough[k].x)+fabs(out[k].y-rough[k].y);
-        if(!(move<=4.0*reach+2.0))return 0;
+    for (int k = 0; k < 4; k++) {
+        const int p = (k + 3) & 3;
+        const double cross = dx[p] * dy[k] - dy[p] * dx[k];
+        if (!(fabs(cross) >= 0.2)) return 0;
+        const double t = ((lx[k] - lx[p]) * dy[k] - (ly[k] - ly[p]) * dx[k]) / cross;
+        out[k].x = lx[p] + t * dx[p], out[k].y = ly[p] + t * dy[p];
+        const double move = fabs(out[k].x - rough[k].x) + fabs(out[k].y - rough[k].y);
+        if (!(move <= 4.0 * reach + 2.0)) return 0;
     }
     return 1;
 }
@@ -2698,23 +2735,29 @@ typedef struct {
     double x[4][NAPA_SIDE_SAMPLES], y[4][NAPA_SIDE_SAMPLES], w[4][NAPA_SIDE_SAMPLES];
 } side_samples;
 
-/* Weighted total-least-squares line through one side; returns the weighted squared residual. */
+/* Weighted total-least-squares line through one side's samples moved by the radial map o (1 + kappa |o|^2 / scale^2)
+ * about (cx, cy); returns the weighted squared residual in pixels. The map stretches a sample's offset from the line by
+ * |J n|, its Jacobian along the line's normal, so with kappa a second pass divides each weight by that squared, using
+ * the first pass's normal. Only a first-order measure: kappa must keep the map well clear of folding at the samples. */
 static double side_line(const double *x, const double *y, const double *w, int n, double kappa, double cx, double cy,
                         double scale, double *mx, double *my, double *dx, double *dy) {
-    double sw = 0, sx = 0, sy = 0, sxx = 0, sxy = 0, syy = 0;
-    for (int i = 0; i < n; i++) {
-        const double ox = x[i] - cx, oy = y[i] - cy, grow = 1 + kappa * (ox * ox + oy * oy) / (scale * scale);
-        const double px = ox * grow, py = oy * grow;
-        sw += w[i], sx += w[i] * px, sy += w[i] * py;
-        sxx += w[i] * px * px, sxy += w[i] * px * py, syy += w[i] * py * py;
+    double ax = 0, ay = 0, angle = 0, least = 0;
+    for (int pass = 0; pass < (kappa != 0 ? 2 : 1); pass++) {
+        const double nx = -sin(angle), ny = cos(angle);
+        double sw = 0, sx = 0, sy = 0, sxx = 0, sxy = 0, syy = 0;
+        for (int i = 0; i < n; i++) {
+            const double ox = x[i] - cx, oy = y[i] - cy, grow = 1 + kappa * (ox * ox + oy * oy) / (scale * scale);
+            const double px = ox * grow, py = oy * grow, along = 2 * kappa * (ox * nx + oy * ny) / (scale * scale);
+            const double jx = grow * nx + along * ox, jy = grow * ny + along * oy, v = pass ? w[i] / (jx * jx + jy * jy) : w[i];
+            sw += v, sx += v * px, sy += v * py;
+            sxx += v * px * px, sxy += v * px * py, syy += v * py * py;
+        }
+        ax = sx / sw, ay = sy / sw;
+        const double cxx = sxx - sw * ax * ax, cxy = sxy - sw * ax * ay, cyy = syy - sw * ay * ay;
+        const double spread = sqrt((cxx - cyy) * (cxx - cyy) + 4 * cxy * cxy);
+        least = 0.5 * (cxx + cyy - spread), angle = 0.5 * atan2(2 * cxy, cxx - cyy);
     }
-    const double ax = sx / sw, ay = sy / sw;
-    const double cxx = sxx - sw * ax * ax, cxy = sxy - sw * ax * ay, cyy = syy - sw * ay * ay;
-    const double spread = sqrt((cxx - cyy) * (cxx - cyy) + 4 * cxy * cxy), least = 0.5 * (cxx + cyy - spread);
-    if (mx != NULL) {
-        const double angle = 0.5 * atan2(2 * cxy, cxx - cyy);
-        *mx = ax + cx, *my = ay + cy, *dx = cos(angle), *dy = sin(angle);
-    }
+    if (mx != NULL) *mx = ax + cx, *my = ay + cy, *dx = cos(angle), *dy = sin(angle);
     return least > 0 ? least : 0;
 }
 
@@ -2747,7 +2790,8 @@ static int side_quadratic_residual(const double *x, const double *y, const doubl
 
 /* A side cut by the frame can't show its own bow near the cut, but a lens bends all four sides the same way. Find the
  * one radial term that straightens them together, about the image centre, and intersect the straightened sides. */
-static int shared_lens_quad(const image_view *im, side_samples *s, const int side_clear[4], vec2 out[4]) {
+static int shared_lens_quad(const image_view *im, side_samples *s, const int side_clear[4], const vec2 in[4], double reach,
+                            vec2 out[4]) {
     const double cx = 0.5 * im->w, cy = 0.5 * im->h, scale = 0.5 * (im->w > im->h ? im->w : im->h);
     double sse_quadratic = 0;
     for (int k = 0; k < 4; k++) {
@@ -2770,20 +2814,24 @@ static int shared_lens_quad(const image_view *im, side_samples *s, const int sid
         if (n < 6 || !side_quadratic_residual(s->x[k], s->y[k], s->w[k], n, &sse_quadratic)) return 0;
         s->n[k] = n;
     }
+    /* A lens maps the whole frame one to one, so 1 + 3 kappa r^2 > 0 out to its corners. */
     enum { STEPS = 41 };
+    const double corner2 = (cx * cx + cy * cy) / (scale * scale);
     double cost[STEPS];
     int best = 0;
     for (int g = 0; g < STEPS; g++) {
         const double kappa = -0.4 + 0.02 * g;
+        cost[g] = HUGE_VAL;
+        if (!(1 + 3 * kappa * corner2 > 0)) continue;
         cost[g] = 0;
         for (int k = 0; k < 4; k++) cost[g] += side_line(s->x[k], s->y[k], s->w[k], s->n[k], kappa, cx, cy, scale, NULL, NULL, NULL, NULL);
         if (cost[g] < cost[best]) best = g;
     }
+    /* A least cost at the end of the range, or at the fold, locates no lens: it may lie beyond. */
+    if (best == 0 || best == STEPS - 1 || !(cost[best - 1] < HUGE_VAL)) return 0;
+    const double curve = cost[best - 1] - 2 * cost[best] + cost[best + 1];
     double kappa = -0.4 + 0.02 * best;
-    if (best > 0 && best < STEPS - 1) {
-        const double curve = cost[best - 1] - 2 * cost[best] + cost[best + 1];
-        if (curve > 0) kappa += 0.5 * (cost[best - 1] - cost[best + 1]) / curve * 0.02;
-    }
+    if (curve > 0) kappa += 0.5 * (cost[best - 1] - cost[best + 1]) / curve * 0.02;
     double mx[4], my[4], dx[4], dy[4], sse = 0;
     for (int k = 0; k < 4; k++) sse += side_line(s->x[k], s->y[k], s->w[k], s->n[k], kappa, cx, cy, scale, &mx[k], &my[k], &dx[k], &dy[k]);
     /* Straight sides have nothing to gain, and a lens this model can't describe leaves the shared fit well behind. The
@@ -2794,21 +2842,28 @@ static int shared_lens_quad(const image_view *im, side_samples *s, const int sid
         clear_straight += side_line(s->x[k], s->y[k], s->w[k], s->n[k], 0, cx, cy, scale, NULL, NULL, NULL, NULL);
         clear_bent += side_line(s->x[k], s->y[k], s->w[k], s->n[k], kappa, cx, cy, scale, NULL, NULL, NULL, NULL);
     }
+    const int samples = s->n[0] + s->n[1] + s->n[2] + s->n[3];
     if (!(fabs(kappa) >= NAPA_LENS_MIN_KAPPA) || !(sse <= (1 - NAPA_LENS_MIN_GAIN) * cost[20]) || !(sse <= NAPA_LENS_MAX_EXCESS * sse_quadratic) ||
-        !(clear_straight > 0) || !(clear_bent <= (1 - NAPA_LENS_MIN_GAIN) * clear_straight)) return 0;
+        !((cost[20] - sse) * (samples - 9) >= NAPA_LENS_MIN_F * sse) || !(clear_straight > 0) ||
+        !(clear_bent <= (1 - NAPA_LENS_MIN_GAIN) * clear_straight)) return 0;
     for (int k = 0; k < 4; k++) {
         const int p = (k + 3) & 3;
         const double cross = dx[p] * dy[k] - dy[p] * dx[k];
         if (fabs(cross) < 0.2) return 0;
         const double t = ((mx[k] - mx[p]) * dy[k] - (my[k] - my[p]) * dx[k]) / cross;
-        const double qx = mx[p] + t * dx[p] - cx, qy = my[p] + t * dy[p] - cy;
-        double ox = qx, oy = qy;
-        for (int iter = 0; iter < 8; iter++) {
-            const double grow = 1 + kappa * (ox * ox + oy * oy) / (scale * scale);
-            ox = qx / grow, oy = qy / grow;
+        /* Back through the lens: Newton on r (1 + kappa r^2 / scale^2) = |q| from r = |q| approaches the root from one
+         * side while the map stays one to one; a corner past the fold has no preimage. */
+        const double qx = mx[p] + t * dx[p] - cx, qy = my[p] + t * dy[p] - cy, rq = hypot(qx, qy);
+        double r = rq, step = HUGE_VAL;
+        for (int iter = 0; iter < 30 && !(fabs(step) <= 1e-9 * (1 + rq)); iter++) {
+            const double slope = 1 + 3 * kappa * r * r / (scale * scale);
+            if (!(slope > 0)) return 0;
+            step = (r * (1 + kappa * r * r / (scale * scale)) - rq) / slope, r -= step;
         }
-        out[k].x = ox + cx, out[k].y = oy + cy;
-        if (!isfinite(out[k].x) || !isfinite(out[k].y)) return 0;
+        if (!(fabs(step) <= 1e-9 * (1 + rq)) || !(1 + 3 * kappa * r * r / (scale * scale) > 0)) return 0;
+        const double ratio = rq > 0 ? r / rq : 1;
+        out[k].x = cx + qx * ratio, out[k].y = cy + qy * ratio;
+        if (!(fabs(out[k].x - in[k].x) + fabs(out[k].y - in[k].y) <= 4.0 * reach + 2.0)) return 0;
     }
     return 1;
 }
@@ -3206,7 +3261,6 @@ static NAPA_NOINLINE void lens_profiles(const lens_side *ls, vec2 a, vec2 b, dou
     }
 }
 
-static inline double fade(double x, double lo, double hi);
 /* Nearest falling midpoint crossing; equal distances retain the first crossing. */
 static double nearest_midpoint_crossing(const int64_t *prof, int K, int jl, int jr, double mid, double center) {
     double best_c = -1, best_d = 1e9;
@@ -3218,6 +3272,35 @@ static double nearest_midpoint_crossing(const int64_t *prof, int K, int jl, int 
     return best_c;
 }
 
+/* Rank falling two-plateau fits of an initial profile by their reduction
+ * in squared residuals: n_left*n_right/K * (white-black)^2. This ranks
+ * splits; it does not certify a dark landing. A sharp sampled step's
+ * central difference equals its plateau amplitude, so the existing
+ * gradient-strength gate applies to the fitted amplitude too. The original
+ * gradient-lobe centroid still supplies the subpixel location. */
+static int initial_plateau_peak(const int64_t *prof, const int64_t *g, int K, double min_drop) {
+    int64_t total = 0, left = 0;
+    for (int j = 0; j < K; j++) total += prof[j];
+    double best_score = 0;
+    int split = -1;
+    for (int j = 1; j < K; j++) {
+        left += prof[j - 1];
+        double product = (double)j * (K - j);
+        double drop = (double)left * (K - j) - (double)(total - left) * j;
+        if (drop <= 0 || drop < min_drop * product) continue;
+        double score = drop * drop / product;
+        if (score > best_score) best_score = score, split = j;
+    }
+    if (split < 0) return -1;
+    int peak = split - 1;
+    if (peak < 1) peak = 1;
+    if (split > 1 && peak < K - 2 && g[peak + 1] > g[peak]) peak++;
+    return peak;
+}
+
+/* Fit each side to the outer border edge searched from r_out outside to r_in inside the given quad. Sides taken
+ * from the frame edge instead are added to *frame_sides (bit k: side k, from in[k] to in[k + 1]); with frame_sides
+ * NULL, a side with no edge fails the fit. */
 static NAPA_FORCE_INLINE int fit_sides_impl(const image_view *im, const vec2 in[4], vec2 out[4], double r_out, double r_in, int min_edge,
                      int outermost, int max_points, double *edge_width, edge_levels *levels, double cells, vec2 alternate[4], vec2 curved[4], vec2 est_lens[4], int *est_ok, double *width_ratio, initial_capture *capture, int *frame_sides) {
     const uint8_t *img = im->p;
@@ -3350,18 +3433,9 @@ retake:
                     bj = j;
                 }
             }
-            /* The outer border is the first step met going inward that lands on the darkest level:
-             * payload cells further in produce equally strong steps (so prefer the outermost), and a
-             * background brighter than the tag's white margin produces an outer step that lands only
-             * on the margin's grey (so require a dark landing). */
-            if (outermost && bj >= 0) {
-                for (int j = 1; j < K - 1; j++) {
-                    if (5 * g[j] >= 3 * best && (j == K - 2 || g[j] >= g[j + 1])) {
-                        bj = j;
-                        best = g[j];
-                        break;
-                    }
-                }
+            if (outermost) {
+                bj = initial_plateau_peak(prof, g, K, min_g);
+                if (bj >= 0) best = g[bj];
             }
             /* Normalise by the derivative span so the strength test is independent of the step. */
             if (bj < 0 || (double)best < min_g) continue;
@@ -3492,7 +3566,7 @@ retake:
             memcpy(samples.w[k], wt, (size_t)good * sizeof(double));
         }
         if (capture != NULL) {
-            if (good > 6) return 0;
+            if (good > INITIAL_SIDE_POINTS) return 0;
             capture->count[k]=good;
             for (int i = 0; i < good; i++) {
                 capture->x[k][i] = px[i];
@@ -3577,7 +3651,7 @@ retake:
             near_frame |= !corner_clear[k];
         }
         for (int k = 0; k < 4; k++) side_clear[k] = corner_clear[k] && corner_clear[(k + 1) & 3];
-        *est_ok = near_frame && shared_lens_quad(im, &samples, side_clear, est_lens);
+        *est_ok = near_frame && shared_lens_quad(im, &samples, side_clear, in, reach, est_lens);
     }
     return 1;
 }
@@ -3598,7 +3672,8 @@ static int fit_initial_captured(const image_view *im, const vec2 in[4], vec2 out
         double x = in[(k + 1) & 3].x - in[k].x, y = in[(k + 1) & 3].y - in[k].y;
         if (x * x + y * y < 36.0) return 0;
     }
-    return fit_sides_impl(im,in,out,r_out,r_in,min_edge,1,6,width,NULL,cells,NULL,NULL,NULL,NULL,NULL,capture, frame_sides);
+    return fit_sides_impl(im, in, out, r_out, r_in, min_edge, 1, INITIAL_SIDE_POINTS, width, NULL, cells,
+                          NULL, NULL, NULL, NULL, NULL, capture, frame_sides);
 }
 
 /* fit_sides with the alternatives the final fit weighs. est_lens / est_ok: near the frame and without a calibrated
@@ -3661,7 +3736,6 @@ static inline vec2 project(const double H[9], double u, double v) {
     return p;
 }
 
-/* Median of v[0..n) for even n (the mean of the two middle values), by quickselect. Reorders v. */
 /* Project/sample two points with the scalar operation order and NaN-safe clamps.
  * All families, including inverted families, retain the same floating-point values. */
 static void sample_points_impl(const image_view *im, const double H[9], double *u, double *v, int n,
@@ -3863,13 +3937,42 @@ static double lobe_centroid(const double *prof, int from, int to, int falling) {
     return sj / sg;
 }
 
+enum { BORDER_PROFILE_SAMPLES = 33 };
+
+/* Position along a side and depth inward, in cells; side 0 is the top (v = 0). */
+static vec2 border_uv(double cells, int side, int c, double depth) {
+    double t = depth / cells, a = (c + 0.5) / cells;
+    vec2 uv = {side == 0 ? a : side == 1 ? 1 - t : side == 2 ? a : t,
+               side == 0 ? t : side == 1 ? a : side == 2 ? 1 - t : a};
+    return uv;
+}
+
+/* Sample from half a cell outside the outline to the payload centre. Skip dark payloads before
+ * gathering the rest of the profile: they cannot measure the border's inner edge. */
+static int border_profile(const image_view *im, const quad_map *M, double cells, int side, int c, double mid,
+                          double prof[BORDER_PROFILE_SAMPLES], vec2 pts[BORDER_PROFILE_SAMPLES]) {
+    enum { N = BORDER_PROFILE_SAMPLES };
+    vec2 uv = border_uv(cells, side, c, 1.5), pc = quad_point(M, uv.x, uv.y);
+    double payload = sample_bilinear(im, pc.x, pc.y);
+    if (payload < mid) return 0;
+    double us[N - 1], vs[N - 1];
+    for (int j = 0; j < N - 1; j++) {
+        uv = border_uv(cells, side, c, -0.5 + 2.0 * j / (N - 1));
+        us[j] = uv.x; vs[j] = uv.y;
+    }
+    quad_sample_line(im, M, us, vs, N - 1, prof, pts);
+    pts[N - 1] = pc;
+    prof[N - 1] = payload;
+    return 1;
+}
+
 /* Clipping (or any symmetric edge bias) shrinks every black region by delta: the outline by delta
  * per side and the one-cell border by 2 * delta. Measuring the border's width where a white payload
  * cell lies inside it gives delta = (cell - width) / 1.75 against the measured outline. Returns the
  * number of border measurements averaged into *delta. */
 static int border_bias(const family_layout *L, const image_view *im, const vec2 q[4], double black, double white,
                        double *delta, double *disagreement) {
-    enum { N = 33 };
+    enum { N = BORDER_PROFILE_SAMPLES };
     double cell_d[NAPA_BORDER_CELLS_MAX], mean_cell = 0;
     unsigned char cell_side[NAPA_BORDER_CELLS_MAX];
     quad_map M;
@@ -3885,27 +3988,9 @@ static int border_bias(const family_layout *L, const image_view *im, const vec2 
         double side_len = hypot(nx, ny);
         nx /= side_len; ny /= side_len;
         for (int c = 1; c < L->width - 1; c++) {
-            /* (a, t): position along the side and depth inward, in cells; side 0 is the top (v = 0). */
-            double a = c + 0.5;
-#define UNIT(t, uu, vv)                                                                                      \
-    do {                                                                                                     \
-        double t_ = (t) / L->cells, a_ = a / L->cells;                                                       \
-        uu = side == 0 ? a_ : side == 1 ? 1 - t_ : side == 2 ? a_ : t_;                                      \
-        vv = side == 0 ? t_ : side == 1 ? a_ : side == 2 ? 1 - t_ : a_;                                      \
-    } while (0)
-            double u, v;
-            UNIT(1.5, u, v);
-            vec2 pc = quad_point(&M, u, v);
-            double payload = sample_bilinear(im, pc.x, pc.y);
-            if (payload < mid) continue; /* dark payload cell */
-            double prof[N], us[N - 1], vs[N - 1];
+            double prof[N];
             vec2 pts[N];
-            for (int j = 0; j < N - 1; j++) {
-                UNIT(-0.5 + 2.0 * j / (N - 1), us[j], vs[j]);
-            }
-            quad_sample_line(im, &M, us, vs, N - 1, prof, pts);
-            pts[N - 1] = pc;
-            prof[N - 1] = payload;
+            if (!border_profile(im, &M, L->cells, side, c, mid, prof, pts)) continue;
             /* Outer edge within half a cell of t = 0, inner edge within half a cell of t = 1. */
             double jo = lobe_centroid(prof, 1, N / 2 - 1, 1), ji = lobe_centroid(prof, N / 2 + 1, N - 2, 0);
             if (jo < 0 || ji < 0) continue;
@@ -3918,7 +4003,6 @@ static int border_bias(const family_layout *L, const image_view *im, const vec2 
             double d = (cell_px - width_px) / 1.75;
             if (n < NAPA_BORDER_CELLS_MAX) cell_d[n] = d, cell_side[n] = (unsigned char)side;
             n++;
-#undef UNIT
         }
     }
     if (!n) return 0;
@@ -4054,9 +4138,6 @@ static int payload_bias(const family_layout *L, const image_view *im, const vec2
     return n[0] + n[1];
 }
 
-/* Where a strongly curved tag touches a neighbour at a corner (an X-corner on a board seen through a wide
- * lens), lines fitted along the whole side miss the corner. Gradients around an X-corner point at it, so
- * solve for the spot every nearby gradient is orthogonal to the offset from. Returns 1 on convergence. */
 /* Where the dark-to-light edge crosses half level on a short ray through (x, y), as signed distance along the ray. */
 static int edge_crossing(const image_view *view, double x, double y, double nx, double ny, double *offset) {
     enum { N = 13 };
@@ -4200,6 +4281,10 @@ static int refit_corner(const image_view *view, const vec2 c, const corner_sides
     return 1;
 }
 
+/* Where a strongly curved tag touches a neighbour at a corner (an X-corner on a board seen through a wide
+ * lens), lines fitted along the whole side miss the corner. Gradients around an X-corner point at it, so
+ * solve for the spot every nearby gradient is orthogonal to the offset from. Returns 1 for a nonsingular fit
+ * that stays within the search window. */
 static int refine_x_corner(const image_view *view, double *x, double *y) {
     enum { WINDOW = 3 };
     const double start_x = *x, start_y = *y;
@@ -5556,6 +5641,7 @@ static int tone_sides_visible(const image_view *view, const vec2 q[4], tone_meas
 }
 
 /* Measure a decoded tag's blur along each axis and its tone curve, or 0 if it's too small, sharp or straight-toned to matter.
+ * Returns -2 on allocation failure.
  * Size correction alone needs every side's whole edge, which is cheaper to check before the search; alignment doesn't. */
 static int tone_measure_tag(napa_detector *det, const image_view *view, const napa_detection *d, double edge_width, int aligning, tone_measure *m) {
     vec2 q[4];
@@ -5564,7 +5650,7 @@ static int tone_measure_tag(napa_detector *det, const image_view *view, const na
     for (int k = 0; k < 4; k++) m->mean_side += 0.25 * hypot(q[(k + 1) & 3].x - q[k].x, q[(k + 1) & 3].y - q[k].y);
     if (m->mean_side < NAPA_TONE_MIN_SIDE || edge_width < NAPA_TONE_MIN_EDGE_CELLS * m->mean_side / 8 || signed_area(q) <= 0) return 0;
     if (strcmp(det->fam.f->name, "tag36h11") != 0) return 0;
-    if (!tone_prepare(det)) return 0;
+    if (!tone_prepare(det)) return -2;
     const family_layout *L = &det->fam;
     float y[NAPA_SOFT_AREA];
     for (int r = 0; r < 10; r++) for (int c = 0; c < 10; c++) m->cells[r][c] = (r == 0 || r == 9 || c == 0 || c == 9) ? 1.0f : -1.0f;
@@ -5783,7 +5869,8 @@ static int halve_frame(napa_detector *det, const uint8_t *img, int width, int he
  * pixel keeps the border whole. So when a small candidate's code doesn't read, regrow it at full resolution: threshold
  * a window around it at the window's own midpoint, follow the dark pixels connected to the fragment, and take that
  * component's extremes along the 16 directions. Returns 0 when it can't: no contrast, no dark pixel at the fragment,
- * or a component reaching the window's edge (merged with its surroundings, which a tag's quiet zone prevents). */
+ * or a component reaching the window's edge (merged with its surroundings, which a tag's quiet zone prevents).
+ * Returns -2 on allocation failure. */
 #define NAPA_REGROW_MAX_PX 28.0 /* the largest candidate regrown, in pixels: bigger tags keep their border at the finest level */
 #define NAPA_REGROW_WINDOW 128  /* the largest window side */
 /* Regrowths a pass may make. A frame needs a few to a few dozen; a 4K frame of tiny unreadable shapes can raise
@@ -5800,7 +5887,7 @@ static int regrow_small(napa_detector *det, const image_view *view, const vec2 r
         if (det->regrow_stack == NULL || det->regrow_mark == NULL) {
             free(det->regrow_stack), free(det->regrow_mark);
             det->regrow_stack = NULL, det->regrow_mark = NULL;
-            return 0;
+            return -2;
         }
     }
     double cx = 0, cy = 0;
@@ -6280,7 +6367,7 @@ static void select_curve_geometry(napa_detector *det, const image_view *rview, c
     }
 }
 
-static void polish_decoded_corners(napa_detector *det, const image_view *rview, const decode_policy *policy,
+static int polish_decoded_corners(napa_detector *det, const image_view *rview, const decode_policy *policy,
                                     refined_quad *q, border_correction *c) {
     const int W = det->fam.width;
     if (!q->cut) {
@@ -6350,7 +6437,9 @@ static void polish_decoded_corners(napa_detector *det, const image_view *rview, 
     }
     if (!q->cut) {
         tone_measure tone;
-        if (tone_measure_tag(det, rview, &q->d, det->align_corners ? q->side_widths_seen[1] : q->edge_w, det->align_corners, &tone)) {
+        int measured = tone_measure_tag(det, rview, &q->d, det->align_corners ? q->side_widths_seen[1] : q->edge_w, det->align_corners, &tone);
+        if (measured < 0) return -2;
+        if (measured) {
             vec2 sized[4], aligned[4];
             napa_detection redone;
             if (tone_corrected_quad(&q->d, &tone, sized) &&
@@ -6361,10 +6450,12 @@ static void polish_decoded_corners(napa_detector *det, const image_view *rview, 
                 redone.id == q->d.id && redone.hamming <= q->d.hamming) q->d = redone;
         }
     }
+    return 0;
 }
 
 typedef enum {
-    REFINE_ACCEPTED,
+    REFINE_NO_MEMORY = -2,
+    REFINE_ACCEPTED = 0,
     REFINE_FIT_FAILED,
     REFINE_DECODE_FAILED,
     REFINE_CUT_FAILED
@@ -6412,8 +6503,9 @@ refine_candidate:
             free(det->linear_frame);
             det->linear_frame = (uint8_t *)calloc((size_t)width * height, 1);
             det->linear_capacity = det->linear_frame != NULL ? (size_t)width * height : 0;
+            if (det->linear_frame == NULL) return REFINE_NO_MEMORY;
         }
-        if (det->linear_frame != NULL && ix1 > ix0 && iy1 > iy0) {
+        if (ix1 > ix0 && iy1 > iy0) {
             for (int y = iy0; y <= iy1; y++) {
                 const uint8_t *src = img + (size_t)y * stride;
                 uint8_t *dst = det->linear_frame + (size_t)y * width;
@@ -6514,7 +6606,7 @@ refine_candidate:
     border_correction correction;
     correct_border_geometry(det, rview, policy, &q, &correction);
     select_curve_geometry(det, rview, policy, &q, &correction);
-    polish_decoded_corners(det, rview, policy, &q, &correction);
+    if (polish_decoded_corners(det, rview, policy, &q, &correction) < 0) return REFINE_NO_MEMORY;
     *result_view = *rview;
     *result = q.d;
     return REFINE_ACCEPTED;
@@ -6539,6 +6631,7 @@ typedef struct {
 typedef struct {
     const uint8_t *gray;
     int prev_lw, floor_stride, contrast;
+    int boxed; /* some level so far was replaced by box averages, so every later one samples them */
 } level_sampling;
 
 typedef struct {
@@ -6588,7 +6681,6 @@ static int sample_threshold_level(napa_detector *det, const pass_config *config,
     }
     sampling->prev_lw = level->lw;
     PROF_MARK(PROF_RAKE);
-    int boxed = 0;
     if (level->s == base || (base == 1 && level->s == 2 && sampling->contrast > NAPA_NOISY_FLOOR)) {
         /* Do not blur stride-one proposals: a tiny border can be just one pixel wide. Its
          * higher floor suppresses raw noise; the next averaged level restores low contrast.
@@ -6609,7 +6701,7 @@ static int sample_threshold_level(napa_detector *det, const pass_config *config,
                 det->box_rows = p;
                 det->box_capacity = (size_t)pw;
             }
-            boxed = 1;
+            sampling->boxed = 1;
             box_rake(det->level, level->lw, level->lh, pimg, pw, ph, pstride, level->s, base == 1 && level->s == 2 ? 3 : level->s, det->box_rows, det->box_rows + pw);
             if (view.invert) invert_bytes(det->level, pixels);
             /* Stride-two 3x3 means share one column: their difference measures sqrt(2/3)
@@ -6625,22 +6717,26 @@ static int sample_threshold_level(napa_detector *det, const pass_config *config,
         : 0;
 
     det->level_view = sampling->gray == det->level ? NULL : sampling->gray;
-    /* Keyed by sampling step: the passes can start from different steps. */
-    const int level_index = level->s < 32 ? level->s : 32;
+    /* Keyed by sampling step: the passes can start from different steps. On one frame, with one contrast setting, a
+     * step holds the same samples in two passes that started from the same step (every boxing decision repeats), or
+     * in two that never box-averaged (both took every s-th pixel). Otherwise one may hold averages the other doesn't. */
+    saved_extrema *saved = level->s < 32 ? &det->saved[level->s] : NULL;
+    const int reuse = saved != NULL && saved->valid && (saved->base == base || (!saved->boxed && !sampling->boxed)) &&
+        ((shadow && det->extrema_ready) || (!shadow && level->redo && det->extrema_wanted));
+    det->level_extrema_in = reuse ? saved->tiles : NULL;
     det->level_extrema_out = NULL;
-    det->level_extrema_in = ((shadow && det->extrema_ready) || (!shadow && level->redo && det->extrema_wanted)) && level_index < 32 && det->saved_valid[level_index] && !boxed && !det->saved_boxed[level_index] ? det->saved_extrema[level_index] : NULL;
-    if (det->extrema_wanted && !det->level_extrema_in && level_index < 32) {
-        if (2 * tiles > det->saved_extrema_capacity[level_index]) {
-            uint8_t *p = (uint8_t *)realloc(det->saved_extrema[level_index], 2 * tiles);
+    if (det->extrema_wanted && !reuse && saved != NULL) {
+        if (2 * tiles > saved->capacity) {
+            uint8_t *p = (uint8_t *)realloc(saved->tiles, 2 * tiles);
             if (p == NULL) return -2;
-            det->saved_extrema[level_index] = p;
-            det->saved_extrema_capacity[level_index] = 2 * tiles;
+            saved->tiles = p;
+            saved->capacity = 2 * tiles;
         }
-        det->level_extrema_out = det->saved_extrema[level_index];
-        det->saved_boxed[level_index] = boxed;
+        saved->base = base, saved->boxed = sampling->boxed, saved->valid = 0;
+        det->level_extrema_out = saved->tiles;
     }
     level->nruns = threshold_level(det, level->lw, level->lh, level->s / sampling->floor_stride, split ? 1 + outputs->necks : 0, shadow);
-    if (level->nruns >= 0 && det->level_extrema_out) det->saved_valid[level_index] = 1;
+    if (level->nruns >= 0 && det->level_extrema_out) saved->valid = 1;
     det->level_view = NULL; /* clear even on threshold allocation failure */
     det->level_extrema_out = NULL, det->level_extrema_in = NULL;
     if (level->nruns < 0) return -2;
@@ -6811,11 +6907,11 @@ static int assemble_level_candidates(napa_detector *det, const pass_config *conf
     if (!paired) for (int ci = 0; ci < level->ncand; ci++) comp_flush_row(&det->cands[ci]);
     /* All row extrema are complete. Candidates now carry rejection stages and piece counts. */
     for (int ci = 0; ci < level->ncand; ci++) {
-        det->cands[ci].work.candidate.fate = 0;
+        det->cands[ci].work.candidate.fate = CANDIDATE_UNTRIED;
         det->cands[ci].work.candidate.piece_count = 0;
     }
     for (int k = 0; k < level->npieces; k++) {
-        det->pieces[k].work.candidate.fate = 0;
+        det->pieces[k].work.candidate.fate = CANDIDATE_UNTRIED;
         if (det->piece_cand[k] >= 0) det->cands[det->piece_cand[k]].work.candidate.piece_count++;
     }
     if (level->redo && outputs->fate_off + (size_t)level->ncand + (size_t)(level->npieces - level->fine) <= outputs->fates_kept) {
@@ -6825,6 +6921,23 @@ static int assemble_level_candidates(napa_detector *det, const pass_config *conf
     }
     PROF_MARK(PROF_BLOBS);
     return 0;
+}
+
+/* Regrowth uses full-resolution extrema and its own fixed fit window, without confidence samples. */
+static int regrow_and_fit(napa_detector *det, const image_view *view, const napa_params *params,
+                          const vec2 rough[4], double extent, vec2 fitted[4], double *edge_width) {
+    component grown;
+    int ox = 0, oy = 0;
+    int status = regrow_small(det, view, rough, extent, params->min_contrast, &grown, &ox, &oy);
+    if (status <= 0) return status;
+    if (grown.maxx - grown.minx + 1 < 8 || grown.maxy - grown.miny + 1 < 8) return 0;
+    int pick[4][2];
+    vec2 quad[4];
+    rough_pick(&grown, 0, pick);
+    for (int k = 0; k < 4; k++) quad[k].x = pick[k][0] + ox, quad[k].y = pick[k][1] + oy;
+    *edge_width = 0;
+    return fit_initial_captured(view, quad, fitted, 2.5, 1.5, params->min_contrast, edge_width,
+                                det->fam.cells, NULL, NULL);
 }
 
 static int decode_initial_candidate(napa_detector *det, const image_view *view, const napa_params *params,
@@ -6844,21 +6957,14 @@ static int decode_initial_candidate(napa_detector *det, const image_view *view, 
     /* A small candidate may be a fragment of a tag sampled every other pixel (or row): regrow it at full
      * resolution, fit that, and read again. */
     if (regrow_extent > 0) {
-        component grown;
-        int ox = 0, oy = 0;
-        if (regrow_small(det, view, rough, regrow_extent, params->min_contrast, &grown, &ox, &oy) &&
-            grown.maxx - grown.minx + 1 >= 8 && grown.maxy - grown.miny + 1 >= 8) {
-            int gp[4][2];
-            rough_pick(&grown, 0, gp);
-            vec2 gq[4];
-            double grown_w = 0;
-            for (int k = 0; k < 4; k++) gq[k].x = gp[k][0] + ox, gq[k].y = gp[k][1] + oy;
-            if (fit_initial_captured(view, gq, finer, 2.5, 1.5, params->min_contrast, &grown_w, cells, NULL, NULL)) {
-                memcpy(probe, finer, sizeof probe);
-                if (decode_quad(det, view, probe, decode_params, 2, &fit->early, NULL, &fit->lv, NULL)) {
-                    memcpy(fit->fine, finer, sizeof fit->fine);
-                    fit->edge_w = grown_w, fit->reach = 2.0, rescued = 1, fit->frame_sides = 0;
-                }
+        double grown_width;
+        int regrown = regrow_and_fit(det, view, params, rough, regrow_extent, finer, &grown_width);
+        if (regrown < 0) return -2;
+        if (regrown) {
+            memcpy(probe, finer, sizeof probe);
+            if (decode_quad(det, view, probe, decode_params, 2, &fit->early, NULL, &fit->lv, NULL)) {
+                memcpy(fit->fine, finer, sizeof fit->fine);
+                fit->edge_w = grown_width, fit->reach = 2.0, rescued = 1, fit->frame_sides = 0;
             }
         }
     }
@@ -6940,8 +7046,8 @@ static int process_level_candidates(napa_detector *det, const pass_config *confi
         const int coverage_start = delayed ? 0 : covered_prefix;
         /* Corner-stage pieces first: a tag kept whole there is found as without necks. */
         int k = piece ? (ci - ncand < npieces - fine ? fine + ci - ncand : ci - ncand - (npieces - fine)) : 0;
-        /* Redone levels decode only the pieces not tried before (whose fate is 1). */
-        if (!delayed && redo && (!piece || (k >= fine && det->pieces[k].work.candidate.fate != 1))) continue;
+        /* Redone levels decode only the pieces deferred until neck splitting. */
+        if (!delayed && redo && (!piece || (k >= fine && det->pieces[k].work.candidate.fate != CANDIDATE_WAITING_FOR_NECKS))) continue;
         /* These locals are shared with the predecoded confidence entry below. Every
          * value read after refine_candidate is assigned on both incoming paths. */
         int confidence_fate;
@@ -7001,10 +7107,10 @@ static int process_level_candidates(napa_detector *det, const pass_config *confi
                 if (outputs->fine_whole_count > (size_t)(INT32_MAX - ordinary_count)) return -2;
                 candidate_count = ordinary_count + (int)outputs->fine_whole_count;
             }
-            *candidate_fate = 6; /* deferred wholes must not control split-piece eligibility */
+            *candidate_fate = CANDIDATE_ROUGH_REJECTED; /* deferred wholes must not control split-piece eligibility */
             continue;
         }
-        *candidate_fate = 5;
+        *candidate_fate = CANDIDATE_SKIPPED;
         if (piece) {
             /* A blob or larger piece that failed its rough quad or its refinement, or decoded, never
              * held another tag in its pieces; at stride one, nor did any candidate blob (only tiny
@@ -7012,19 +7118,19 @@ static int process_level_candidates(napa_detector *det, const pass_config *confi
             int next = det->piece_next[k];
             const component *whole = next >= ncand ? &det->pieces[next - ncand]
                                      : det->piece_cand[k] >= 0 ? &det->cands[det->piece_cand[k]] : NULL;
-            int fate = whole ? whole->work.candidate.fate : 0;
+            int fate = whole ? whole->work.candidate.fate : CANDIDATE_UNTRIED;
             if (det->piece_cand[k] >= 0 && s == 1) continue;
             /* Until tags are seen touching, a piece that is nearly all of its blob, and its blob's only
              * piece, waits when the blob failed its first fit: it fails the same way. (A tag touching a
              * bar or a board is a small part of its blob.) Untried, it is decoded if the level is redone. */
             const component *blob = det->piece_cand[k] >= 0 ? &det->cands[det->piece_cand[k]] : NULL;
-            if (!outputs->necks && blob && fate == 7 && blob->work.candidate.piece_count == 1 &&
+            if (!outputs->necks && blob && fate == CANDIDATE_FIT_FAILED && blob->work.candidate.piece_count == 1 &&
                 5 * (comp.maxx - comp.minx + 1) * (comp.maxy - comp.miny + 1) >=
                     4 * (blob->maxx - blob->minx + 1) * (blob->maxy - blob->miny + 1)) {
-                *candidate_fate = 1;
+                *candidate_fate = CANDIDATE_WAITING_FOR_NECKS;
                 continue;
             }
-            if (fate == 6 || fate >= 9) {
+            if (suppresses_pieces(fate)) {
                 *candidate_fate = whole->work.candidate.fate; /* its own pieces share the fate */
                 continue;
             }
@@ -7042,7 +7148,7 @@ static int process_level_candidates(napa_detector *det, const pass_config *confi
                      ccx, ccy, 0.3 * big_px + 2.0)) ||
             (piece && covered_footprint(det->piece_out, det->piece_centers, outputs->piece_found, ccx, ccy, 0.3 * big_px + 2.0))) {
             TRACE(5);
-            *candidate_fate = 5;
+            *candidate_fate = CANDIDATE_SKIPPED;
             continue;
         }
         const cand_memo *mm = memo_level && !piece && !delayed ? &det->memo[ci] : NULL;
@@ -7056,7 +7162,7 @@ static int process_level_candidates(napa_detector *det, const pass_config *confi
         if (rough_quad_too_full(&det->fam, &comp, pick, &best_area, &perim_q)) {
             PROF_MARK(PROF_QUAD);
             TRACE(6);
-            *candidate_fate = 6;
+            *candidate_fate = CANDIDATE_ROUGH_REJECTED;
             continue;
         }
         /* The axis-aligned box grows when a thin tag rotates. Sparse or slender whole
@@ -7069,13 +7175,13 @@ static int process_level_candidates(napa_detector *det, const pass_config *confi
             (81.0 * best_area < 2.0 * perim_q * perim_q || comp.count < 0.2 * best_area))) {
             PROF_MARK(PROF_QUAD);
             TRACE(6);
-            *candidate_fate = 6;
+            *candidate_fate = CANDIDATE_ROUGH_REJECTED;
             continue;
         }
         if (extended_shape) {
-            /* Extended wholes retain rough-rejection fate 6 so their additional fitting
+            /* Extended wholes retain rough rejection so their additional fitting
              * does not change split-piece eligibility. */
-            *candidate_fate = 6;
+            *candidate_fate = CANDIDATE_ROUGH_REJECTED;
             if (covered_footprint(det->shape_out, det->shape_centers, outputs->shape_found,
                                   ccx, ccy, 0.3 * big_px + 2.0)) continue;
         }
@@ -7107,7 +7213,7 @@ static int process_level_candidates(napa_detector *det, const pass_config *confi
             if (!pass) {
                 PROF_MARK(PROF_FIT1);
                 TRACE(7);
-                *candidate_fate = extended_shape ? 6 : 7;
+                *candidate_fate = extended_shape ? CANDIDATE_ROUGH_REJECTED : CANDIDATE_FIT_FAILED;
                 continue;
             }
         }
@@ -7152,23 +7258,14 @@ static int process_level_candidates(napa_detector *det, const pass_config *confi
          * fit captured no samples for confidence_quad, which also works from the fragment's rough quad. */
         int regrown = 0;
         if (!first_fit && !shadow && !piece && (base >= 2 || shaped) && s == base && big_px + s <= NAPA_REGROW_MAX_PX) {
-            component grown;
-            int ox = 0, oy = 0;
-            if (regrow_small(det, &view, rough, big_px + s, params->min_contrast, &grown, &ox, &oy) &&
-                grown.maxx - grown.minx + 1 >= 8 && grown.maxy - grown.miny + 1 >= 8) {
-                int gp[4][2];
-                rough_pick(&grown, 0, gp);
-                vec2 gq[4];
-                for (int k = 0; k < 4; k++) gq[k].x = gp[k][0] + ox, gq[k].y = gp[k][1] + oy;
-                fit.edge_w = 0;
-                if (fit_initial_captured(&view, gq, fit.fine, 2.5, 1.5, params->min_contrast, &fit.edge_w, cells, NULL, NULL))
-                    first_fit = 1, fit.reach = 2.0, regrown = 1, fit.frame_sides = 0;
-            }
+            regrown = regrow_and_fit(det, &view, params, rough, big_px + s, fit.fine, &fit.edge_w);
+            if (regrown < 0) return -2;
+            if (regrown) first_fit = 1, fit.reach = 2.0, fit.frame_sides = 0;
         }
         if (!first_fit) {
             PROF_MARK(PROF_FIT1);
             TRACE(7);
-            *candidate_fate = extended_shape ? 6 : 7;
+            *candidate_fate = extended_shape ? CANDIDATE_ROUGH_REJECTED : CANDIDATE_FIT_FAILED;
             continue;
         }
         const double initial_width = fit.edge_w;
@@ -7182,15 +7279,17 @@ static int process_level_candidates(napa_detector *det, const pass_config *confi
         if (failed_before(det, fit.fine, s, 0.3)) {
             PROF_MARK(PROF_DECODE1);
             TRACE(8);
-            *candidate_fate = extended_shape ? 6 : 8;
+            *candidate_fate = extended_shape ? CANDIDATE_ROUGH_REJECTED : CANDIDATE_DECODE_FAILED;
             continue;
         }
         const double regrow_extent = !regrown && !shadow && !piece && (base >= 2 || shaped) &&
             s == base && big_px + s <= NAPA_REGROW_MAX_PX ? big_px + s : 0;
-        if (!decode_initial_candidate(det, &view, params, decode_params, &fit, rough, regrow_extent)) {
+        int decoded = decode_initial_candidate(det, &view, params, decode_params, &fit, rough, regrow_extent);
+        if (decoded < 0) return -2;
+        if (!decoded) {
             PROF_MARK(PROF_DECODE1);
             TRACE(8);
-            *candidate_fate = extended_shape ? 6 : 8;
+            *candidate_fate = extended_shape ? CANDIDATE_ROUGH_REJECTED : CANDIDATE_DECODE_FAILED;
             /* Pieces only read the list. A stricter border failure also cannot prove
              * that an ordinary proposal at another level will fail the caller's check. */
             if (!piece && !extended_shape && decode_params == params) remember_failure(det, fit.fine, s);
@@ -7224,10 +7323,11 @@ static int process_level_candidates(napa_detector *det, const pass_config *confi
         decode_policy policy = {params, decode_params, shadow, piece, confidence, require_exact};
         napa_detection d;
         refinement_result rejected = refine_decoded_candidate(det, &view, &policy, &fit, &d, &lin_view, timer);
+        if (rejected == REFINE_NO_MEMORY) return -2;
         if (rejected) {
-            int fate = rejected == REFINE_FIT_FAILED ? 9 : 10;
+            int fate = rejected == REFINE_FIT_FAILED ? CANDIDATE_REFINE_FIT_FAILED : CANDIDATE_REFINE_DECODE_FAILED;
             TRACE(fate);
-            if (rejected != REFINE_CUT_FAILED) *candidate_fate = extended_shape ? 6 : fate;
+            if (rejected != REFINE_CUT_FAILED) *candidate_fate = extended_shape ? CANDIDATE_ROUGH_REJECTED : fate;
             continue;
         }
         rview = &lin_view;
@@ -7241,7 +7341,7 @@ static int process_level_candidates(napa_detector *det, const pass_config *confi
         if (piece) {
             /* Pieces are many and mostly not tags: correct fewer bits (in tag36h11, three admitted
              * chance matches from random-payload grids), and keep them apart until the end. */
-            *candidate_fate = extended_shape ? 6 : 12;
+            *candidate_fate = extended_shape ? CANDIDATE_ROUGH_REJECTED : CANDIDATE_DECODED;
             if (d.hamming > det->fam.piece_hamming || already_found_footprint(det->piece_out, det->piece_centers, outputs->piece_found, &d)) continue;
             if ((size_t)outputs->piece_found == det->piece_out_capacity) {
                 size_t cap = det->piece_out_capacity ? 2 * det->piece_out_capacity : 64;
@@ -7257,7 +7357,7 @@ static int process_level_candidates(napa_detector *det, const pass_config *confi
         }
         if (already_found_footprint(outputs->out, det->out_centers, outputs->found < outputs->max_out ? outputs->found : outputs->max_out, &d)) {
             TRACE(11);
-            *candidate_fate = extended_shape ? 6 : 11;
+            *candidate_fate = extended_shape ? CANDIDATE_ROUGH_REJECTED : CANDIDATE_DUPLICATE;
             continue;
         }
         if (extended_shape) {
@@ -7276,7 +7376,7 @@ static int process_level_candidates(napa_detector *det, const pass_config *confi
             continue; /* No ordinary coverage, output count or restart decision changes. */
         }
         TRACE(12);
-        *candidate_fate = 12;
+        *candidate_fate = CANDIDATE_DECODED;
         if ((split || watch) && !outputs->necks && !outputs->touching) outputs->touching = corners_touch(rview, &d, cells);
         if (outputs->found < outputs->max_out) {
             if (!save_center(&det->out_centers, &det->out_center_capacity, outputs->found, &d)) return -2;
@@ -7335,7 +7435,7 @@ static int append_deferred_outputs(napa_detector *det, pass_outputs *outputs) {
 
 static int detect_pass(napa_detector *det, const uint8_t *img, int width, int height, int stride, const napa_params *params,
                 napa_detection *out, int max_out, int found, int shadow) {
-    if (det == NULL || img == NULL) return -1;
+    if (det == NULL || img == NULL || (max_out > 0 && out == NULL)) return -1;
     if (stride < width || max_out < 0) return -1;
     if (width > NAPA_MAX_SIDE || height > NAPA_MAX_SIDE) return -1;
     if (!params_valid(params)) return -1;
@@ -7384,7 +7484,7 @@ static int detect_pass(napa_detector *det, const uint8_t *img, int width, int he
                                 split, watch, shadow, shaped, sx, sy, offx, offy, smax};
 start:;
     outputs.fate_off = 0;
-    level_sampling sampling = {NULL, 0, base, params->min_contrast};
+    level_sampling sampling = {NULL, 0, base, params->min_contrast, 0};
     pass_timer timing, *timer = &timing;
     for (int s = base;; s *= 2) {
         candidate_level level;
@@ -7438,8 +7538,8 @@ int napa_detect_shadows_configured(napa_detector *det, const uint8_t *img, int w
         (shadow_min_tag_px < params->min_tag_px || shadow_min_tag_px < 8 || shadow_min_tag_px > 30000))) return -1;
     if (max_out > 0 && out == NULL) return -1;
     if (det == NULL) return -1;
-    /* Recovery samples the same levels, so it reuses their extrema unless it samples more coarsely. */
-    memset(det->saved_valid, 0, sizeof det->saved_valid);
+    /* Recovery reuses the ordinary pass's tile extrema at each step whose samples match (sample_threshold_level). */
+    for (int i = 0; i < 32; i++) det->saved[i].valid = 0;
     det->extrema_ready = 0;
     det->extrema_wanted = det->fam.piece_hamming >= 0;
     int n = detect_ordinary(det, img, width, height, stride, params, out, max_out);

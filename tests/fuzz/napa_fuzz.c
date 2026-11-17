@@ -20,6 +20,7 @@
 #define MAX_OUT 80
 
 static long detections_seen; /* reported by the random driver: the drawn tags must reach decoding */
+static long threaded_comparisons, nonempty_comparisons;
 
 static uint8_t byte_at(const uint8_t *data, size_t size, size_t i) { return size ? data[i % size] : (uint8_t)(i * 37); }
 
@@ -51,6 +52,76 @@ static void check(int ok, const char *what) {
     if (!ok) {
         fprintf(stderr, "napa_fuzz: contract violated: %s\n", what);
         abort();
+    }
+}
+
+static void configure(napa_detector *det, const char *family, const uint8_t *data, size_t size,
+                      int w, int h, int shape, int threads) {
+    check(napa_set_tag_shape(det, shape) == 0, "tag shape");
+    if (data[17] & 1) {
+        int status = napa_set_camera_gamma(det, 1.0 + (data[18] % 31) / 10.0);
+        check(status == (strcmp(family, "tag36h11") == 0 ? 0 : -1), "gamma family contract");
+    }
+    check(napa_set_regrow_small_tags(det, (data[20] >> 3) & 1) == 0, "regrow small tags");
+    check(napa_set_threads(det, threads) == 0, "threads");
+    if (data[23] % 3) { /* a lens model, mild to extreme, centred anywhere */
+        const double f = 0.4 * w + 4.0 * (byte_at(data, size, 24) % 200);
+        const double intrinsics[5] = {f, f * (0.9 + (byte_at(data, size, 25) % 21) / 100.0),
+                                      (byte_at(data, size, 26) / 255.0) * w, (byte_at(data, size, 27) / 255.0) * h, 0};
+        double k[8];
+        for (int i = 0; i < 8; i++) k[i] = ((int)byte_at(data, size, 28 + i) - 128) / (i < 2 ? 160.0 : 900.0);
+        const int fisheye = data[23] % 3 == 2;
+        int status = napa_set_lens(det, fisheye ? NAPA_LENS_FISHEYE : NAPA_LENS_BROWN_CONRADY,
+                                   intrinsics, k, fisheye ? 4 : 8);
+        check(status == 0 || status == -1, "lens status");
+    }
+}
+
+static int detect(napa_detector *det, const uint8_t *img, int w, int h, int stride, const napa_params *p,
+                  napa_detection *out, int max_out, int mode, const uint8_t *data, size_t size) {
+    switch (mode) {
+    case 0: return napa_detect(det, img, w, h, stride, p, out, max_out);
+    case 1: return napa_detect_shadows(det, img, w, h, stride, p, out, max_out);
+    case 2: return napa_detect_shadows_configured(det, img, w, h, stride, p, out, max_out,
+                                                data[19] % 2 ? 0 : p->min_tag_px + data[19] % 64);
+    case 3: return napa_detect_soft(det, img, w, h, stride, p, out, max_out, data[19] & 1, 0);
+    case 4: return napa_detect_options(det, img, w, h, stride, p, out, max_out, data[19] & 1, 0, data[20] % 4);
+    default: {
+        double corners[8], bias = 0, edge = 0;
+        for (int k = 0; k < 8; k++) corners[k] = (double)byte_at(data, size, 21 + k) * (k & 1 ? h : w) / 255.0;
+        int status = napa_border_bias_cells(det, img, w, h, stride, p, corners, &bias, &edge);
+        check(status >= -1 && status <= 1, "border bias status");
+        return 0;
+    }
+    }
+}
+
+static void validate(int n, const napa_detection *out, int max_out, int ncodes, int mode) {
+    check(n >= -2 && n <= max_out, "detection count within -2..max_out");
+    if (n == -1 && mode != 3 && mode != 4) check(0, "valid parameters rejected");
+    for (int i = 0; i < n; i++) {
+        check(out[i].id >= 0 && out[i].id < ncodes, "id in family");
+        check(out[i].hamming == NAPA_SOFT_DECODED || (out[i].hamming >= 0 && out[i].hamming <= 3), "hamming range");
+        check(isfinite(out[i].decision_margin), "finite margin");
+        for (int k = 0; k < 8; k++) check(isfinite(out[i].corners[k]), "finite corners");
+    }
+}
+
+static void compare(int n, const napa_detection *out, int nr, const napa_detection *reference, int threads) {
+    /* Independent allocations may fail under different memory pressure. Successful calls must agree. */
+    if (n == -2 || nr == -2) return;
+    check(n == nr, "threaded count matches single-thread count");
+    for (int i = 0; i < n; i++) {
+        check(out[i].id == reference[i].id, "threaded ID order");
+        check(out[i].hamming == reference[i].hamming, "threaded hamming");
+        check(memcmp(&out[i].decision_margin, &reference[i].decision_margin, sizeof out[i].decision_margin) == 0,
+              "threaded margin");
+        for (int k = 0; k < 8; k++)
+            check(memcmp(&out[i].corners[k], &reference[i].corners[k], sizeof out[i].corners[k]) == 0, "threaded corner");
+    }
+    if (threads > 1 && n >= 0) {
+        threaded_comparisons++;
+        if (n > 0) nonempty_comparisons++;
     }
 }
 
@@ -92,55 +163,31 @@ static int fuzz_one(const uint8_t *data, size_t size) {
         draw_tag(img, w, h, stride, &L, code, x0, y0, cell, shear, dark, light);
     }
 
-    napa_detector *det = napa_create_family(name);
-    if (det == NULL) {
+    napa_detector *det = napa_create_family(name), *reference = napa_create_family(name);
+    if (det == NULL || reference == NULL) {
+        napa_destroy(det);
+        napa_destroy(reference);
         free(img);
         return 0;
     }
-    check(napa_set_tag_shape(det, shape) == 0, "tag shape");
-    if (data[17] & 1) napa_set_camera_gamma(det, 1.0 + (data[18] % 31) / 10.0); /* -1 off tag36h11 is fine */
-    if (data[21] & 1) { /* worker threads: results must not depend on them */
-        check(napa_set_threads(det, 1 + data[22] % 6) == 0, "threads");
-    }
-    if (data[23] % 3) { /* a lens model, mild to extreme, centred anywhere */
-        const double f = 0.4 * w + 4.0 * (byte_at(data, size, 24) % 200);
-        const double intrinsics[5] = {f, f * (0.9 + (byte_at(data, size, 25) % 21) / 100.0),
-                                      (byte_at(data, size, 26) / 255.0) * w, (byte_at(data, size, 27) / 255.0) * h, 0};
-        double k[8];
-        for (int i = 0; i < 8; i++) k[i] = ((int)byte_at(data, size, 28 + i) - 128) / (i < 2 ? 160.0 : 900.0);
-        const int fisheye = data[23] % 3 == 2;
-        check(napa_set_lens(det, fisheye ? NAPA_LENS_FISHEYE : NAPA_LENS_BROWN_CONRADY, intrinsics, k, fisheye ? 4 : 8) >= -1,
-              "lens status");
-    }
-    napa_detection out[MAX_OUT];
+    const int threads = data[21] & 1 ? 1 + data[22] % 6 : 1;
+    configure(det, name, data, size, w, h, shape, threads);
+    configure(reference, name, data, size, w, h, shape, 1);
+    napa_detection out[MAX_OUT], expected[MAX_OUT];
     for (int round = 0; round < 2; round++) { /* a second call reuses the detector's grown buffers */
-        int n;
-        switch (mode) {
-        case 0: n = napa_detect(det, img, w, h, stride, &p, out, max_out); break;
-        case 1: n = napa_detect_shadows(det, img, w, h, stride, &p, out, max_out); break;
-        case 2: n = napa_detect_shadows_configured(det, img, w, h, stride, &p, out, max_out, data[19] % 2 ? 0 : p.min_tag_px + data[19] % 64); break;
-        case 3: n = napa_detect_soft(det, img, w, h, stride, &p, out, max_out, data[19] & 1, 0); break;
-        case 4: n = napa_detect_options(det, img, w, h, stride, &p, out, max_out, data[19] & 1, 0, data[20] % 4); break;
-        default: {
-            double corners[8], bias = 0, edge = 0;
-            for (int k = 0; k < 8; k++) corners[k] = (double)byte_at(data, size, 21 + k) * (k & 1 ? h : w) / 255.0;
-            int r = napa_border_bias_cells(det, img, w, h, stride, &p, corners, &bias, &edge);
-            check(r >= -1 && r <= 1, "border bias status");
-            n = 0;
-        }
-        }
-        check(n >= -2 && n <= max_out, "detection count within -2..max_out");
+        int n = detect(det, img, w, h, stride, &p, out, max_out, mode, data, size);
+        int nr = detect(reference, img, w, h, stride, &p, expected, max_out, mode, data, size);
+        validate(n, out, max_out, L.ncodes, mode);
+        validate(nr, expected, max_out, L.ncodes, mode);
+        compare(n, out, nr, expected, threads);
         if (n > 0) detections_seen += n;
-        if (n == -1 && mode != 3 && mode != 4) check(0, "valid parameters rejected");
-        for (int i = 0; i < n; i++) {
-            check(out[i].id >= 0 && out[i].id < L.ncodes, "id in family");
-            check(out[i].hamming == NAPA_SOFT_DECODED || (out[i].hamming >= 0 && out[i].hamming <= 3), "hamming range");
-            for (int k = 0; k < 8; k++) check(isfinite(out[i].corners[k]), "finite corners");
-        }
         if (round == 0 && w > 32 && h > 32) { /* then a smaller frame: buffers must not assume the larger size */
-            napa_detection small[4];
+            napa_detection small[4], expected_small[4];
             int m = napa_detect(det, img, w / 2, h / 2, stride, &p, small, 4);
-            check(m >= -2 && m <= 4, "smaller frame count");
+            int mr = napa_detect(reference, img, w / 2, h / 2, stride, &p, expected_small, 4);
+            validate(m, small, 4, L.ncodes, 0);
+            validate(mr, expected_small, 4, L.ncodes, 0);
+            compare(m, small, mr, expected_small, threads);
         }
     }
     if (data[20] & 2) { /* the colour conversion: a BGR copy of the frame must convert back to OpenCV's grey */
@@ -164,6 +211,7 @@ static int fuzz_one(const uint8_t *data, size_t size) {
         free(grey);
     }
     napa_destroy(det);
+    napa_destroy(reference);
     free(img);
     return 0;
 }
@@ -190,7 +238,8 @@ int main(int argc, char **argv) {
             fuzz_one(buf, size);
             free(buf);
         }
-        printf("%ld random fuzz inputs passed, %ld detections\n", iterations, detections_seen);
+        printf("%ld random fuzz inputs passed, %ld detections, %ld threaded comparisons (%ld non-empty)\n",
+               iterations, detections_seen, threaded_comparisons, nonempty_comparisons);
         return 0;
     }
     for (int a = 1; a < argc; a++) { /* replay files, e.g. libFuzzer crash reproducers */

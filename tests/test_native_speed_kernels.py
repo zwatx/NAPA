@@ -71,6 +71,8 @@ def _shape_growth_input(tmp_path: Path, small: bool = False) -> Path:
         "native_box_rake.c",
         "native_band_kernels.c",
         "native_pool.c",
+        "native_extrema_cache.c",
+        "native_nearest_code.c",
     ],
 )
 def test_native_speed_kernels(tmp_path: Path, scalar: bool, source_name: str) -> None:
@@ -120,14 +122,21 @@ def _run_native_kernels(tmp_path: Path, scalar: bool, source_name: str, small_st
             in result.stdout
         )
     elif source_name == "native_border_batch.c":
-        assert "2560 sampler cases, 49408 scalar-oracle points, 152 family endpoint checks passed" in result.stdout
+        assert (
+            "2560 sampler cases, 49408 scalar-oracle points, 152 family profiles, 5016 profile points passed"
+            in result.stdout
+        )
     elif source_name == "native_pool.c":
         assert "2400 pool jobs at 1-8 threads, 16 thread settings, 800 contended jobs passed" in result.stdout
-        assert "672 banded labelling cases match the serial pass" in result.stdout
+        assert "2688 banded labelling cases match the serial pass" in result.stdout
     elif source_name == "native_band_kernels.c":
         assert "20480 exact dark-bit cases, 13608 exact tile-extrema rows passed" in result.stdout
     elif source_name == "native_box_rake.c":
         assert "6000 box_rake cases match the block-mean definition" in result.stdout
+    elif source_name == "native_extrema_cache.c":
+        assert "14 recovery cases at 1 and 4 threads match fresh thresholds, 24 saved levels reused" in result.stdout
+    elif source_name == "native_nearest_code.c":
+        assert "737973 reads match the nearest rotated code at max_bits 0-5" in result.stdout
     elif source_name == "native_borrowed_gray.c":
         receipt = json.loads(result.stdout)
         assert receipt["status"] == "PASS"

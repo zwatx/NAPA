@@ -72,7 +72,8 @@ NAPA_API int napa_family_code(const char *family, int id, uint64_t *code);
 NAPA_API void napa_destroy(napa_detector *det);
 /* Detect the detector's family of tags in an 8-bit grayscale image. Returns the number of detections written
  * (at most max_out), -1 on invalid input or parameters (see napa_params for ranges), or -2 if
- * allocation fails. A detector handle is not thread-safe; use one per thread or camera stream. */
+ * allocation fails. max_out must be nonnegative; out may be NULL only when max_out is zero.
+ * A detector handle is not thread-safe; use one per thread or camera stream. */
 NAPA_API int napa_detect(napa_detector *det, const uint8_t *img, int width, int height, int stride,
                          const napa_params *params, napa_detection *out, int max_out);
 /* Experimental shadow recovery: ordinary napa_detect results first, then exact-code detections

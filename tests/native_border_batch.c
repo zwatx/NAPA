@@ -88,12 +88,12 @@ int main(void) {
     const int lengths[] = {0,1,2,3,7,16,31,32,33,68};
     const double special[] = {0.0,-0.0,-1000,1000,DBL_MIN,-DBL_MIN,DBL_MAX,-DBL_MAX,
                               INFINITY,-INFINITY,NAN,0x1p-1074,15.999,11.999};
-    int cases = 0, points = 0, endpoints = 0;
+    int cases = 0, points = 0, profiles = 0, profile_points = 0;
     for (int padded = 0; padded < 2; padded++) for (int invert = 0; invert < 2; invert++) {
         uint8_t pixels[24 * 13], saved_pixels[24 * 13];
         for (size_t i = 0; i < sizeof pixels; i++) pixels[i] = (uint8_t)(rnd() >> 24);
         memcpy(saved_pixels,pixels,sizeof pixels);
-        image_view im = {pixels,17,13,padded ? 24 : 17,invert};
+        image_view im = {pixels,17,13,padded ? 24 : 17,invert,NULL};
         for (int t = 0; t < 64; t++) for (unsigned k = 0; k < sizeof lengths / sizeof lengths[0]; k++) {
             int n = lengths[k];
             double H[9] = {1,0,0,0,1,0,0,0,1}, saved_H[9];
@@ -129,13 +129,35 @@ int main(void) {
             cases++;
         }
     }
+    uint8_t pixels[71 * 48];
+    for (size_t i = 0; i < sizeof pixels; i++) pixels[i] = (uint8_t)(rnd() >> 24);
+    image_view im = {pixels,64,48,71,0,NULL};
+    quad_map M = {0};
+    const double H[9] = {40,7,10,-3,30,8,0.2,-0.1,1};
+    memcpy(M.H,H,sizeof H);
+    assert(BORDER_PROFILE_SAMPLES == 33);
     for (int f = 0; f < NAPA_FAMILY_COUNT; f++) for (int side = 0; side < 4; side++)
         for (int c = 1; c < napa_families[f].width - 1; c++) {
-            double u0,v0,u1,v1, cells = napa_families[f].width;
-            unit(cells,side,c,1.5,&u0,&v0);
-            unit(cells,side,c,-0.5+2.0*32/32,&u1,&v1);
-            same(u0,u1); same(v0,v1); endpoints++;
+            double prof[33], cells = napa_families[f].width;
+            vec2 pts[33];
+            assert(border_profile(&im,&M,cells,side,c,-1,prof,pts) == 1);
+            for (int j = 0; j < 33; j++) {
+                double u,v;
+                unit(cells,side,c,-0.5+j/16.0,&u,&v);
+                vec2 p = project_reference(H,u,v);
+                same(pts[j].x,p.x); same(pts[j].y,p.y);
+                same(prof[j],sample_reference(&im,p.x,p.y));
+                profile_points++;
+            }
+            /* A rejected payload must not publish a partial profile. */
+            memset(prof,0xa5,sizeof prof); memset(pts,0xa5,sizeof pts);
+            assert(border_profile(&im,&M,cells,side,c,256,prof,pts) == 0);
+            const uint8_t *values = (const uint8_t *)prof, *coords = (const uint8_t *)pts;
+            for (size_t j = 0; j < sizeof prof; j++) assert(values[j] == 0xa5);
+            for (size_t j = 0; j < sizeof pts; j++) assert(coords[j] == 0xa5);
+            profiles++;
         }
-    printf("%d sampler cases, %d scalar-oracle points, %d family endpoint checks passed\n",cases,points,endpoints);
+    printf("%d sampler cases, %d scalar-oracle points, %d family profiles, %d profile points passed\n",
+           cases,points,profiles,profile_points);
     return 0;
 }

@@ -38,6 +38,27 @@ static int same(const napa_detection *a, const napa_detection *b, int n) {
 }
 
 int main(void) {
+    initial_capture capture = {0};
+    const vec2 rough[4] = {{0, 0}, {100, 0}, {100, 100}, {0, 100}};
+    vec2 first[4], repeated[4];
+    capture.rejection_mask = 1;
+    for (int k = 0; k < 4; k++) {
+        capture.count[k] = INITIAL_SIDE_POINTS;
+        for (int i = 0; i < INITIAL_SIDE_POINTS; i++) {
+            double t = (i + 1.0) / (INITIAL_SIDE_POINTS + 1.0);
+            capture.x[k][i] = rough[k].x + t * (rough[(k + 1) & 3].x - rough[k].x);
+            capture.y[k][i] = rough[k].y + t * (rough[(k + 1) & 3].y - rough[k].y);
+            capture.weight[k][i] = 1.0 + i;
+        }
+    }
+    initial_capture original = capture;
+    CHECK(confidence_quad(&capture, rough, 2.0, first));
+    CHECK(memcmp(capture.x, original.x, sizeof capture.x) == 0);
+    CHECK(memcmp(capture.y, original.y, sizeof capture.y) == 0);
+    CHECK(memcmp(capture.weight, original.weight, sizeof capture.weight) == 0);
+    CHECK(confidence_quad(&capture, rough, 2.0, repeated));
+    CHECK(memcmp(first, repeated, sizeof first) == 0);
+    for (int k = 0; k < 4; k++) CHECK(hypot(first[k].x - rough[k].x, first[k].y - rough[k].y) < 1e-10);
     FILE *stream = fopen(NAPA_CONFIDENCE_GROWTH_INPUT, "rb");
     CHECK(stream && fread(image, 1, sizeof image, stream) == sizeof image);
     fclose(stream);

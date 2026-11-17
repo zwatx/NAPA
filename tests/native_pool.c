@@ -54,49 +54,51 @@ static void check_banded_labels(void) {
         assert(pixels >= NAPA_THREAD_MIN_SAMPLES && th / 4 >= 2);
         for (int mode = 0; mode < 4; mode++)
             for (int regional = 0; regional < 2; regional++)
-                for (int shadow = 0; shadow < 2; shadow++) {
-                    napa_detector *det = napa_create();
-                    assert(det != NULL && ensure_buffers(det, pixels, (size_t)tw * th, (size_t)w, pixels / 2 + (size_t)h + 1) == 0);
-                    fill_level(det->level, w, h, mode);
-                    const int cols = regional ? (w + 63) / 64 : 1, rows = regional ? (h + 63) / 64 : 1;
-                    det->floors = (uint8_t *)malloc((size_t)cols * rows);
-                    assert(det->floors != NULL);
-                    for (int i = 0; i < cols * rows; i++) det->floors[i] = (uint8_t)(regional ? rnd() % 60 : 8);
-                    det->floor_cols = cols, det->floor_rows = rows, det->floor_uniform = !regional;
-                    const int n = threshold_rows(det, w, h, 1, 0, shadow, 0, th, 0);
-                    assert(n > 0);
-                    napa_run *runs = (napa_run *)malloc((size_t)n * sizeof(napa_run));
-                    int32_t *roots = (int32_t *)malloc((size_t)n * sizeof(int32_t));
-                    assert(runs != NULL && roots != NULL);
-                    memcpy(runs, det->runs, (size_t)n * sizeof(napa_run));
-                    for (int i = 0; i < n; i++) roots[i] = find_root(det->parent, i);
-                    for (int threads = 2; threads <= 8; threads++) {
-                        assert(napa_set_threads(det, threads) == 0);
-                        assert(threshold_level(det, w, h, 1, 0, shadow) == n);
-                        for (int i = 0; i < n; i++) {
-                            const napa_run *a = &det->runs[i], *b = &runs[i];
-                            if (a->x0 != b->x0 || a->x1 != b->x1 || a->y != b->y || (!shadow && a->rows != b->rows)) {
-                                fprintf(stderr, "%dx%d mode %d regional %d shadow %d threads %d: run %d differs\n", w, h,
-                                        mode, regional, shadow, threads, i);
-                                exit(1);
-                            }
-                        }
-                        for (int i = 0; i < n; i++) assert(find_root(det->parent, i) == roots[i]);
-                        int bands = threads * 3 < th / 4 ? threads * 3 : th / 4;
-                        for (int k = 1; k < bands && !shadow; k++) {
-                            const int y = det->bands[k].ty0 * TILE;
-                            int above = 0, below = 0, across = 0;
+                for (int shadow = 0; shadow < 2; shadow++)
+                    for (int factor = 1; factor <= 4; factor++) {
+                        napa_detector *det = napa_create();
+                        assert(det != NULL && ensure_buffers(det, pixels, (size_t)tw * th, (size_t)w, pixels / 2 + (size_t)h + 1) == 0);
+                        fill_level(det->level, w, h, mode);
+                        const int cols = regional ? (w * factor + 63) / 64 : 1;
+                        const int rows = regional ? (h * factor + 63) / 64 : 1;
+                        det->floors = (uint8_t *)malloc((size_t)cols * rows);
+                        assert(det->floors != NULL);
+                        for (int i = 0; i < cols * rows; i++) det->floors[i] = (uint8_t)(regional ? rnd() % 60 : 8);
+                        det->floor_cols = cols, det->floor_rows = rows, det->floor_uniform = !regional;
+                        const int n = threshold_rows(det, w, h, factor, 0, shadow, 0, th, 0);
+                        assert(n > 0);
+                        napa_run *runs = (napa_run *)malloc((size_t)n * sizeof(napa_run));
+                        int32_t *roots = (int32_t *)malloc((size_t)n * sizeof(int32_t));
+                        assert(runs != NULL && roots != NULL);
+                        memcpy(runs, det->runs, (size_t)n * sizeof(napa_run));
+                        for (int i = 0; i < n; i++) roots[i] = find_root(det->parent, i);
+                        for (int threads = 2; threads <= 8; threads++) {
+                            assert(napa_set_threads(det, threads) == 0);
+                            assert(threshold_level(det, w, h, factor, 0, shadow) == n);
                             for (int i = 0; i < n; i++) {
-                                above |= runs[i].y == y - 1;
-                                below |= runs[i].y == y + 1;
-                                across |= runs[i].y == y && roots[i] < i && runs[roots[i]].y < y;
+                                const napa_run *a = &det->runs[i], *b = &runs[i];
+                                if (a->x0 != b->x0 || a->x1 != b->x1 || a->y != b->y || (!shadow && a->rows != b->rows)) {
+                                    fprintf(stderr, "%dx%d mode %d regional %d shadow %d threads %d: run %d differs\n", w, h,
+                                            mode, regional, shadow, threads, i);
+                                    exit(1);
+                                }
                             }
-                            boundaries++, single_above += above, single_below += below, joined += across;
+                            for (int i = 0; i < n; i++) assert(find_root(det->parent, i) == roots[i]);
+                            int bands = threads * 3 < th / 4 ? threads * 3 : th / 4;
+                            for (int k = 1; k < bands && !shadow; k++) {
+                                const int y = det->bands[k].ty0 * TILE;
+                                int above = 0, below = 0, across = 0;
+                                for (int i = 0; i < n; i++) {
+                                    above |= runs[i].y == y - 1;
+                                    below |= runs[i].y == y + 1;
+                                    across |= runs[i].y == y && roots[i] < i && runs[roots[i]].y < y;
+                                }
+                                boundaries++, single_above += above, single_below += below, joined += across;
+                            }
+                            cases++;
                         }
-                        cases++;
-                    }
-                    free(runs), free(roots);
-                    napa_destroy(det);
+                        free(runs), free(roots);
+                        napa_destroy(det);
                 }
     }
     assert(single_above && single_below && joined);

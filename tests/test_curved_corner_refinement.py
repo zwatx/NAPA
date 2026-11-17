@@ -108,7 +108,9 @@ def _tag_art(cell: int) -> np.ndarray:
     return cv2.copyMakeBorder(art, 2 * cell, 2 * cell, 2 * cell, 2 * cell, cv2.BORDER_CONSTANT, value=255)
 
 
-def _crossing_frame(rng: np.random.Generator, side: int, overhang: float, edge: int) -> tuple[np.ndarray, np.ndarray]:
+def _crossing_frame(
+    rng: np.random.Generator, side: float, overhang: float, edge: int, noise: float = 2.0
+) -> tuple[np.ndarray, np.ndarray]:
     width, height, scale, cell = 640, 480, 4, 32
     corners = _frame_corners(rng, side, overhang, edge)
     black = np.float32([[3, 3], [11, 3], [11, 11], [3, 11]]) * cell - 0.5
@@ -119,7 +121,7 @@ def _crossing_frame(rng: np.random.Generator, side: int, overhang: float, edge: 
     image = cv2.GaussianBlur(
         cv2.resize(fine, (width, height), interpolation=cv2.INTER_AREA).astype(np.float32), (0, 0), 0.7
     )
-    return np.clip(image + rng.normal(0, 2.0, (height, width)), 0, 255).astype(np.uint8), corners - 0.5
+    return np.clip(image + rng.normal(0, noise, (height, width)), 0, 255).astype(np.uint8), corners - 0.5
 
 
 @pytest.mark.parametrize("side,overhang,limit", [(80, 1.0, 1.5), (80, 2.0, 2.5), (128, 2.0, 1.5)])
@@ -132,15 +134,36 @@ def test_straight_tags_cut_by_the_frame_do_not_extrapolate_a_curve(side: int, ov
         for trial in range(120):
             image, expected = _crossing_frame(rng, side, overhang, trial % 4)
             found = [observation for observation in detector.detect(image) if observation.tag_id == 57]
-            if found:
-                errors = min(
-                    np.linalg.norm(found[0].corners - np.roll(expected, shift, axis=0), axis=1).max()
-                    for shift in range(4)
-                )
-                worst = max(worst, float(errors))
+            assert len(found) == 1, (side, overhang, trial)
+            errors = min(
+                np.linalg.norm(found[0].corners - np.roll(expected, shift, axis=0), axis=1).max() for shift in range(4)
+            )
+            worst = max(worst, float(errors))
     finally:
         detector.close()
     assert worst < limit
+
+
+@pytest.mark.parametrize("noise", [6.0, 10.0])
+def test_small_straight_tags_at_the_frame_take_no_lens_from_noise(noise: float) -> None:
+    # One corner half a pixel inside the frame makes a small tag eligible for the shared radial lens estimate, and its
+    # noisy sides must not pass for a bow. Straight fits keep these corners near 0.3 px;
+    # a spurious lens estimate can move them 1-2 px.
+    rng = np.random.default_rng(20261117)
+    detector = NapaDetector(max_detections=16)
+    worst = 0.0
+    try:
+        for trial in range(48):
+            image, expected = _crossing_frame(rng, rng.uniform(24, 40), -1.0, trial % 4, noise)
+            found = [observation for observation in detector.detect(image) if observation.tag_id == 57]
+            assert len(found) == 1, (noise, trial)
+            errors = min(
+                np.linalg.norm(found[0].corners - np.roll(expected, shift, axis=0), axis=1).max() for shift in range(4)
+            )
+            worst = max(worst, float(errors))
+    finally:
+        detector.close()
+    assert worst < 0.5
 
 
 def _bowed_crossing_frame(
