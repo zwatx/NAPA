@@ -80,3 +80,14 @@ def test_rejects_missing_pose_inputs() -> None:
         detector.detect(image, estimate_tag_pose=True, camera_params=(1, 1, 0, 0))
     with pytest.raises(ValueError):
         detector.detect(np.zeros((64, 64, 3), np.uint8))
+
+
+@pytest.mark.parametrize("nthreads,options,expected", [(1, {}, 1), (4, {}, 4), (4, {"threads": 2}, 2)])
+def test_upstream_thread_count_is_used_unless_napa_threads_override_it(nthreads, options, expected):
+    detector = Detector(nthreads=nthreads, **options)
+    try:
+        assert detector._detectors[0].threads == expected
+        assert detector.detect(np.zeros((32, 32), np.uint8)) == []
+    finally:
+        for native in detector._detectors:
+            native.close()

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 import warnings
 
 import cv2
@@ -8,6 +9,7 @@ import pytest
 
 import napa_vision.napa_detector as napa_detector
 from napa_vision import NapaDetector, VisionProcessor, native_available
+from napa_vision.tags import tag_image
 
 DICTIONARY = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_APRILTAG_36h11)
 
@@ -168,6 +170,30 @@ def test_missing_native_library_is_a_clear_error(monkeypatch, tmp_path) -> None:
         napa_detector._library.cache_clear()
 
 
+def test_border_bias_binding_does_not_require_regrowth_symbol(monkeypatch) -> None:
+    import ctypes
+
+    # Load a fresh CDLL so a previously cached binding cannot hide missing pointer types.
+    library = ctypes.CDLL(napa_detector._library()._name)
+
+    class WithoutRegrowth:
+        def __getattr__(self, name):
+            if name == "napa_set_regrow_small_tags":
+                raise AttributeError(name)
+            return getattr(library, name)
+
+    monkeypatch.setattr(ctypes, "CDLL", lambda path: WithoutRegrowth())
+    bound = napa_detector._library.__wrapped__()
+    assert bound.napa_border_bias_cells.argtypes[:2] == [ctypes.c_void_p, ctypes.c_void_p]
+
+
+def test_native_rejection_reports_invalid_frame_or_settings(monkeypatch) -> None:
+    detector = NapaDetector()
+    monkeypatch.setattr(detector, "_detect", lambda *args: -1)
+    with pytest.raises(RuntimeError, match=r"rejected the frame or settings \(status -1\)"):
+        detector.detect(np.zeros((32, 32), np.uint8))
+
+
 def test_detect_after_close_raises_instead_of_crashing() -> None:
     detector = NapaDetector()
     detector.close()
@@ -176,13 +202,13 @@ def test_detect_after_close_raises_instead_of_crashing() -> None:
         detector.detect(np.zeros((64, 64), np.uint8))
 
 
-def test_colour_conversion_without_opencv_matches_opencv() -> None:
+def test_colour_conversion_without_opencv_matches_opencv(monkeypatch) -> None:
     rng = np.random.default_rng(3)
+    monkeypatch.setitem(sys.modules, "cv2", None)
     for channels, code in ((3, cv2.COLOR_BGR2GRAY), (4, cv2.COLOR_BGRA2GRAY)):
         image = rng.integers(0, 256, (61, 83, channels), dtype=np.uint8)
-        b, g, r = (image[..., channel].astype(np.int32) for channel in range(3))
-        fallback = (b * 1868 + g * 9617 + r * 4899 + (1 << 13)) >> 14
-        assert np.abs(fallback - cv2.cvtColor(image, code)).max() <= 1
+        expected = cv2.cvtColor(image, code)
+        np.testing.assert_array_equal(napa_detector._bgr_to_gray(image), expected)
 
 
 def test_minimum_size_guarantee_holds_at_every_sampling_phase() -> None:
@@ -356,3 +382,219 @@ def test_local_quiet_zone_damage_does_not_reject_intact_border(side, size) -> No
     [observation] = NapaDetector(min_tag_px=16).detect(image)
     assert observation.tag_id == 42
     assert np.abs(observation.corners - corners).max() < 0.5
+
+
+def _aprilgrid(ids, *, columns: int, tag_px: int, angle_deg: float, size=(1280, 960)):
+    """An AprilGrid-style board: tags separated by quarter-tag gaps, with a black square at every gap
+    crossing that touches the four tags around it at their corners. Returns the frame and each tag's
+    OpenCV-order corners."""
+
+    cell = 10  # board pixels per tag cell before warping
+    rows = len(ids) // columns
+    pitch = 10 * cell  # an 8-cell tag and a 2-cell gap
+    board = np.full((rows * pitch + 2 * cell, columns * pitch + 2 * cell), 255, np.uint8)
+    for row in range(rows + 1):
+        for column in range(columns + 1):
+            board[row * pitch : row * pitch + 2 * cell, column * pitch : column * pitch + 2 * cell] = 0
+    truth = {}
+    for index, tag_id in enumerate(ids):
+        y, x = 2 * cell + (index // columns) * pitch, 2 * cell + (index % columns) * pitch
+        board[y : y + 8 * cell, x : x + 8 * cell] = cv2.aruco.generateImageMarker(
+            DICTIONARY, tag_id, 8 * cell, borderBits=1
+        )
+        truth[tag_id] = (
+            np.array([[x, y], [x + 8 * cell, y], [x + 8 * cell, y + 8 * cell], [x, y + 8 * cell]], float) - 0.5
+        )
+    margin = np.pad(board, 4 * cell, constant_values=255)
+    angle = np.deg2rad(angle_deg)
+    scale = tag_px / (8 * cell)
+    rotation = np.array([[np.cos(angle), -np.sin(angle)], [np.sin(angle), np.cos(angle)]]) * scale
+    centre = np.array(margin.shape[::-1]) / 2
+    affine = np.hstack([rotation, (np.array(size) / 2 - rotation @ centre)[:, None]])
+    image = cv2.warpAffine(margin, affine, size, flags=cv2.INTER_AREA, borderValue=255)
+    corners = {i: (c + 4 * cell + 0.5) @ rotation.T + affine[:, 2] - 0.5 for i, c in truth.items()}
+    return image, corners
+
+
+@pytest.mark.parametrize(
+    ("tag_px", "angle", "min_tag_px", "at_least"),
+    [(48, 0.0, 32, 36), (48, 0.0, 16, 36), (48, 12.0, 16, 33), (36, 8.0, 32, 30), (90, 25.0, 16, 24)],
+)
+def test_split_touching_finds_aprilgrid_tags(tag_px: int, angle: float, min_tag_px: int, at_least: int) -> None:
+    ids = list(range(100, 136))
+    image, corners = _aprilgrid(ids, columns=6, tag_px=tag_px, angle_deg=angle)
+    ordinary = NapaDetector(
+        min_tag_px=min_tag_px, max_detections=128, recover_shadows=False, split_touching=False
+    ).detect(image)
+    found = NapaDetector(min_tag_px=min_tag_px, max_detections=128, split_touching=True, recover_shadows=False).detect(
+        image
+    )
+    # Filled corner contacts are separated in the ordinary pass. Rotated/antialiased
+    # necks may still need the optional recovery, which must preserve its prefix.
+    if angle == 0.0:
+        assert {o.tag_id for o in ordinary} == set(ids)
+    assert len(found) >= at_least
+    assert len({observation.tag_id for observation in found}) == len(found)
+    for observation in found:
+        assert observation.tag_id in corners
+        assert np.abs(observation.corners - corners[observation.tag_id]).max() < 1.5
+    # Pieces are only appended: the other detections are exactly the ordinary ones.
+    assert [(o.tag_id, o.corners.tolist()) for o in found[: len(ordinary)]] == [
+        (o.tag_id, o.corners.tolist()) for o in ordinary
+    ]
+
+
+@pytest.mark.parametrize("shape", ["square", "bar", "bar_neck"])
+@pytest.mark.parametrize("tag_px", [48, 96, 160])
+def test_split_touching_finds_a_tag_touching_one_shape(shape: str, tag_px: int) -> None:
+    """A tag against one dark shape at a corner, such as a field element's edge: the case outside boards."""
+
+    image = np.full((480, 640), 255, np.uint8)
+    x0, y0 = 240, 160
+    image[y0 : y0 + tag_px, x0 : x0 + tag_px] = cv2.aruco.generateImageMarker(DICTIONARY, 7, tag_px, borderBits=1)
+    if shape == "square":
+        image[y0 - 40 : y0, x0 - 40 : x0] = 0
+    elif shape == "bar":  # a long bar, not tag-shaped itself
+        image[y0 - 12 : y0, 20:x0] = 0
+    else:  # the bar touches through a one-pixel neck
+        image[y0 - 12 : y0 - 1, 20 : x0 - 1] = 0
+        image[y0 - 1, x0 - 1] = 0
+    for frame in (image, cv2.GaussianBlur(image, (0, 0), 1.0)):
+        for min_tag_px in (16, 32):
+            found = NapaDetector(min_tag_px=min_tag_px, split_touching=True).detect(frame)
+            assert [observation.tag_id for observation in found] == [7]
+
+
+def test_split_touching_changes_nothing_without_touching_shapes() -> None:
+    frames = [_scene(tag_id, side, angle_deg=angle)[0] for tag_id, side, angle in ((3, 40, 10.0), (77, 120, 33.0))]
+    frames.append(cv2.GaussianBlur(np.random.default_rng(3).integers(0, 256, (480, 640), dtype=np.uint8), (3, 3), 0))
+    for min_tag_px in (16, 32):
+        ordinary = NapaDetector(min_tag_px=min_tag_px, split_touching=False)
+        split = NapaDetector(min_tag_px=min_tag_px, split_touching=True)
+        for frame in frames:
+            assert [(o.tag_id, o.corners.tolist()) for o in split.detect(frame)] == [
+                (o.tag_id, o.corners.tolist()) for o in ordinary.detect(frame)
+            ]
+
+
+def test_split_touching_has_no_false_positives_on_noise_text_and_checkers() -> None:
+    rng = np.random.default_rng(11)
+    frames = [rng.integers(0, 256, (480, 640), dtype=np.uint8)]
+    frames.append(cv2.GaussianBlur(rng.integers(0, 256, (480, 640), dtype=np.uint8), (5, 5), 0))
+    for square in (6, 13, 40):  # checkerboards: every square touches four others at its corners
+        frames.append(
+            np.kron((np.indices((480 // square + 1, 640 // square + 1)).sum(0) % 2) * 255, np.ones((square, square)))[
+                :480, :640
+            ].astype(np.uint8)
+        )
+    for min_tag_px in (16, 32):
+        detector = NapaDetector(min_tag_px=min_tag_px, split_touching=True)
+        for frame in frames:
+            assert detector.detect(frame) == []
+
+
+@pytest.mark.parametrize(
+    ("tag_px", "angle", "min_tag_px"), [(48, 0.0, 16), (48, 0.0, 32), (36, 8.0, 32), (90, 25.0, 16)]
+)
+@pytest.mark.parametrize("shadows", [False, True])
+def test_split_touching_auto_splits_boards_as_split_touching_does(
+    tag_px: int, angle: float, min_tag_px: int, shadows: bool
+) -> None:
+    image, _ = _aprilgrid(list(range(100, 136)), columns=6, tag_px=tag_px, angle_deg=angle)
+    kwargs = dict(min_tag_px=min_tag_px, max_detections=128, recover_shadows=shadows)
+    split = NapaDetector(split_touching=True, **kwargs).detect(image)
+    auto = NapaDetector(split_touching="auto", **kwargs).detect(image)
+    assert [(o.tag_id, o.corners.tolist()) for o in auto] == [(o.tag_id, o.corners.tolist()) for o in split]
+
+
+def test_split_touching_auto_needs_one_tag_found_to_split() -> None:
+    # Turned 12 degrees at 48 px, every tag of this board merges with its corner squares: the ordinary pass finds
+    # none, so there's no tag to show the board's squares and auto gives the ordinary result.
+    image, _ = _aprilgrid(list(range(100, 136)), columns=6, tag_px=48, angle_deg=12.0)
+    kwargs = dict(min_tag_px=16, max_detections=128, recover_shadows=False)
+    assert NapaDetector(split_touching=False, **kwargs).detect(image) == []
+    assert NapaDetector(split_touching="auto", **kwargs).detect(image) == []
+    assert len(NapaDetector(split_touching=True, **kwargs).detect(image)) >= 33
+
+
+def test_split_touching_auto_changes_nothing_without_touching_tags() -> None:
+    rng = np.random.default_rng(5)
+    frames = [_scene(tag_id, side, angle_deg=angle)[0] for tag_id, side, angle in ((3, 40, 10.0), (77, 120, 33.0))]
+    frames.append(cv2.GaussianBlur(rng.integers(0, 256, (480, 640), dtype=np.uint8), (3, 3), 0))
+    frames.append(np.kron((np.indices((25, 33)).sum(0) % 2) * 255, np.ones((20, 20)))[:480, :640].astype(np.uint8))
+    for min_tag_px in (16, 32):
+        ordinary = NapaDetector(min_tag_px=min_tag_px, split_touching=False)
+        auto = NapaDetector(min_tag_px=min_tag_px, split_touching="auto")
+        for frame in frames:
+            assert [(o.tag_id, o.corners.tolist()) for o in auto.detect(frame)] == [
+                (o.tag_id, o.corners.tolist()) for o in ordinary.detect(frame)
+            ]
+
+
+def test_split_touching_auto_gives_the_same_tags_at_any_thread_count() -> None:
+    image, _ = _aprilgrid(list(range(100, 136)), columns=6, tag_px=90, angle_deg=25.0)
+    one = NapaDetector(min_tag_px=16, max_detections=128, split_touching="auto").detect(image)
+    four = NapaDetector(min_tag_px=16, max_detections=128, split_touching="auto", threads=4).detect(image)
+    assert len(one) > len(NapaDetector(min_tag_px=16, max_detections=128, split_touching=False).detect(image))
+    assert [(o.tag_id, o.corners.tolist()) for o in four] == [(o.tag_id, o.corners.tolist()) for o in one]
+
+
+def test_split_touching_must_be_a_bool_or_auto() -> None:
+    for value in (1, 0, "yes", "Auto", None):
+        with pytest.raises(ValueError, match="split_touching"):
+            NapaDetector(split_touching=value)
+    assert NapaDetector().split_touching == "auto"
+    assert NapaDetector(split_touching=False).split_touching is False
+    detector = NapaDetector()
+    detector._params.split_touching = 3  # the C core validates the field too
+    with pytest.raises(RuntimeError, match="status -1"):
+        detector.detect(_scene(1, 100)[0])
+
+
+@pytest.mark.parametrize("edges", ["left", "top", "right", "bottom", "top-left", "bottom-right"])
+@pytest.mark.parametrize("cut", [4, 10])
+@pytest.mark.parametrize("threads", [1, 4])
+def test_measures_tags_whose_border_runs_off_the_frame(edges: str, cut: int, threads: int) -> None:
+    """A close tag can fill the frame: its white margin and part of its black border fall outside the image.
+
+    The corners outside the frame are measured from the border's inner edge, as accurately as any others.
+    """
+
+    image, corners = _scene(42, 161)  # the black square spans x = 239.5..400.5 and y = 159.5..320.5
+    x0, y0 = (240 + cut if "left" in edges else 0), (160 + cut if "top" in edges else 0)
+    x1, y1 = (401 - cut if "right" in edges else 640), (321 - cut if "bottom" in edges else 480)
+    frame = np.ascontiguousarray(image[y0:y1, x0:x1])
+    for detector in (NapaDetector(threads=threads), NapaDetector(min_tag_px=16, threads=threads)):
+        [observation] = detector.detect(frame)
+        assert observation.tag_id == 42
+        assert np.abs(observation.corners - (corners - [x0, y0])).max() < 0.1
+
+
+def test_measures_a_tilted_tag_cut_at_a_frame_corner() -> None:
+    """In perspective, cut by the frame's top and left edges: both corners there lie outside the image."""
+
+    cells = 10
+    marker = cv2.aruco.generateImageMarker(DICTIONARY, 521, 8 * cells, borderBits=1)
+    padded = np.full((10 * cells, 10 * cells), 255, np.uint8)
+    padded[cells : 9 * cells, cells : 9 * cells] = marker
+    source = np.array([[cells, cells], [9 * cells, cells], [9 * cells, 9 * cells], [cells, 9 * cells]]) - 0.5
+    corners = np.array([[-7.8, -8.9], [208.7, 1.4], [178.2, 210.2], [-8.7, 194.1]])
+    homography = cv2.getPerspectiveTransform(source.astype(np.float32), corners.astype(np.float32))
+    frame = cv2.warpPerspective(padded, homography, (544, 503), flags=cv2.INTER_AREA, borderValue=255)
+    for detector in (NapaDetector(), NapaDetector(min_tag_px=16)):
+        [observation] = detector.detect(frame)
+        assert observation.tag_id == 521
+        assert np.abs(observation.corners - corners).max() < 0.1
+
+
+def test_a_cut_border_is_not_confused_with_a_dark_row_inside_it() -> None:
+    """tag16h5 id 12 has an all-dark payload row inside its top border. Cut more than a cell, that row looks like
+    the border, and the square read a cell off decodes as another tag: it must not be reported."""
+
+    image = tag_image(12, family="tag16h5", cell_px=10, quiet_zone_cells=1)
+    canvas = np.full((image.shape[0] + 160, image.shape[1] + 160), 255, np.uint8)
+    canvas[80 : 80 + image.shape[0], 80 : 80 + image.shape[1]] = image
+    for cut in (11, 12, 13):  # the black square starts at row 90
+        frame = np.ascontiguousarray(cv2.GaussianBlur(canvas[90 + cut :], (3, 3), 0.8))
+        for detector in (NapaDetector(family="tag16h5"), NapaDetector(family="tag16h5", min_tag_px=16)):
+            assert all(o.tag_id == 12 for o in detector.detect(frame)), cut

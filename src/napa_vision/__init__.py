@@ -1,4 +1,4 @@
-"""Napa: a fast tag36h11 AprilTag detector with optional pose processing."""
+"""Napa: a fast AprilTag detector with optional pose processing."""
 
 from __future__ import annotations
 
@@ -17,6 +17,7 @@ _EXPORT_MODULES = {
     "ArtifactProvenance": "provenance",
     "CalibrationError": "calibration",
     "CameraCalibration": "calibration",
+    "CameraGammaEstimate": "napa_detector",
     "CameraPoseBounds": "types",
     "CameraPoseObservation": "types",
     "CameraPoseSolver": "solvers",
@@ -24,6 +25,7 @@ _EXPORT_MODULES = {
     "FiducialDetector": "types",
     "FiducialImageObservation": "types",
     "FrameResult": "types",
+    "RollingShutter": "types",
     "NapaDetector": "napa_detector",
     "NativeLibraryError": "napa_detector",
     "Pose2dWithCovariance": "covariance",
@@ -40,10 +42,13 @@ _EXPORT_MODULES = {
     "TagAngleObservation": "types",
     "TagAngleSolver": "solvers",
     "VisionProcessor": "processing",
+    "RollingShutterEstimate": "processing",
+    "estimate_rolling_shutter": "processing",
     "calibrate_checkerboard_images": "calibration",
     "calibrate_stereo_points": "stereo_calibration",
     "camera_pose_covariance": "covariance",
     "discover_checkerboard_images": "calibration",
+    "estimate_camera_gamma": "napa_detector",
     "families": "napa_detector",
     "load_calibration_data": "calibration",
     "load_stereo_calibration": "stereo_calibration",

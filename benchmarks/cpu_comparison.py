@@ -35,7 +35,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from time import perf_counter_ns, process_time_ns
 
-import numpy as np
+# OpenBLAS starts its pool at NumPy import, before CLI thread configuration.
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+import numpy as np  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT), str(ROOT / "src")]
@@ -50,7 +52,7 @@ GROSS_CORNER_PX = 2.0
 
 
 def _stress_tiny(rng: np.random.Generator, width: int, height: int):
-    """1-4 tags with a 12-31 px black square: below NAPA's default min_tag_px of 32."""
+    """1-4 tags with a 12-31 px black square."""
 
     image = pm._uniform(rng, width, height) if rng.random() < 0.5 else pm._smooth_texture(rng, width, height)
     tags = pm.place_tags(rng, width, height, int(rng.integers(1, 5)), (12.0, 31.0), max_tilt_deg=10)
@@ -130,11 +132,20 @@ def iter_corpus(
 REAL = "real-unannotated"
 
 
-def frame_by_name(name: str, seed: int = 2468, range_cases: int = 30) -> pm.Frame:
-    """Re-render one frame from its name (``scenario-WxH-index``), e.g. to re-time an outlier alone."""
+def frame_by_name(name: str, seed: int = 2468, range_cases: int = 30, *, real_images: Sequence[Path] = ()) -> pm.Frame:
+    """Re-create a named frame. Real frames need the original --real-images list in the same order."""
 
     scenario, size, index = name.rsplit("-", 2)
     resolution = tuple(int(v) for v in size.split("x"))
+    if scenario == REAL:
+        position = int(index)
+        if not 0 <= position < len(real_images):
+            raise ValueError(f"{name} needs the original --real-images list")
+        frame = next(real_frames([real_images[position]]))
+        frame.index = position
+        if frame.resolution != resolution:
+            raise ValueError(f"{name}: real image dimensions are {frame.resolution}, not {resolution}")
+        return frame
     if scenario in STRESS:
         return render_stress(scenario, int(index), resolution, seed)
     if scenario == "range":
@@ -148,6 +159,7 @@ def real_frames(paths: Sequence[Path]) -> Iterator[pm.Frame]:
     import cv2
 
     for index, path in enumerate(paths):
+        path = path.expanduser().resolve()
         image = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
         if image is None:
             raise OSError(f"cannot read {path}")
@@ -783,7 +795,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     total = len(args.resolutions) * (len(args.scenarios) * args.frames + len(args.stress) * args.stress_frames)
     total += args.range_cases * len(pm.RANGE_SIDES_PX) + len(args.real_images)
     if args.only_frames:
-        frames = [frame_by_name(name, args.seed, args.range_cases or 30) for name in args.only_frames]
+        frames = [
+            frame_by_name(name, args.seed, args.range_cases or 30, real_images=args.real_images)
+            for name in args.only_frames
+        ]
         total = len(frames)
 
     def progress(done: int) -> None:
@@ -840,6 +855,23 @@ def markdown_report(
         for resolution in resolutions:
             rows = [results.get((scenario, resolution, b)) for b in backends]
             if not any(rows):
+                continue
+            if scenario == REAL:
+                lines += [
+                    f"\n#### {scenario} @ {resolution}\n",
+                    "These frames have no labels. Outputs count detections.",
+                    "\n| Backend | Tuning | p50 ms | p95 ms | p99 ms | CPU/wall | Outputs | Unstable frames |",
+                    "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+                ]
+                for backend, row in zip(backends, rows, strict=True):
+                    if row is None:
+                        continue
+                    latency = row["latency"]
+                    lines.append(
+                        f"| {backend} | {report['backends'][backend].get('tuning', '')} | {latency['p50_ms']:.3f} "
+                        f"| {latency['p95_ms']:.3f} | {latency['p99_ms']:.3f} | {row['cpu_over_wall']:.2f} "
+                        f"| {row['detections']} | {row['unstable_frames']} |"
+                    )
                 continue
             lines += [
                 f"\n#### {scenario} @ {resolution}\n",
@@ -1188,7 +1220,9 @@ def real_agreement(rows: Sequence[dict[str, object]]) -> dict[str, object]:
     for row in rows:
         if row["scenario"] != REAL:
             continue
-        path = Path(str(row["detail_path"]))
+        path = Path(str(row["detail_path"])).expanduser()
+        if not path.is_absolute():
+            path = ROOT / path
         reference = apriltag_reference(path.with_suffix(".txt"))
         detections = [(int(i), np.asarray(c, np.float64)) for i, c in json.loads(str(row["detections_json"]))]
         pairs = sorted(

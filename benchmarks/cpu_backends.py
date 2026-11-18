@@ -19,16 +19,20 @@ import gc
 import hashlib
 import json
 import os
+import struct
 import subprocess
 import sys
 import threading
 import time
+import weakref
 from collections.abc import Callable
 from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
-import numpy as np
+# OpenBLAS starts its pool at NumPy import, before CLI thread configuration.
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+import numpy as np  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 WORK = ROOT / "work"
@@ -130,9 +134,14 @@ def sha256(path: Path) -> str:
 
 def _git_head(path: Path) -> str | None:
     try:
-        return subprocess.run(
-            ["git", "-C", str(path), "rev-parse", "HEAD"], capture_output=True, text=True, check=True
-        ).stdout.strip()
+        root, head = subprocess.run(
+            ["git", "-C", str(path), "rev-parse", "--show-toplevel", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.splitlines()
+        # An unpacked source archive may sit inside another checkout's work directory.
+        return head if Path(root).resolve() == path.resolve() else None
     except (OSError, subprocess.CalledProcessError):
         return None
 
@@ -173,32 +182,59 @@ _DOUBLE_P = ctypes.POINTER(ctypes.c_double)
 
 # ------------------------------------------------------------------------------------------- Napa
 
+# Older "napa" rows used min_tag_px=32 with splitting off. Current presets use automatic splitting.
+NAPA_DEFAULT_MIN_TAG_PX = 22
 
-def napa_backend(name: str, min_tag_px: int = 32) -> Backend:
+
+def napa_library_path(library: ctypes.CDLL) -> Path:
+    """Locate the loaded core, including a bare library name resolved by the Linux loader."""
+    maps = Path("/proc/self/maps")
+    if maps.exists():
+        address = ctypes.cast(library.napa_detect, ctypes.c_void_p).value
+        for line in maps.read_text().splitlines():
+            fields = line.split(maxsplit=5)
+            start, end = (int(value, 16) for value in fields[0].split("-"))
+            if address is not None and start <= address < end and len(fields) == 6:
+                return Path(fields[5]).resolve(strict=True)
+    path = Path(library._name)
+    if not path.is_absolute():
+        raise RuntimeError("cannot identify the loaded NAPA core; use an absolute NAPA_CORE_LIBRARY path")
+    return path.resolve(strict=True)
+
+
+def napa_config(detector) -> dict[str, object]:
+    """Effective settings and loaded core of an already constructed public NAPA detector."""
+
     from napa_vision import __version__
-    from napa_vision.napa_detector import NapaDetector, _library
+    from napa_vision.napa_detector import _FamilyLayout
 
-    library = _library()  # loads now, so the config can name the file that actually loaded
-    core = loaded_libraries("napa_core")
-
-    def factory() -> DetectFn:
-        detector = NapaDetector(min_tag_px=min_tag_px)
-        return lambda image: [(o.tag_id, o.corners) for o in detector.detect(image)]
-
-    probe = NapaDetector(min_tag_px=min_tag_px)
-    params = probe._params
-    config = {
+    library, params = detector._library, detector._params
+    core = napa_library_path(library)
+    layout = _FamilyLayout()
+    if library.napa_family_info(detector.family.encode(), ctypes.byref(layout)) != 0:
+        raise RuntimeError(f"the loaded Napa core has no layout for {detector.family}")
+    return {
         "library": "NAPA (napa_vision.NapaDetector, public Python API)",
         "version": __version__,
         "commit": _git_head(ROOT),
         "core_library_env": os.environ.get("NAPA_CORE_LIBRARY"),
-        "core_library_loaded": core,
-        "core_library_sha256": [sha256(Path(p)) for p in core],
+        "core_library_loaded": [public_text(str(core))],
+        "core_library_sha256": [sha256(core)],
         "core_handle": str(library),
-        "family": "tag36h11",
+        "family": detector.family,
         "min_tag_px": params.min_tag_px,
-        # napa_core.c: base = min_tag_px * 3 / (4 * W), W = 8 for tag36h11; at least 1.
-        "base_sampling_stride_px": max(1, params.min_tag_px * 3 // 32),
+        "recover_shadows": detector.recover_shadows,
+        "shadow_min_tag_px": detector.shadow_min_tag_px,
+        "split_touching": detector.split_touching,
+        "regrow_small_tags": detector.regrow_small_tags,
+        "soft_decode": detector.soft_decode,
+        "align_corners": detector.align_corners,
+        "camera_gamma": detector.camera_gamma,
+        "tag_shape": detector.tag_shape,
+        "camera": None,
+        "max_detections": len(detector._results),
+        # napa_core.c: base = min_tag_px * 3 / (4 * family width); at least 1.
+        "base_sampling_stride_px": max(1, params.min_tag_px * 3 // (4 * layout.width)),
         "noisy_frame_box_averaging": (
             "noisy frames: original stride 1; centred 3x3 at stride 2 following stride 1; stride-sized blocks otherwise"
         ),
@@ -208,11 +244,24 @@ def napa_backend(name: str, min_tag_px: int = 32) -> Backend:
         "sharpening": params.sharpening_x100 / 100,
         "decimation": "none (sparse rake; every level fits corners at full resolution)",
         "corner_refinement": "always: full-resolution edge fit",
-        "threads": 1,
-        "threading": "none inside a frame; one instance per thread",
+        "threads": detector.threads,
+        "threading": "one instance per calling thread; optional native per-frame workers",
         "pixel_offset_applied": 0.0,
     }
-    probe.close()
+
+
+def napa_backend(name: str, min_tag_px: int = NAPA_DEFAULT_MIN_TAG_PX, *, threads: int = 1) -> Backend:
+    from napa_vision.napa_detector import NapaDetector
+
+    def factory() -> DetectFn:
+        detector = NapaDetector(min_tag_px=min_tag_px, threads=threads)
+        return lambda image: [(o.tag_id, o.corners) for o in detector.detect(image)]
+
+    probe = NapaDetector(min_tag_px=min_tag_px, threads=threads)
+    try:
+        config = napa_config(probe)
+    finally:
+        probe.close()
     return Backend(name, factory, config)
 
 
@@ -427,6 +476,8 @@ def opencv_backend(
 
     import cv2
 
+    if not hasattr(cv2, "aruco"):
+        raise ImportError("this OpenCV build has no cv2.aruco module")
     cv2.setNumThreads(threads)
     dictionary = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_APRILTAG_36h11)
 
@@ -587,6 +638,81 @@ def aruco_nano_backend(name: str, threads: int) -> Backend:
     return Backend(name, factory, config)
 
 
+# ---------------------------------------------------------------------------------------- vkapriltag
+
+
+def vkapriltag_backend(name: str, decimation: int, family: str = "tag36h11") -> Backend:
+    """Optional: a Vulkan-compute detector, run as a worker process. Skipped without the worker or a Vulkan device."""
+
+    worker = SHIM_DIR / "vkapriltag_worker"
+    if not worker.exists():
+        raise OSError(f"{worker} isn't built; see benchmarks/README.md")
+
+    def start() -> subprocess.Popen:
+        process = subprocess.Popen(
+            [str(worker), family, str(decimation)],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+        if process.stdout.readline() != b"ready\n":
+            process.kill()
+            raise RuntimeError("vkapriltag found no usable Vulkan device")
+        return process
+
+    def stop(process: subprocess.Popen) -> None:
+        # The worker exits when its input closes. A dropped Popen never closes its pipes (subprocess keeps a running
+        # child alive to reap it later), so each abandoned worker would wait forever, holding its Vulkan memory.
+        process.stdin.close()
+        try:
+            process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+        process.stdout.close()
+
+    stop(start())  # fails here, so the backend is skipped, when there is no device
+
+    def factory() -> DetectFn:
+        process = start()
+
+        def detect(image: np.ndarray) -> list[Detection]:
+            image = _contiguous(image)
+            height, width = image.shape[:2]
+            process.stdin.write(struct.pack("<ii", width, height))
+            process.stdin.write(image.tobytes())
+            process.stdin.flush()
+            header = process.stdout.read(4)
+            if len(header) != 4:
+                raise RuntimeError("vkapriltag worker ended before returning a detection count")
+            count = struct.unpack("<i", header)[0]
+            if count < 0:
+                raise RuntimeError(f"vkapriltag worker returned a negative detection count: {count}")
+            payload = process.stdout.read(count * 72)
+            if len(payload) != count * 72:
+                raise RuntimeError("vkapriltag worker returned a truncated detection payload")
+            rows = np.frombuffer(
+                payload,
+                np.dtype([("id", "<i4"), ("hamming", "<i4"), ("corners", "<f8", (4, 2))]),
+            )
+            return [
+                (int(row["id"]), row["corners"] - 0.5) for row in rows
+            ]  # pixel i covers [i, i + 1), as in libapriltag
+
+        detect.handle = process
+        weakref.finalize(detect, stop, process)  # ends the worker when the detector is dropped, or at exit
+        return detect
+
+    config = {
+        "library": "vkapriltag (yojobama/vkapriltag, Vulkan compute plus libapriltag on the CPU, via a worker process)",
+        "decimation": decimation,
+        "refine_edges": True,
+        "device": "whichever Vulkan device the loader picks; timings depend on it",
+        "pixel_offset_applied": -0.5,
+    }
+    return Backend(name, factory, config)
+
+
 # ------------------------------------------------------------------------------------------ RapidTag
 
 
@@ -644,8 +770,14 @@ def registry(threads: int) -> dict[str, Callable[[], Backend]]:
     """Every backend configuration by name. Building one imports and probes its library."""
 
     entries: dict[str, Callable[[], Backend]] = {
-        "napa": lambda: napa_backend("napa", 32),
-        **{f"napa-mtp{m}": (lambda m=m: napa_backend(f"napa-mtp{m}", m)) for m in NAPA_SWEEP if m != 32},
+        "vkapriltag-d1": lambda: vkapriltag_backend("vkapriltag-d1", 1),
+        "vkapriltag-d2": lambda: vkapriltag_backend("vkapriltag-d2", 2),
+        "napa": lambda: napa_backend("napa", threads=threads),
+        **{
+            f"napa-mtp{m}": (lambda m=m: napa_backend(f"napa-mtp{m}", m, threads=threads))
+            for m in NAPA_SWEEP
+            if m != NAPA_DEFAULT_MIN_TAG_PX
+        },
         "apriltag3-d2": lambda: apriltag_backend("apriltag3-d2", 2.0, threads),
         "apriltag3-d1": lambda: apriltag_backend("apriltag3-d1", 1.0, threads),
         "wpilib-d2": lambda: wpilib_backend("wpilib-d2", 2.0, threads),
@@ -668,8 +800,10 @@ def registry(threads: int) -> dict[str, Callable[[], Backend]]:
 
 
 TUNING = {
-    "napa": "default",
-    **{f"napa-mtp{m}": f"tuned: min_tag_px={m}" for m in NAPA_SWEEP if m != 32},
+    "napa": f"default (min_tag_px={NAPA_DEFAULT_MIN_TAG_PX}, no shadow pass)",
+    "vkapriltag-d1": "defaults, decimation 1, refine_edges on",
+    "vkapriltag-d2": "defaults, decimation 2 (its default), refine_edges on",
+    **{f"napa-mtp{m}": f"tuned: min_tag_px={m}" for m in NAPA_SWEEP if m != NAPA_DEFAULT_MIN_TAG_PX},
     "apriltag3-d2": "default (quad_decimate=2)",
     "apriltag3-d1": "tuned: quad_decimate=1 (full resolution)",
     "wpilib-d2": "WPILib's defaults (quad_decimate=2, min cluster 300 px, critical angle 45 degrees)",
@@ -696,7 +830,7 @@ def build_backends(names: list[str], threads: int) -> tuple[list[Backend], dict[
             backend = entries[name]()
             backend.config["tuning"] = TUNING[name]
             backends.append(backend)
-        except (ImportError, OSError, RuntimeError, AttributeError) as exc:
+        except (ImportError, OSError, RuntimeError) as exc:
             skipped[name] = f"{type(exc).__name__}: {exc}"
     return backends, skipped
 
@@ -708,7 +842,8 @@ def resource_main(argv: list[str] | None = None) -> int:
     """Measure one backend alone: construction, CPU time, wall time, and peak RSS over a frame set.
 
     ``serial`` runs every frame on one detector in this thread. ``parallel`` gives each of ``--workers``
-    Python threads its own detector (one internal thread each) and lets them pull frames from a shared index.
+    Python threads its own detector and lets them pull frames from a shared index. Each detector uses --threads
+    internal threads; use --threads 1 to measure frame parallelism alone.
     """
 
     parser = argparse.ArgumentParser(description=resource_main.__doc__)

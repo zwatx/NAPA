@@ -54,7 +54,7 @@ def test_image_layout() -> None:
 
 @pytest.mark.parametrize("bad", [-1, TAG36H11_COUNT, 1.0, True])
 def test_rejects_bad_ids(bad) -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="tag_id must be an integer"):
         tag_cells(bad)
 
 
@@ -64,7 +64,7 @@ def test_svg_prints_the_black_square_at_the_requested_size() -> None:
     assert "<text" not in svg
     labelled = tag_svg(7, size_mm=80.0)
     assert 'height="110.0000mm"' in labelled and "ID 7" in labelled
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="size_mm must be a positive number"):
         tag_svg(7, size_mm=0)
 
 

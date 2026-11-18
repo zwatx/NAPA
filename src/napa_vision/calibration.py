@@ -340,7 +340,6 @@ def calibrate_checkerboard_images(
     template *= checkerboard.square_size_m
     object_points: list[np.ndarray] = []
     image_points: list[np.ndarray] = []
-    accepted_paths: list[Path] = []
     rejected_paths: list[str] = []
     image_size: tuple[int, int] | None = None
     detection_flags = cv2.CALIB_CB_ADAPTIVE_THRESH | cv2.CALIB_CB_NORMALIZE_IMAGE
@@ -375,7 +374,6 @@ def calibrate_checkerboard_images(
         )
         object_points.append(template.copy())
         image_points.append(refined)
-        accepted_paths.append(path)
 
     if image_size is None:
         raise CalibrationError("none of the checkerboard images could be read")
@@ -406,7 +404,7 @@ def calibrate_checkerboard_images(
         projected, _ = cv2.projectPoints(world_points, rvec, tvec, camera_matrix, distortion)
         residual = projected.reshape(-1, 2) - detected.reshape(-1, 2)
         view_errors.append(float(np.sqrt(np.mean(np.sum(residual * residual, axis=1)))))
-    source = f"checkerboard calibration from {len(accepted_paths)} images"
+    source = f"checkerboard calibration from {len(image_points)} images"
     return CameraCalibration(
         camera_matrix=camera_matrix,
         distortion_coefficients=distortion,

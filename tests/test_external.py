@@ -118,3 +118,59 @@ def test_locus_loader_checks_truth_integrity_and_pixel_origin(tmp_path):
     (root / "rich_truth.json").write_text(json.dumps({"records": []}))
     with pytest.raises(ValueError, match="truth checksum"):
         list(frames(tmp_path, config))
+
+
+@pytest.mark.parametrize(
+    "name,minimum,split",
+    [
+        ("napa", 22, "auto"),
+        ("napa16", 16, "auto"),
+        ("napa-split", 22, True),
+        ("napa16-split", 16, True),
+        ("napa-nosplit", 22, False),
+        ("napa16-nosplit", 16, False),
+    ],
+)
+def test_external_napa_names_use_current_defaults_or_explicit_split_modes(tmp_path, monkeypatch, name, minimum, split):
+    from benchmarks import external
+
+    (tmp_path / "forward").mkdir()
+    (tmp_path / "forward/tags.csv").write_text("truth")
+    monkeypatch.setattr(
+        external, "icra_frames", lambda *args: iter([("blank", "pixels", np.zeros((16, 16), np.uint8), [])])
+    )
+    created = []
+    constructor = external.NapaDetector
+
+    def detector(**options):
+        instance = constructor(**options)
+        created.append(instance)
+        return instance
+
+    monkeypatch.setattr(external, "NapaDetector", detector)
+    report = external.evaluate(tmp_path, ["icra-forward"], [name], 1)
+    assert len(created) == 1
+    instance = created[0]
+    assert instance.min_tag_px == minimum
+    assert instance.split_touching == split
+    assert report["settings"][f"icra-forward/{name}"]["split_touching"] == split
+    default = constructor()
+    try:
+        for attribute in (
+            "family",
+            "max_hamming",
+            "recover_shadows",
+            "shadow_min_tag_px",
+            "soft_decode",
+            "align_corners",
+            "regrow_small_tags",
+            "camera_gamma",
+            "tag_shape",
+            "threads",
+            "camera",
+        ):
+            assert getattr(instance, attribute) == getattr(default, attribute), attribute
+        for field in ("min_contrast", "min_border_cells", "sharpening_x100"):
+            assert getattr(instance._params, field) == getattr(default._params, field), field
+    finally:
+        default.close()

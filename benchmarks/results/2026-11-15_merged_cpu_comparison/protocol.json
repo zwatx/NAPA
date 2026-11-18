@@ -1,0 +1,124 @@
+{
+  "selection": "Every frame from the fixed existing corpus; no output-dependent selection or exclusions.",
+  "main": {
+    "scenarios": 20,
+    "frames_per_scenario_per_resolution": 50,
+    "frames": 3000
+  },
+  "stress": {
+    "scenarios": 4,
+    "frames_per_scenario_per_resolution": 50,
+    "frames": 600
+  },
+  "range": {
+    "sizes_px": [
+      12,
+      14,
+      16,
+      18,
+      20,
+      22,
+      24,
+      28,
+      32,
+      36,
+      40,
+      48,
+      56,
+      64,
+      72,
+      80,
+      88,
+      96
+    ],
+    "frames_per_size": 50,
+    "frames": 900
+  },
+  "total_frames": 4500,
+  "seed": 2468,
+  "order_seed": 2468,
+  "resolutions": [
+    "640x480",
+    "1280x720",
+    "1920x1080"
+  ],
+  "warmup_per_frame": 1,
+  "timed_repetitions": 10,
+  "threads": 1,
+  "cpus": [
+    2
+  ],
+  "recorded_before_measurement_utc": "2026-11-15T20:19:20.167931+00:00",
+  "source_commit": "2489605efc2f07043222b52e3a69132d2e5dee6d",
+  "source_sha256": {
+    "src/napa_vision/_native/napa_core.c": "a5d8923ab5334367139de56f79eefe9890d63ba52d0a366b57de33c07ca815b6",
+    "src/napa_vision/_native/napa_core.h": "929706ea40e23fca3ec335afc200501536b78a60a26f11212cdf0f7f26c2e3ed",
+    "src/napa_vision/napa_detector.py": "61ad5327270c26853fafa0c48ea130531b20c601f61088b4580808c64bf63c27",
+    "benchmarks/cpu_backends.py": "7d2cdc0b1e22a3e62a4f19a055d5bb0f5d22bb0e3dadc92b3fda74002541d25f",
+    "benchmarks/cpu_comparison.py": "6e4d1f22dc8cd8d3b24083f89ccc6407e1754f7f93a8e56f677a48748e563288",
+    "benchmarks/performance_matrix.py": "be6d6e0e223a8c08cba3f424c995f03c7be5d7a78e0156f55b81e14bd45e8102"
+  },
+  "napa_binary_path": "/home/zwatx/code/mac-projects/apriltag-detector/work/readme-benchmarks-2026-11-15/napa_core.so",
+  "napa_binary_sha256": "ab299c868122f5ce775ec0f2a0f7ac49c56b82f645ffd27afed67b360da534cc",
+  "compiler": "cc (Ubuntu 15.2.0-16ubuntu1) 15.2.0",
+  "compiler_flags": [
+    "-O3",
+    "-std=c99",
+    "-fvisibility=hidden",
+    "-fno-wrapv",
+    "-pthread",
+    "-fPIC",
+    "-shared",
+    "-Isrc/napa_vision/_native",
+    "src/napa_vision/_native/napa_core.c",
+    "-lm"
+  ],
+  "backends": [
+    "napa",
+    "napa-mtp16",
+    "napa-mtp32",
+    "wpilib-d2",
+    "apriltag3-d2",
+    "apriltag3-d1",
+    "locus",
+    "locus-d2",
+    "opencv",
+    "opencv-subpix",
+    "opencv-aruco3",
+    "opencv-aruco3-min32",
+    "opencv-aruco3-half16",
+    "aruco-nano",
+    "rapidtag",
+    "rapidtag-subpix"
+  ],
+  "peer_binary_sha256": {
+    "libapriltag_shim.so": "935e81e5cd45b62d86a56368d879c5c5f5cab04d021ee75e63b88ac8b2d58931",
+    "libaruco_nano_shim.so": "8d6c8aa9dcc90501a836ce9147790a9910f97b49c1e40f0d8d930ae6596b2937"
+  },
+  "expected_backend_settings": {
+    "napa": {
+      "min_tag_px": 22,
+      "split_touching": "auto",
+      "recover_shadows": false,
+      "regrow_small_tags": false,
+      "threads": 1,
+      "max_detections": 64
+    },
+    "napa-mtp16": {
+      "min_tag_px": 16,
+      "split_touching": "auto",
+      "recover_shadows": false,
+      "regrow_small_tags": false,
+      "threads": 1,
+      "max_detections": 64
+    },
+    "napa-mtp32": {
+      "min_tag_px": 32,
+      "split_touching": "auto",
+      "recover_shadows": false,
+      "regrow_small_tags": false,
+      "threads": 1,
+      "max_detections": 64
+    }
+  }
+}

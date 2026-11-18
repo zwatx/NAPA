@@ -149,12 +149,6 @@ def _rotation_matrices(vectors: np.ndarray) -> np.ndarray:
     return np.eye(3) + first * skew + second * skew @ skew
 
 
-def _rotation_matrix(vector: np.ndarray) -> np.ndarray:
-    """``exp([v]x)``, by Rodrigues' formula."""
-
-    return _rotation_matrices(vector)[0]
-
-
 def pose_difference(transform: np.ndarray, other: np.ndarray) -> np.ndarray:
     """``other``'s offset from ``transform`` in the covariance convention: ``[dt, r]`` with ``R_other = exp(r) R``.
 
@@ -168,7 +162,7 @@ def pose_difference(transform: np.ndarray, other: np.ndarray) -> np.ndarray:
 
 def _perturb(transform: np.ndarray, delta: np.ndarray) -> np.ndarray:
     out = transform.copy()
-    out[:3, :3] = _rotation_matrix(delta[3:]) @ transform[:3, :3]
+    out[:3, :3] = _rotation_matrices(delta[3:])[0] @ transform[:3, :3]
     out[:3, 3] += delta[:3]
     return out
 

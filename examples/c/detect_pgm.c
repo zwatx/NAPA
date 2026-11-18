@@ -43,9 +43,10 @@ int main(int argc, char **argv) {
         fprintf(stderr, "%s: not an 8-bit binary PGM\n", argv[1]);
         return 2;
     }
-    /* The defaults NapaDetector uses in Python. */
-    napa_params params = {.min_tag_px = 32, .max_hamming = 3, .min_contrast = 20, .min_border_cells = 22,
-                          .sharpening_x100 = 25};
+    /* The values NapaDetector defaults to in Python, except split_touching: Python's
+     * "auto" default sends 2; this example leaves it off. */
+    napa_params params = {.min_tag_px = 22, .max_hamming = 3, .min_contrast = 20, .min_border_cells = 22,
+                          .sharpening_x100 = 25, .split_touching = 0};
     napa_detection found[64];
     napa_detector *detector = napa_create();
     int count = detector ? napa_detect(detector, image, width, height, width, &params, found, 64) : -2;

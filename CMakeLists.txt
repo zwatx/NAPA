@@ -30,7 +30,11 @@ if(MSVC)
 else()
   # Signed overflow isn't relied on; -fno-wrapv keeps compilers free to optimise the inner loops.
   target_compile_options(napa PRIVATE $<$<CONFIG:Release>:-O3> -fno-wrapv)
-  target_link_libraries(napa PRIVATE m)
+  # Optional worker threads (napa_set_threads). A plain flag rather than Threads::Threads, so the exported
+  # napaConfig.cmake needs no find_dependency; empty where libc has pthreads (Android, glibc 2.34+).
+  set(THREADS_PREFER_PTHREAD_FLAG ON)
+  find_package(Threads REQUIRED)
+  target_link_libraries(napa PRIVATE m ${CMAKE_THREAD_LIBS_INIT})
 endif()
 
 include(GNUInstallDirs)

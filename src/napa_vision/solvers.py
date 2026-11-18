@@ -4,6 +4,7 @@ import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import partial
+from numbers import Real
 from typing import Protocol
 
 import cv2
@@ -234,7 +235,8 @@ def _solution_error(
     if errors is not None and index < len(errors):
         value = float(np.asarray(errors[index]).reshape(-1)[0])
         if np.isfinite(value):
-            return value
+            # OpenCV averages over 2N scalar coordinates; our corner-distance RMS uses N points.
+            return math.sqrt(2.0) * value
     projected, _ = cv2.projectPoints(
         object_points,
         rvec,
@@ -253,11 +255,21 @@ def _valid_solution(rvec: np.ndarray, tvec: np.ndarray, error: float, max_error:
 
 
 class SingleTagPoseSolver:
-    """Solve each tag's two planar (IPPE) poses, with covariances for ``corner_noise_px`` of corner noise."""
+    """Solve each tag's two planar (IPPE) poses, with covariances for ``corner_noise_px`` of corner noise.
+
+    The error limit must be positive; infinity disables the cutoff.
+    """
 
     def __init__(
         self, max_reprojection_error_px: float = 5.0, *, corner_noise_px: float = DEFAULT_CORNER_NOISE_PX
     ) -> None:
+        if (
+            isinstance(max_reprojection_error_px, bool)
+            or not isinstance(max_reprojection_error_px, Real)
+            or math.isnan(max_reprojection_error_px)
+            or max_reprojection_error_px <= 0.0
+        ):
+            raise ValueError("max_reprojection_error_px must be greater than zero and not NaN")
         self.max_reprojection_error_px = max_reprojection_error_px
         self.corner_noise_px = validate_corner_noise(corner_noise_px)
 
@@ -369,9 +381,13 @@ class CameraPoseSolver:
         )
         if not np.isfinite(tag_limit) or tag_limit <= 0.0:
             raise ValueError("max_tag_reprojection_error_px must be finite and greater than zero")
-        if isinstance(max_outlier_iterations, bool) or max_outlier_iterations < 0:
+        if (
+            isinstance(max_outlier_iterations, bool)
+            or not isinstance(max_outlier_iterations, int)
+            or max_outlier_iterations < 0
+        ):
             raise ValueError("max_outlier_iterations must be a non-negative integer")
-        if isinstance(ransac_iterations, bool) or ransac_iterations < 1:
+        if isinstance(ransac_iterations, bool) or not isinstance(ransac_iterations, int) or ransac_iterations < 1:
             raise ValueError("ransac_iterations must be a positive integer")
         self.max_reprojection_error_px = float(max_reprojection_error_px)
         self.max_tag_reprojection_error_px = float(tag_limit)

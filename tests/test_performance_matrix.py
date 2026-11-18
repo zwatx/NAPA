@@ -35,7 +35,7 @@ def test_every_scenario_renders_and_negatives_have_no_tags() -> None:
         ids = [tag.tag_id for tag in frame.tags]
         assert len(ids) == len(set(ids))
         for tag in frame.tags:
-            # The whole tag, quiet zone included, stays inside the frame.
+            # The black-square corners stay inside; frame-edge may clip the quiet zone.
             assert tag.corners.min() >= 0 and tag.corners[:, 0].max() < 640 and tag.corners[:, 1].max() < 480
 
 

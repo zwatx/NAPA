@@ -247,3 +247,35 @@ def test_single_tag_camera_pose_keeps_both_ippe_candidates_and_suppresses_a_bad_
     assert CameraPoseSolver().solve([observation], [single], profile.camera, profile.tag_size_m, layout) is None
     angle = TagAngleSolver().solve(observation, profile.camera, single)
     assert angle.tag_id == 1
+
+
+@pytest.mark.parametrize("limit", [float("nan"), 0.0, -1.0, -float("inf"), True])
+def test_single_tag_solver_rejects_invalid_error_limits(limit: float) -> None:
+    with pytest.raises(ValueError, match="max_reprojection_error_px"):
+        SingleTagPoseSolver(max_reprojection_error_px=limit)
+
+
+def test_single_tag_solver_allows_an_unlimited_seed_search() -> None:
+    # Stereo seeds both planar alternatives before applying its joint acceptance gate.
+    assert SingleTagPoseSolver(max_reprojection_error_px=math.inf).max_reprojection_error_px == math.inf
+
+
+@pytest.mark.parametrize("name", ["max_outlier_iterations", "ransac_iterations"])
+@pytest.mark.parametrize("value", [0.5, 1.0, float("nan"), float("inf"), True])
+def test_camera_pose_solver_requires_integer_iteration_counts(name: str, value: float) -> None:
+    with pytest.raises(ValueError, match=name):
+        CameraPoseSolver(**{name: value})
+
+
+@pytest.mark.parametrize(
+    "name,value", [("max_outlier_iterations", 0), ("max_outlier_iterations", 2), ("ransac_iterations", 50)]
+)
+def test_camera_pose_solver_accepts_python_integer_counts(name, value):
+    assert getattr(CameraPoseSolver(**{name: value}), name) == value
+
+
+@pytest.mark.parametrize("name", ["max_outlier_iterations", "ransac_iterations"])
+@pytest.mark.parametrize("value", [np.int32(2), np.int64(50)])
+def test_camera_pose_solver_requires_python_integer_counts(name, value):
+    with pytest.raises(ValueError, match=name):
+        CameraPoseSolver(**{name: value})

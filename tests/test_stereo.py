@@ -145,16 +145,18 @@ def test_bad_camera_tag_group_can_be_removed_without_removing_other_view_of_tag(
 
 def test_invalid_unknown_and_duplicate_observations_are_diagnosed_without_counting_twice():
     calibration, layout, _, observations = stereo_scene()
+    layout[3] = layout[2].copy()
     observations[0] += [
         observations[0][0],
         FiducialImageObservation(99, np.zeros((4, 2))),
-        FiducialImageObservation(1, np.full((4, 2), np.nan)),
+        FiducialImageObservation(3, np.full((4, 2), np.nan)),
     ]
     result = solve(StereoPoseSolver(calibration, layout, TAG_SIZE, max_capture_skew_s=0.01), observations)
     assert result.status == "stereo"
     assert len(result.diagnostics.accepted_groups) == 6
     assert "duplicate" in result.diagnostics.rejected_group_reasons[("left", 0)]
     assert "layout" in result.diagnostics.rejected_group_reasons[("left", 99)]
+    assert "finite 4x2" in result.diagnostics.rejected_group_reasons[("left", 3)]
     empty = solve(StereoPoseSolver(calibration, layout, TAG_SIZE, max_capture_skew_s=0.01), ([], []))
     assert empty.status == "rejected" and empty.pose is None
 
@@ -190,7 +192,7 @@ def test_solver_snapshots_layout_and_calibration_and_result_owns_arrays():
 def test_invalid_configuration_is_rejected(keyword, value):
     calibration, layout, _, _ = stereo_scene()
     kwargs = {"max_capture_skew_s": 0.01, keyword: value}
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="corner_noise_px" if keyword == "corner_noise_px" else keyword):
         StereoPoseSolver(calibration, layout, TAG_SIZE, **kwargs)
 
 

@@ -1,91 +1,84 @@
 # How NAPA works
 
-Upstream AprilTag processes the whole frame before it looks for tags. It thresholds every pixel, segments the image
-into regions, and fits a quadrilateral to every region's outline. NAPA finds likely tags on a sparse grid of pixels
-first, skips anything without contrast, and only does full-resolution work on the tags themselves.
+Upstream AprilTag processes the whole frame first: threshold every pixel, segment, fit quads everywhere. NAPA works
+the other way round. It finds likely tags on a sparse grid, then spends full-resolution work only on them.
 
-![NAPA on one frame, stage by stage: it samples every third pixel, skips flat tiles, turns dark samples into runs and blobs, drops shapes that can't be tags, and fits edges and decodes only the tags, at full resolution.](napa-pipeline.webp)
+![NAPA on one frame, stage by stage: it samples a sparse grid, skips flat tiles, groups dark samples into blobs, drops shapes that cannot be tags, then fits edges and decodes only the tags, at full resolution.](napa-pipeline.webp)
+
+*One synthetic frame, stage by stage, at `min_tag_px=32`.*
 
 ## 1. Sample a sparse grid
 
-A tag36h11 tag is 8 cells across, and its black border is one cell wide. NAPA reads only the pixels on a grid spaced ¾
-of the smallest cell apart, which always puts a sample in the dark core of the border, even when blur greys the cell's
-edges. With the default 32 px minimum tag size, that's every third pixel in each direction, or one pixel in nine.
+A tag36h11 tag is 8 cells across, border one cell wide. Sampling every ¾ cell guarantees a sample lands in the
+border's dark core, even with blur. At the default `min_tag_px=22` that is every other pixel (1 in 4). At 32, every
+third (1 in 9).
 
-Larger tags are found on coarser grids (2×, 4×, 8×, and up). Each is built from the one before rather than from the
-image, and together they add about a third to the sampling cost. Each grid handles a band of tag sizes, and the bands
-overlap, so a blurred or tilted tag can be found on more than one. Large, low-contrast tags need a grid fine enough to
-keep their one-cell white margin from falling between samples, or they merge with a dark background.
+Bigger tags are caught on coarser grids (2x, 4x, 8x…), each built from the last. Bands overlap, so a tilted or blurred
+tag can surface on several grids. Your pixels are never modified.
 
-## 2. Skip regions without contrast
+## 2. Skip flat regions
 
-The grid is divided into small tiles, and NAPA records each tile's darkest and brightest sample. A tile without
-contrast can't contain a tag's edge, so NAPA skips it without thresholding or segmenting it. The contrast required
-rises with sensor noise, which NAPA measures from the frame itself, region by region, so a noisy or textured patch
-doesn't hide tags elsewhere in the frame. On a very noisy frame, each sample averages the pixels around it. When the
-grid samples every pixel, as it does with a small `min_tag_px`, averaging would blur away tiny borders, so NAPA keeps
-the original pixels and requires more contrast instead. The next, coarser grid is averaged, and finds the
-low-contrast tags.
+The grid is tiled. Tiles without enough dark-to-bright range cannot contain a tag edge, so they are skipped whole.
+The bar rises with measured sensor noise, region by region, so one noisy patch does not blind the rest of the frame.
+On noisy frames samples average their neighbours, except on the finest grid, where that would erase tiny borders.
 
 ## 3. Group dark samples into blobs
 
-Every pass over the grid works on whole rows with vector instructions. One SSE2 or NEON instruction compares 16
-samples with their thresholds and packs the results into a bitmask. Runs of dark samples come out of the masks with
-one count-trailing-zeros instruction per run, and union-find joins runs that touch into blobs. The cost follows the
-number of runs, not the number of dark pixels. Gathering every third pixel uses a byte shuffle (SSSE3, chosen at run
-time) or NEON's de-interleaving load.
+Rows are processed with SIMD: one instruction compares 16 samples against their thresholds. Runs of dark samples are
+extracted from bitmasks and joined by union-find. Cost follows the number of runs, not dark pixels.
 
-## 4. Reject non-tags before measuring them
+Diagonal-only contacts get checked before joining, which separates most calibration-board tags that touch at a corner
+for free. The harder contacts are what [`split_touching`](detection.md#calibration-boards) handles.
 
-Each blob of plausible size gets a rough quadrilateral from its extreme points. A blob darker overall than any real
-code allows is dropped: every tag36h11 code has at least 10 white cells. Then NAPA:
+## 4. Reject non-tags early, then measure
 
-1. Fits each side to its edge at full resolution.
-2. Decodes straight away with a loose tolerance, reading the border first. Text, texture, and checkerboards are
-   rejected here, before any expensive refinement.
-3. Refines each side coarse to fine, then measures the edge every 1.5 px along it. Each measurement is the centre of
-   the edge's gradient, which is exact for real edges, where each pixel averages the light falling on it. Where blur
-   is wider than about half a cell, NAPA instead locates the edge where the image crosses halfway between the black
-   and white on either side.
-4. Intersects the four lines to get the corners, and decodes the payload.
+Each blob gets a rough quad from its extreme points. Impossible shapes die fast: wrong size, wrong aspect, too dark
+overall (every tag36h11 code has at least 10 white cells).
 
-Each side's line fit drops samples that disagree with the rest of the edge, so a short obstruction along a side
-doesn't pull the corners off.
+Survivors are decoded once with a loose fit. Text, texture, and checkerboards die here, cheaply. Only then does NAPA
+refine: each side is measured every 1.5 px at full resolution, fitted as a line (outliers dropped, so short
+obstructions do not drag corners), and corners come from intersecting the four lines. Sharp edges are located by their
+gradient centre, blurred ones by their midpoint crossing.
 
-Three kinds of image fool a plain edge fit, so NAPA checks for each:
+A few shapes need repairs. Each is kept only if the tag still decodes to the same ID:
 
-- **A grey quiet zone on a bright background** makes the margin look dark, so the first outline is the margin's. If
-  the decode fails, NAPA tries the outline's inner 8/10, where the black square would be.
-- **A side fitted one cell out**, on the margin's outer edge, shows up as border cells that read white. NAPA moves
-  that side in by a cell and refits it.
-- **Clipped exposure** shrinks every black region by the same amount. The black border must be exactly one cell wide,
-  so NAPA measures the shrinkage on the tag itself and undoes it.
+- **Bowed sides** (wide lenses): corners re-fit from short edge runs, or sides fit as curves.
+- **Sides cut by the frame**: use the frame boundary as a temporary side, then locate the missing outer side from
+  the border's inner edge beside decoded white cells. Keep it only if the other sides agree and the ID still matches.
+  Fully visible sides can supply a bow estimate; corners outside the frame are never locally re-fit.
+- **Small fragmented tags**, with `regrow_small_tags=True`: follow the fragment's connected dark pixels at full
+  resolution and try its outline again, within a fixed attempt budget.
+- **Grey quiet zone**: if the outline was really the margin, retry at its inner eight tenths.
+- **Side one cell out**: move it in a cell and re-fit.
+- **Clipped exposure**: the border must be exactly one cell wide; measure the shrink on the tag and undo it.
+- **Blur and tone curves**: blur on gamma-encoded cameras reads tags a few percent small. NAPA measures blur and tone
+  per tag after decoding and shifts sides back. [`camera_gamma`](detection.md#camera-gamma) goes further with a value
+  you supply.
+
+Duplicates across grids are removed by centre distance, then by outline containment. Two real copies of the same ID
+both survive.
 
 ## 5. Look up the ID
 
-A tag36h11 payload has 36 bits, which must be checked against 587 codes in 4 rotations, allowing up to 3 wrong bits.
-Any code within 3 bits of the payload must match at least one of its four 9-bit blocks exactly. NAPA looks those
-blocks up in a table and compares only the few codes that share one, instead of all 2,348.
+36 payload bits against 587 codes in 4 rotations, allowing 3 errors. Any code within 3 bits shares one of the
+payload's four 9-bit blocks exactly, so a table lookup narrows 2,348 candidates to a handful.
 
 ## Obstructions
 
-NAPA corrects up to 3 wrong payload bits, where upstream AprilTag defaults to 2, so a hand, cable, or glare spot over
-part of a tag often still decodes. It accepts a third corrected bit only when the three wrong cells touch, as they do
-under a real obstruction. A random pattern that happens to fall within three bits of a code has its errors scattered,
-so this keeps chance matches out. In the benchmark's obstruction sweep, 864 tags with 0–40% of the black square
-covered by a white or grey patch, NAPA found 357 and WPILib's AprilTag at decimate 2 found 330.
+NAPA corrects up to 3 wrong bits, but a third bit counts only when the wrong cells touch, as under a finger or glare
+spot. Random patterns have scattered errors, so chance matches stay out. In the obstruction sweep (864 tags, up to 40%
+covered) NAPA found 357, WPILib's AprilTag 330.
 
-Every AprilTag detector finds the black border before it reads any bits, so none can find a tag whose border is hidden
-across a whole side or around a corner.
+An obstruction that hides a whole side or corner can prevent the border search from finding the tag. A tag cut by
+the image boundary is a special case: NAPA can use the visible inner border beside decoded white cells to measure
+its missing side. If too much of the border or payload is outside the frame, it is still missed. A calibrated
+lens fit that lacks enough visible outer-edge samples rejects the candidate rather than extrapolating in pixels.
 
 ## Limits
 
-- **Tag size.** Tags smaller than `min_tag_px` may be missed. A steeply tilted tag counts by its narrowest side.
-- **Quiet zone.** Tags need the white margin that printed tags have. A tag whose margin runs straight into dark, busy
-  texture can merge with it and be missed. Steep tilt makes this likelier, because it narrows the margin.
-- **Contrast.** Tags with less than `min_contrast` grey levels between their black and white are skipped.
-- **Motion blur.** Blur longer than one cell (an eighth of the tag) is the hardest case for corner accuracy. Most
-  corners stay within a tenth of a pixel, but in the benchmark's worst case one corner was 3.4 px off. AprilTag's
-  worst in that scene was 1.0 px at WPILib's defaults and 2.4 px at full resolution.
-
-[Tuning](detection.md#tuning) covers `min_tag_px` and `min_contrast`.
+- Tags under `min_tag_px` on their narrowest side may be missed.
+- Tags need their white quiet zone. Merged into dark texture, they disappear. Steep tilt narrows the margin and makes
+  this likelier.
+- Tags under `min_contrast` grey levels of contrast are skipped.
+- Motion blur longer than one cell (⅛ of the tag) is the worst case for corners: 3.4 px worst in the published
+  comparison. A successful decode is not proof of good geometry. Check on your camera.
