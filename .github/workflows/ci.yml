@@ -65,18 +65,27 @@ jobs:
 
   c-library:
     # The core on its own, as C and C++ programs build it: CMake, no Python in the library.
+    name: c-library (${{ matrix.name }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        include:
+          - name: linux
+            os: ubuntu-latest
+          - name: windows-msvc
+            os: windows-latest
+          # clang-cl compiles the SIMD dispatch the way clang does but links MSVC's runtime
+          - name: windows-clang-cl
+            os: windows-latest
+            cmake-flags: -G Ninja -DCMAKE_C_COMPILER=clang-cl -DCMAKE_BUILD_TYPE=Release
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
           cache: pip
-      - run: cmake -S . -B build -DNAPA_BUILD_EXAMPLES=ON
+      - run: cmake -S . -B build -DNAPA_BUILD_EXAMPLES=ON ${{ matrix.cmake-flags }}
       - run: cmake --build build --config Release
       - run: cmake --install build --config Release --prefix install
       - run: python -m pip install -e .
