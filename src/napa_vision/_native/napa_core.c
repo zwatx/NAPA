@@ -729,8 +729,8 @@ int napa_family_info(const char *family, napa_family_layout *info) {
 napa_detector *napa_create(void) { return napa_create_family("tag36h11"); }
 
 #ifdef NAPA_SSSE3_DISPATCH
-/* The CPU features the dispatched functions need. clang-cl defines __clang__ but links MSVC's runtime, which lacks the
- * library behind __builtin_cpu_supports, so with MSVC's headers CPUID is read directly. */
+/* The CPU features the dispatched functions need. clang-cl defines __clang__, but __builtin_cpu_supports needs clang's
+ * builtins library, which clang-cl doesn't link, so under _MSC_VER CPUID is read directly. */
 static void cpu_features(int *ssse3, int *popcnt) {
 #ifdef _MSC_VER
     int info[4];
