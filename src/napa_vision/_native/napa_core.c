@@ -41,6 +41,9 @@
 #if (defined(__GNUC__) || defined(__clang__)) && (defined(__x86_64__) || defined(__i386__))
 #include <tmmintrin.h>
 #define NAPA_SSSE3_DISPATCH 1 /* SSSE3 isn't baseline x86-64: compiled per function, chosen at runtime */
+#ifdef _MSC_VER
+#include <intrin.h> /* clang-cl: __cpuid (see cpu_features) */
+#endif
 #endif
 #elif defined(__ARM_NEON) && !defined(NAPA_NO_SIMD)
 #include <arm_neon.h>
@@ -365,6 +368,7 @@ typedef struct {
     int32_t *parent;
     const label_scratch *scratch;
     uint64_t *level_bits;
+    int popcnt; /* the CPU has POPCNT: label with threshold_index_popcnt */
 } label_context;
 
 /* Only serial split labelling can grow and append these deferred contacts. */
@@ -423,7 +427,7 @@ struct napa_detector {
     soft_candidate *soft_candidates;
     size_t soft_count, soft_capacity;
     int soft_capturing, soft_failed;
-    int ssse3; /* the CPU supports SSSE3 (x86 only; picked once at creation) */
+    int ssse3, popcnt; /* the CPU supports SSSE3, POPCNT (x86 only; read once at creation) */
 
     uint8_t *level; /* owned scratch, even when the finest gray pixels are borrowed */
     const uint8_t *level_view; /* non-owning, only during threshold_level; NULL uses owned scratch */
@@ -724,6 +728,23 @@ int napa_family_info(const char *family, napa_family_layout *info) {
 
 napa_detector *napa_create(void) { return napa_create_family("tag36h11"); }
 
+#ifdef NAPA_SSSE3_DISPATCH
+/* The CPU features the dispatched functions need. clang-cl defines __clang__ but links MSVC's runtime, which lacks the
+ * library behind __builtin_cpu_supports, so with MSVC's headers CPUID is read directly. */
+static void cpu_features(int *ssse3, int *popcnt) {
+#ifdef _MSC_VER
+    int info[4];
+    __cpuid(info, 1);
+    *ssse3 = (info[2] >> 9) & 1;   /* leaf 1, ECX bit 9 */
+    *popcnt = (info[2] >> 23) & 1; /* leaf 1, ECX bit 23 */
+#else
+    __builtin_cpu_init();
+    *ssse3 = __builtin_cpu_supports("ssse3") != 0;
+    *popcnt = __builtin_cpu_supports("popcnt") != 0;
+#endif
+}
+#endif
+
 napa_detector *napa_create_family(const char *family) {
     const napa_family *f = find_family(family);
     if (f == NULL) return NULL;
@@ -735,8 +756,7 @@ napa_detector *napa_create_family(const char *family) {
         }
         det->threads = 1;
 #ifdef NAPA_SSSE3_DISPATCH
-        __builtin_cpu_init();
-        det->ssse3 = __builtin_cpu_supports("ssse3") != 0;
+        cpu_features(&det->ssse3, &det->popcnt);
 #endif
     }
     return det;
@@ -1499,7 +1519,8 @@ static label_context label_context_for(napa_detector *det) {
         .floor_cols = det->floor_cols, .floor_rows = det->floor_rows, .floor_uniform = det->floor_uniform,
         .level_contrast_min = det->level_contrast_min,
         .level_extrema_in = det->level_extrema_in, .level_extrema_out = det->level_extrema_out,
-        .runs = det->runs, .parent = det->parent, .scratch = &det->scratch, .level_bits = det->level_bits
+        .runs = det->runs, .parent = det->parent, .scratch = &det->scratch, .level_bits = det->level_bits,
+        .popcnt = det->popcnt
     };
     return ctx;
 }
@@ -2218,7 +2239,7 @@ __attribute__((target("popcnt"))) static int threshold_index_popcnt(const label_
 static int threshold_context(const label_context *ctx, const label_contacts *contacts,
                                    int lw, int lh, int factor, int split, int shadow, int ty0, int ty1, int base) {
 #ifdef NAPA_SSSE3_DISPATCH
-    if (__builtin_cpu_supports("popcnt")) return threshold_index_popcnt(ctx, contacts, lw, lh, factor, split, shadow, ty0, ty1, base);
+    if (ctx->popcnt) return threshold_index_popcnt(ctx, contacts, lw, lh, factor, split, shadow, ty0, ty1, base);
 #endif
     return threshold_index_generic(ctx, contacts, lw, lh, factor, split, shadow, ty0, ty1, base);
 }
