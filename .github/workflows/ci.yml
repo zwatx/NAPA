@@ -78,7 +78,7 @@ jobs:
           # clang-cl compiles the SIMD dispatch the way clang does but links MSVC's runtime
           - name: windows-clang-cl
             os: windows-latest
-            cmake-flags: -G Ninja -DCMAKE_C_COMPILER=clang-cl -DCMAKE_BUILD_TYPE=Release
+            cmake-flags: -G Ninja -DCMAKE_C_COMPILER=clang-cl
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
