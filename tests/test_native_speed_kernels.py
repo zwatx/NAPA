@@ -128,9 +128,10 @@ def _run_native_kernels(tmp_path: Path, scalar: bool, source_name: str, small_st
         )
     elif source_name == "native_pool.c":
         assert "2400 pool jobs at 1-8 threads, 16 thread settings, 800 contended jobs passed" in result.stdout
-        assert "2688 banded labelling cases match the serial pass" in result.stdout
+        assert "4032 banded labelling cases match the serial pass" in result.stdout
     elif source_name == "native_band_kernels.c":
         assert "20480 exact dark-bit cases, 13608 exact tile-extrema rows passed" in result.stdout
+        assert "tile rows paired from exact half-tile extrema, 42 half-tile levels match the definition" in result.stdout
     elif source_name == "native_box_rake.c":
         assert "6000 box_rake cases match the block-mean definition" in result.stdout
     elif source_name == "native_extrema_cache.c":

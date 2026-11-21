@@ -356,6 +356,7 @@ typedef struct {
     size_t row_capacity;
     uint8_t *tile_min, *tile_max; /* tile extrema: the level's, or a band's tile rows and one on each side */
     size_t tile_capacity;
+    uint8_t *half; /* a level of half tiles (level_half): HALF_ROWS rows of row / 2 + 67 bytes, see threshold_index_impl */
 } label_scratch;
 
 /* Bounded access for thresholding and run labelling; no detector, pool or candidate state. */
@@ -363,6 +364,7 @@ typedef struct {
     const uint8_t *level, *floors, *level_extrema_in;
     int borrowed, floor_cols, floor_rows, floor_uniform;
     uint8_t level_contrast_min;
+    uint8_t level_half; /* the detector's level_half */
     uint8_t *level_extrema_out;
     napa_run *runs;
     int32_t *parent;
@@ -436,6 +438,7 @@ struct napa_detector {
     const uint8_t *level_extrema_in; /* the saved extrema to reuse, or NULL */
     int extrema_wanted, extrema_ready;
     uint8_t level_contrast_min;
+    uint8_t level_half; /* this level's thresholds are also capped by half-tile neighbourhoods (threshold_index_impl) */
     label_scratch scratch;
     napa_run *runs;
     int32_t *parent; /* backward union links, then -dense component index - 1 after aggregation */
@@ -811,6 +814,9 @@ void napa_destroy(napa_detector *det) {
     free(det);
 }
 
+/* Half-tile scratch rows: eight of minima and eight of maxima (a ring over half rows), two of thresholds, and one each
+ * for the tile thresholds, the floors and the neighbourhood minima and maxima at half-tile spacing. */
+enum { HALF_ROWS = 22 };
 /* Grows s for level rows of up to `row` samples and up to `tiles` tiles. */
 static int scratch_reserve(label_scratch *s, size_t row, size_t tiles) {
     if (row > s->row_capacity) {
@@ -837,6 +843,9 @@ static int scratch_reserve(label_scratch *s, size_t row, size_t tiles) {
         int32_t *rank = (int32_t *)realloc(s->pair_rank, 3 * (row / 2 + 2) * sizeof(int32_t));
         if (rank == NULL) return -1;
         s->pair_rank = rank;
+        uint8_t *half = (uint8_t *)realloc(s->half, HALF_ROWS * (row / 2 + 67));
+        if (half == NULL) return -1;
+        s->half = half;
         s->row_capacity = row;
     }
     if (tiles > s->tile_capacity) {
@@ -855,6 +864,7 @@ static void scratch_free(label_scratch *s) {
     free(s->nb_lo), free(s->nb_hi), free(s->nb_t), free(s->nb_f);
     free(s->row_bits), free(s->row_edges), free(s->pair_rank);
     free(s->tile_min), free(s->tile_max);
+    free(s->half);
 }
 
 static int ensure_buffers(napa_detector *det, size_t pixels, size_t tiles, size_t row, size_t max_runs) {
@@ -921,6 +931,13 @@ static inline double sample_bilinear(const image_view *im, double x, double y) {
 /* ---------------------------------------------------------------- threshold */
 
 #define TILE 4
+/* The finest level of a search that samples every other pixel also judges each sample against the 3x3 neighbourhood
+ * of 2x2 half tiles around it, a 12 px window inside the tiles' 24 px one: nothing in the brightest NAPA_HALF_CAP
+ * sixteenths of that small range is dark, whatever the wide window says. A tag's grey margin, or a pale quiet zone
+ * beside a white wall, is then light beside the black border instead of joining it to the background. Where the small
+ * neighbourhood is flat the wide threshold stands alone, so wide borders stay solid, and a threshold is only ever
+ * lowered: dark samples are a subset of what the tiles alone would give. */
+#define NAPA_HALF_CAP 6
 /* The finest level, and the next unless that one is every pixel, only search neighbourhoods at least this many
  * times the minimum contrast. A tag's border against its quiet zone clears it easily; flat, noisy texture doesn't.
  * With every pixel sampled, tiny tags need the next level's weak signal to be searched at all. */
@@ -1459,6 +1476,67 @@ static void expand4(uint8_t *dst, const uint8_t *src, int n) {
     for (; i < n; i++) memset(dst + 4 * i, src[i], 4);
 }
 
+/* dst[2i], dst[2i + 1] = src[i] for i < n: each half tile's value for its two sample columns. */
+static void expand2(uint8_t *dst, const uint8_t *src, int n) {
+    int i = 0;
+#ifdef NAPA_SSE2
+    for (; i + 16 <= n; i += 16) {
+        __m128i v = _mm_loadu_si128((const __m128i *)(src + i));
+        _mm_storeu_si128((__m128i *)(dst + 2 * i), _mm_unpacklo_epi8(v, v));
+        _mm_storeu_si128((__m128i *)(dst + 2 * i + 16), _mm_unpackhi_epi8(v, v));
+    }
+#elif defined(__ARM_NEON) && !defined(NAPA_NO_SIMD)
+    for (; i + 16 <= n; i += 16) {
+        uint8x16_t v = vld1q_u8(src + i);
+        uint8x16x2_t a = vzipq_u8(v, v);
+        vst1q_u8(dst + 2 * i, a.val[0]);
+        vst1q_u8(dst + 2 * i + 16, a.val[1]);
+    }
+#endif
+    for (; i < n; i++) dst[2 * i] = dst[2 * i + 1] = src[i];
+}
+
+/* lo[t] = the least of a[2t], a[2t + 1], b[2t], b[2t + 1] and hi[t] = the greatest of the same four of c and d, for
+ * t < (n + 1) / 2; an odd n's last pair is its last column alone. With a = c and b = d two rows of a level this is a
+ * row of 2x2 half-tile extrema; with two half rows' minima and maxima, the 4x4 tiles' (exactly tile_row_minmax's). */
+static void pair_extrema(const uint8_t *a, const uint8_t *b, const uint8_t *c, const uint8_t *d, int n, uint8_t *lo,
+                         uint8_t *hi) {
+    int i = 0;
+#ifdef NAPA_SSE2
+    /* Each sample's min and max down the two rows, then across each 16-bit lane's two bytes, left in its low byte. */
+    const __m128i low = _mm_set1_epi16(0x00ff);
+    for (; i + 32 <= n; i += 32) {
+        __m128i mn0 = _mm_min_epu8(_mm_loadu_si128((const __m128i *)(a + i)), _mm_loadu_si128((const __m128i *)(b + i)));
+        __m128i mn1 = _mm_min_epu8(_mm_loadu_si128((const __m128i *)(a + i + 16)), _mm_loadu_si128((const __m128i *)(b + i + 16)));
+        __m128i mx0 = _mm_max_epu8(_mm_loadu_si128((const __m128i *)(c + i)), _mm_loadu_si128((const __m128i *)(d + i)));
+        __m128i mx1 = _mm_max_epu8(_mm_loadu_si128((const __m128i *)(c + i + 16)), _mm_loadu_si128((const __m128i *)(d + i + 16)));
+        mn0 = _mm_and_si128(_mm_min_epu8(mn0, _mm_srli_epi16(mn0, 8)), low);
+        mn1 = _mm_and_si128(_mm_min_epu8(mn1, _mm_srli_epi16(mn1, 8)), low);
+        mx0 = _mm_and_si128(_mm_max_epu8(mx0, _mm_srli_epi16(mx0, 8)), low);
+        mx1 = _mm_and_si128(_mm_max_epu8(mx1, _mm_srli_epi16(mx1, 8)), low);
+        _mm_storeu_si128((__m128i *)(lo + i / 2), _mm_packus_epi16(mn0, mn1));
+        _mm_storeu_si128((__m128i *)(hi + i / 2), _mm_packus_epi16(mx0, mx1));
+    }
+#elif defined(__aarch64__) && defined(__ARM_NEON) && !defined(NAPA_NO_SIMD)
+    for (; i + 32 <= n; i += 32) {
+        vst1q_u8(lo + i / 2, vpminq_u8(vminq_u8(vld1q_u8(a + i), vld1q_u8(b + i)), vminq_u8(vld1q_u8(a + i + 16), vld1q_u8(b + i + 16))));
+        vst1q_u8(hi + i / 2, vpmaxq_u8(vmaxq_u8(vld1q_u8(c + i), vld1q_u8(d + i)), vmaxq_u8(vld1q_u8(c + i + 16), vld1q_u8(d + i + 16))));
+    }
+#endif
+    for (int t = i / 2; 2 * t < n; t++) {
+        const int k = 2 * t, k1 = k + 1 < n ? k + 1 : k;
+        uint8_t l = a[k] < b[k] ? a[k] : b[k], l1 = a[k1] < b[k1] ? a[k1] : b[k1];
+        uint8_t h = c[k] > d[k] ? c[k] : d[k], h1 = c[k1] > d[k1] ? c[k1] : d[k1];
+        lo[t] = l < l1 ? l : l1, hi[t] = h > h1 ? h : h1;
+    }
+}
+
+/* Half row r of a level: the extrema of its 2x2 half tiles, over level rows 2r and 2r + 1 (an odd level's last row alone). */
+static void half_row_minmax(const uint8_t *L, int lw, int lh, int r, uint8_t *lo, uint8_t *hi) {
+    const uint8_t *a = L + (size_t)(2 * r) * lw, *b = 2 * r + 1 < lh ? a + lw : a;
+    pair_extrema(a, b, a, b, lw, lo, hi);
+}
+
 #if defined(__GNUC__) || defined(__clang__)
 #define NAPA_FORCE_INLINE inline __attribute__((always_inline))
 #define NAPA_NOINLINE __attribute__((noinline))
@@ -1517,7 +1595,7 @@ static label_context label_context_for(napa_detector *det) {
         .borrowed = det->level_view != NULL,
         .floors = det->floors,
         .floor_cols = det->floor_cols, .floor_rows = det->floor_rows, .floor_uniform = det->floor_uniform,
-        .level_contrast_min = det->level_contrast_min,
+        .level_contrast_min = det->level_contrast_min, .level_half = det->level_half,
         .level_extrema_in = det->level_extrema_in, .level_extrema_out = det->level_extrema_out,
         .runs = det->runs, .parent = det->parent, .scratch = &det->scratch, .level_bits = det->level_bits,
         .popcnt = det->popcnt
@@ -2108,14 +2186,34 @@ static NAPA_FORCE_INLINE int threshold_index_impl(const label_context *ctx, cons
     if (saved) base = 0;
     const uint8_t *tile_min = saved ? saved : ctx->scratch->tile_min;
     const uint8_t *tile_max = saved ? saved + tile_count : ctx->scratch->tile_max;
+    /* Half tiles (level_half): half row r's extrema live in ring rows r & 7, from the half row above the tile row to
+     * the two of the tile row below, and each tile row's extrema are the pairs of its two half rows'. */
+    const int half = ctx->level_half && !shadow, hw2 = (lw + 1) / 2, hh2 = (lh + 1) / 2;
+    const size_t hs = (size_t)(lw / 2 + 67);
+    uint8_t *const hmin = ctx->scratch->half, *const hmax = hmin + 8 * hs, *const hthr = hmax + 8 * hs;
+    uint8_t *const htile = hthr + 2 * hs, *const hfloor = htile + hs, *const hlo = hfloor + hs, *const hhi = hlo + hs;
+    if (half)
+        for (int r = ty0 > 0 ? 2 * ty0 - 2 : 0; r < 2 * ty0 + 2 && r < hh2; r++)
+            half_row_minmax(L, lw, lh, r, hmin + (r & 7) * hs, hmax + (r & 7) * hs);
     if (!saved)
-        for (int r = ty0 > 0 ? ty0 - 1 : 0; r <= ty0 && r < th; r++)
-            tile_row_minmax(L, lw, lw, lh, r, tw, vmin, vmax, ctx->scratch->tile_min + (size_t)(r - base) * tw,
-                            ctx->scratch->tile_max + (size_t)(r - base) * tw);
+        for (int r = ty0 > 0 ? ty0 - 1 : 0; r <= ty0 && r < th; r++) {
+            uint8_t *tmin = ctx->scratch->tile_min + (size_t)(r - base) * tw, *tmax = ctx->scratch->tile_max + (size_t)(r - base) * tw;
+            if (half) {
+                const int a = (2 * r) & 7, b = 2 * r + 1 < hh2 ? (2 * r + 1) & 7 : a;
+                pair_extrema(hmin + a * hs, hmin + b * hs, hmax + a * hs, hmax + b * hs, hw2, tmin, tmax);
+            } else tile_row_minmax(L, lw, lw, lh, r, tw, vmin, vmax, tmin, tmax);
+        }
     for (int ty = ty0; ty < ty1; ty++) {
-        if (!saved && ty + 1 < th)
-            tile_row_minmax(L, lw, lw, lh, ty + 1, tw, vmin, vmax,
-                            ctx->scratch->tile_min + (size_t)(ty + 1 - base) * tw, ctx->scratch->tile_max + (size_t)(ty + 1 - base) * tw);
+        if (half)
+            for (int r = 2 * ty + 2; r < 2 * ty + 4 && r < hh2; r++)
+                half_row_minmax(L, lw, lh, r, hmin + (r & 7) * hs, hmax + (r & 7) * hs);
+        if (!saved && ty + 1 < th) {
+            uint8_t *tmin = ctx->scratch->tile_min + (size_t)(ty + 1 - base) * tw, *tmax = ctx->scratch->tile_max + (size_t)(ty + 1 - base) * tw;
+            if (half) {
+                const int a = (2 * ty + 2) & 7, b = 2 * ty + 3 < hh2 ? (2 * ty + 3) & 7 : a;
+                pair_extrema(hmin + a * hs, hmin + b * hs, hmax + a * hs, hmax + b * hs, hw2, tmin, tmax);
+            } else tile_row_minmax(L, lw, lw, lh, ty + 1, tw, vmin, vmax, tmin, tmax);
+        }
         int ry = ty * TILE * factor / NAPA_REGION;
         ry = ry < rows ? ry : rows - 1;
         if (!ctx->floor_uniform && ry != floor_row) {
@@ -2155,12 +2253,39 @@ static NAPA_FORCE_INLINE int threshold_index_impl(const label_context *ctx, cons
         int y0 = ty * TILE;
         int y1 = y0 + TILE < lh ? y0 + TILE : lh;
         if (!any) continue; /* no contrast anywhere in this tile row: no dark samples, no runs */
-        expand4(trow, tt, tw);
-        memset(trow + lw, 0, (size_t)(4 * tw + 64 - lw)); /* nothing past the row is dark */
+        if (half) {
+            /* Each of the tile row's two half rows: the tile thresholds, capped where the half tile's own 3x3
+             * neighbourhood has the contrast a tile's must have. Bytes only and no branches, so the loops vectorise. */
+            expand2(htile, tt, tw), expand2(hfloor, fl, tw);
+            for (int k = 0; k < 2 && 2 * ty + k < hh2; k++) {
+                const int r = 2 * ty + k, up = (r > 0 ? r - 1 : r) & 7, dn = (r + 1 < hh2 ? r + 1 : r) & 7;
+                uint8_t *NAPA_RESTRICT out = hthr + k * hs;
+                min3_max3(hlo + 1, hhi + 1, hmin + up * hs, hmin + (r & 7) * hs, hmin + dn * hs, hmax + up * hs,
+                          hmax + (r & 7) * hs, hmax + dn * hs, hw2);
+                hlo[0] = hlo[1], hhi[0] = hhi[1], hlo[hw2 + 1] = hlo[hw2], hhi[hw2 + 1] = hhi[hw2];
+                for (int tx = 0; tx < hw2; tx++) {
+                    uint8_t l = hlo[tx + 1], h = hhi[tx + 1];
+                    l = hlo[tx] < l ? hlo[tx] : l;
+                    l = hlo[tx + 2] < l ? hlo[tx + 2] : l;
+                    h = hhi[tx] > h ? hhi[tx] : h;
+                    h = hhi[tx + 2] > h ? hhi[tx + 2] : h;
+                    const uint8_t c = (uint8_t)(h - l);
+                    const uint8_t cap = c >= hfloor[tx] && c >= contrast_min ? (uint8_t)(h - ((c * NAPA_HALF_CAP) >> 4)) : 255;
+                    out[tx] = cap < htile[tx] ? cap : htile[tx];
+                }
+            }
+        } else {
+            expand4(trow, tt, tw);
+            memset(trow + lw, 0, (size_t)(4 * tw + 64 - lw)); /* nothing past the row is dark */
+        }
         if (paired) {
             const int words = (lw + 63) / 64, stride = words + 1;
             for (int y = y0; y < y1; y += 2) {
                 const int has_bottom = y + 1 < y1, side = (y >> 1) & 1;
+                if (half) {
+                    expand2(trow, hthr + ((y - y0) >> 1) * hs, hw2);
+                    memset(trow + lw, 0, (size_t)(4 * tw + 64 - lw));
+                }
                 uint64_t *top = ctx->level_bits + (size_t)y * stride;
                 level_row_bits(ctx, L, lw, lh, y, trow, top);
                 top[words] = 0;
@@ -2178,6 +2303,10 @@ static NAPA_FORCE_INLINE int threshold_index_impl(const label_context *ctx, cons
         }
         uint64_t *bits = ctx->scratch->row_bits;
         for (int y = y0; y < y1; y++) {
+            if (half && !((y - y0) & 1)) {
+                expand2(trow, hthr + ((y - y0) >> 1) * hs, hw2);
+                memset(trow + lw, 0, (size_t)(4 * tw + 64 - lw));
+            }
             level_row_bits(ctx, L, lw, lh, y, trow, bits);
             /* Shadow labelling labels each run as it is emitted, against the row above's edge index; split
              * labelling stores the rows' runs unlabelled and joins them below (join_rows). */
@@ -6834,6 +6963,7 @@ static int sample_threshold_level(napa_detector *det, const pass_config *config,
         ? (uint8_t)(params->min_contrast * NAPA_FINEST_CONTRAST_NUM / NAPA_FINEST_CONTRAST_DEN > 255
                         ? 255 : params->min_contrast * NAPA_FINEST_CONTRAST_NUM / NAPA_FINEST_CONTRAST_DEN)
         : 0;
+    det->level_half = !shadow && base == 2 && level->s == base;
 
     det->level_view = sampling->gray == det->level ? NULL : sampling->gray;
     /* Keyed by sampling step: the passes can start from different steps. On one frame, with one contrast setting, a
