@@ -6441,22 +6441,30 @@ typedef struct {
  * from the tag's black to its white: about 0 where the side runs along the border, about 1 where it runs out on the quiet
  * zone. levels[side][end], sides top, right, bottom, left of q's square; end 0 at the side's first corner. 0 if the
  * border can't be read. */
-static int side_end_levels(const family_layout *L, const image_view *im, const vec2 q[4], int min_contrast,
-                           double levels[4][2]) {
+static int side_end_levels_whiter(const family_layout *L, const image_view *im, const vec2 q[4], int min_contrast,
+                                  int whiter, double levels[4][2]) {
     const int W = L->width, o = L->outer, G = L->grid;
     double H[9], grid[256], border[64], black, white;
     square_to_quad(q, H);
     if (read_border(L, im, H, min_contrast, grid, border, &black, &white, NULL) < 0 || white <= black) return 0;
     for (int k = 0; k < 4; k++)
         for (int e = 0; e < 2; e++) {
-            double sum = 0;
-            for (int j = 0; j <= 1; j++) {
+            double cell[3];
+            for (int j = 0; j <= 2; j++) {
                 const int along = e ? W - 1 - j : j;
-                sum += grid[((k == 0 ? 0 : k == 2 ? W - 1 : along) + o) * G + (k == 1 ? W - 1 : k == 3 ? 0 : along) + o];
+                cell[j] = grid[((k == 0 ? 0 : k == 2 ? W - 1 : along) + o) * G + (k == 1 ? W - 1 : k == 3 ? 0 : along) + o];
             }
-            levels[k][e] = (0.5 * sum - black) / (white - black);
+            /* whiter: the corner cell also lies on the other side's border, so when only this side pivots out it
+             * stays dark; judge the end by the whiter of its two pairs. The corner repair keeps the plain pair. */
+            const double pair = whiter && cell[1] + cell[2] > cell[0] + cell[1] ? cell[1] + cell[2] : cell[0] + cell[1];
+            levels[k][e] = (0.5 * pair - black) / (white - black);
         }
     return 1;
+}
+
+static int side_end_levels(const family_layout *L, const image_view *im, const vec2 q[4], int min_contrast,
+                           double levels[4][2]) {
+    return side_end_levels_whiter(L, im, q, min_contrast, 0, levels);
 }
 
 static void correct_border_geometry(napa_detector *det, const image_view *rview, const decode_policy *policy,
@@ -6476,6 +6484,17 @@ static void correct_border_geometry(napa_detector *det, const image_view *rview,
         bad |= (q->side_level[k] > 0.3) << k;
         level_before += q->side_level[k];
     }
+    /* A side that pivoted out reads black at the end it pivots on (that end runs along the border) and white at
+     * the end that left it: moving the whole side in a cell would pull the anchored end into the tag, so leave
+     * such sides to the corner repair below. A side that merely reads grey at both ends (a blurred edge the fit
+     * straddles) is not anchored anywhere and still takes the whole-side move. */
+    double end_levels[4][2];
+    if (bad && side_end_levels_whiter(&det->fam, rview, q->finer, policy->params->min_contrast, 1, end_levels))
+        for (int k = 0; k < 4; k++) {
+            const double lo = end_levels[k][0] < end_levels[k][1] ? end_levels[k][0] : end_levels[k][1];
+            const double hi = end_levels[k][0] < end_levels[k][1] ? end_levels[k][1] : end_levels[k][0];
+            if (((bad >> k) & 1) && lo < 0.15 && hi > 0.6) bad &= ~(1 << k);
+        }
     c->accepted_border_level = level_before;
     if (bad && bad != 15 && !q->cut) {
         double Hs[9], perim = 0;
