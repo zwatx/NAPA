@@ -56,7 +56,8 @@ A few shapes need repairs. Each is kept only if the tag still decodes to the sam
 - **Small fragmented tags**, with `regrow_small_tags=True`: follow the fragment's connected dark pixels at full
   resolution and try its outline again, within a fixed attempt budget.
 - **Grey quiet zone**: if the outline was really the margin, retry at its inner eight tenths.
-- **Side one cell out**: move it in a cell and re-fit.
+- **Side one cell out**: move it in a cell and re-fit, unless one end still lies on the border. Such a side pivoted
+  out from that end, and the next repair moves only the corner that left.
 - **One corner out**: a speck of a grey margin can pull a corner onto the margin's edge, along one side or both. If
   the border reads white there, step that corner in a cell at a time and re-fit. Keep it only if the ID, the
   corrected bits and a dark border all hold.
