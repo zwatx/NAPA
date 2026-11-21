@@ -471,7 +471,7 @@ struct napa_detector {
     napa_detection *shape_out;
     vec2 *shape_centers;
     size_t shape_out_capacity, shape_center_capacity;
-    fine_whole *fine_wholes; /* outlines and confidence alternatives, replayed after proposals */
+    fine_whole *fine_wholes; /* deferred whole outlines, replayed after proposals */
     size_t fine_whole_capacity;
     vec2 *out_centers, *piece_centers; /* accepted detections, in output order */
     size_t out_center_capacity, piece_center_capacity;
@@ -2452,27 +2452,10 @@ typedef struct {
     const family_layout *model_family;
 } edge_levels;
 
-enum {
-    FINE_WHOLE_OUTLINE,
-    FINE_WHOLE_CONFIDENCE_PENDING,
-    FINE_WHOLE_CONFIDENCE_FINISHED,
-    FINE_WHOLE_CONFIDENCE_REJECTED
-};
-
-/* Outlines and exact early alternatives share the existing deferred allocation.
- * Confidence detections stay quarantined until established wholes are complete. */
+/* A whole set aside for the terminal replay, with the stride and fit policy of the level that found it. */
 struct fine_whole {
-    union {
-        component shape;
-        struct {
-            vec2 fine[4];
-            double reach, edge_width;
-            edge_levels lv;
-            int early_id;
-        } confidence;
-        napa_detection completed;
-    } data;
-    int stride, terminal, kind;
+    component shape;
+    int stride, terminal;
 };
 
 /* Keep the rare illumination fit's sample arrays off the hot refinement stack. */
@@ -2480,15 +2463,8 @@ static NAPA_NOINLINE void refresh_edge_light(const image_view *im, const vec2 q[
 
 enum { INITIAL_SIDE_POINTS = 6 };
 
-/* Initial-fit samples before total least squares compacts the arrays. */
-typedef struct {
-    int count[4];
-    unsigned rejection_mask;
-    double x[4][INITIAL_SIDE_POINTS], y[4][INITIAL_SIDE_POINTS], weight[4][INITIAL_SIDE_POINTS];
-} initial_capture;
-
-static NAPA_FORCE_INLINE int fit_side_line_impl(double px[], double py[], double wt[], int good, double reach,
-                     double *lx, double *ly, double *dx, double *dy, int *rejected) {
+static NAPA_FORCE_INLINE int fit_side_line(double px[], double py[], double wt[], int good, double reach,
+                     double *lx, double *ly, double *dx, double *dy) {
     /* Weighted total-least-squares line, then one pass dropping outliers. */
     for (int pass = 0; pass < 2; pass++) {
         double sw = 0, mx = 0, my = 0;
@@ -2530,7 +2506,6 @@ static NAPA_FORCE_INLINE int fit_side_line_impl(double px[], double py[], double
                 double dist = fabs((px[i] - mx) * (-(*dy)) + (py[i] - my) * (*dx));
                 if (dist <= 1.0 + 0.1 * reach) kept++;
             }
-            if (rejected != NULL) *rejected = kept != good;
             /* Keep the original fit and samples unless enough inliers support a refit. */
             if (kept == good || kept < 3 || 2 * kept < good) break;
             kept = 0;
@@ -2547,21 +2522,6 @@ static NAPA_FORCE_INLINE int fit_side_line_impl(double px[], double py[], double
         }
     }
     return 1;
-}
-
-static NAPA_FORCE_INLINE int fit_side_line(double px[], double py[], double wt[], int good, double reach,
-                     double *lx, double *ly, double *dx, double *dy) {
-    return fit_side_line_impl(px, py, wt, good, reach, lx, ly, dx, dy, NULL);
-}
-
-/* Record which side rejected initial samples, including when too few inliers
- * remain to shorten the second fit pass. */
-static NAPA_FORCE_INLINE int fit_initial_side_observed(double px[], double py[], double wt[], int good, double reach,
-                     double *lx, double *ly, double *dx, double *dy, unsigned *mask, unsigned side) {
-    int rejected = 0;
-    int ok = fit_side_line_impl(px, py, wt, good, reach, lx, ly, dx, dy, &rejected);
-    if (rejected) *mask |= 1u << side;
-    return ok;
 }
 
 /* Final edge samples can follow a lens-curved border rather than a straight line.
@@ -2701,30 +2661,6 @@ static int intersect_curves(const curve_side sides[4], const vec2 in[4], const v
     return 1;
 }
 
-static NAPA_NOINLINE int confidence_quad(const initial_capture *capture, const vec2 rough[4],
-                                        double reach, vec2 out[4]) {
-    if (capture->rejection_mask == 0) return 0;
-    double lx[4], ly[4], dx[4], dy[4];
-    for (int k = 0; k < 4; k++) {
-        const int n = capture->count[k];
-        if (n < 3 || n > INITIAL_SIDE_POINTS) return 0;
-        double x[INITIAL_SIDE_POINTS], y[INITIAL_SIDE_POINTS], weight[INITIAL_SIDE_POINTS];
-        memcpy(x, capture->x[k], (size_t)n * sizeof *x);
-        memcpy(y, capture->y[k], (size_t)n * sizeof *y);
-        for (int i = 0; i < n; i++) weight[i] = capture->weight[k][i] * capture->weight[k][i];
-        if (!fit_side_line(x, y, weight, n, reach, &lx[k], &ly[k], &dx[k], &dy[k])) return 0;
-    }
-    for (int k = 0; k < 4; k++) {
-        const int p = (k + 3) & 3;
-        const double cross = dx[p] * dy[k] - dy[p] * dx[k];
-        if (!(fabs(cross) >= 0.2)) return 0;
-        const double t = ((lx[k] - lx[p]) * dy[k] - (ly[k] - ly[p]) * dx[k]) / cross;
-        out[k].x = lx[p] + t * dx[p], out[k].y = ly[p] + t * dy[p];
-        const double move = fabs(out[k].x - rough[k].x) + fabs(out[k].y - rough[k].y);
-        if (!(move <= 4.0 * reach + 2.0)) return 0;
-    }
-    return 1;
-}
 static inline int inside_frame(const image_view *view, vec2 p) {
     return p.x >= 1.0 && p.y >= 1.0 && p.x <= view->w - 2.0 && p.y <= view->h - 2.0;
 }
@@ -3359,7 +3295,9 @@ static int initial_plateau_peak(const int64_t *prof, const int64_t *g, int K, do
  * from the frame edge instead are added to *frame_sides (bit k: side k, from in[k] to in[k + 1]); with frame_sides
  * NULL, a side with no edge fails the fit. */
 static NAPA_FORCE_INLINE int fit_sides_impl(const image_view *im, const vec2 in[4], vec2 out[4], double r_out, double r_in, int min_edge,
-                     int outermost, int max_points, double *edge_width, edge_levels *levels, double cells, vec2 alternate[4], vec2 curved[4], vec2 est_lens[4], int *est_ok, double *width_ratio, initial_capture *capture, int *frame_sides) {
+                     int outermost, int max_points, double *edge_width, edge_levels *levels, double cells,
+                     vec2 alternate[4], vec2 curved[4], vec2 est_lens[4], int *est_ok, double *width_ratio,
+                     int *frame_sides) {
     const uint8_t *img = im->p;
     const int w = im->w, h = im->h, stride = im->stride;
     double width_sum = 0;
@@ -3381,7 +3319,7 @@ static NAPA_FORCE_INLINE int fit_sides_impl(const image_view *im, const vec2 in[
     /* Through a known lens the sides are fitted where they are straight: in the plane facing the tag (lens_frame). */
     lens_frame lens_view;
     vec2 plane[4], plane_out[4];
-    const int use_lens = im->lens != NULL && !outermost && capture == NULL && lens_frame_init(im->lens, in, &lens_view, plane,
+    const int use_lens = im->lens != NULL && !outermost && lens_frame_init(im->lens, in, &lens_view, plane,
                                                         max_points > 24 ? NAPA_LENS_STRAIGHT_PX : NAPA_LENS_STRAIGHT_COARSE_PX);
     side_samples samples, crossing_samples;
     /* A normal window stays in the frame when every input corner clears its reach. */
@@ -3619,7 +3557,6 @@ retake:
             curves[k].qualified = 0, samples.n[k] = crossing_samples.n[k] = 0;
             side_width[k] = 0, side_widths[k] = 0;
             alx[k] = lx[k], aly[k] = ly[k], adx[k] = dx[k], ady[k] = dy[k];
-            if (capture != NULL) capture->count[k] = 0;
             continue;
         }
         if (margin < NAPA_SIDE_MARGIN && !retaken && got[0] >= 4) {
@@ -3662,21 +3599,7 @@ retake:
             for (int i = 0; i < good; i++) complete_points += samples.w[k][i] > 0;
             needs_partial |= complete_points < NAPA_LENS_MIN_SIDE_POINTS;
         }
-        if (capture != NULL) {
-            if (good > INITIAL_SIDE_POINTS) return 0;
-            capture->count[k]=good;
-            for (int i = 0; i < good; i++) {
-                capture->x[k][i] = px[i];
-                capture->y[k][i] = py[i];
-                capture->weight[k][i] = wt[i];
-            }
-        }
-        if (capture != NULL) {
-            if (!fit_initial_side_observed(px, py, wt, good, reach, &lx[k], &ly[k], &dx[k], &dy[k],
-                                           &capture->rejection_mask, (unsigned)k)) return 0;
-        } else {
-            if (!fit_side_line(px, py, wt, good, reach, &lx[k], &ly[k], &dx[k], &dy[k])) return 0;
-        }
+        if (!fit_side_line(px, py, wt, good, reach, &lx[k], &ly[k], &dx[k], &dy[k])) return 0;
         if (alternate != NULL) {
             any_alternate |= side_changed;
             if (!side_changed || !fit_side_line_soft(apx, apy, awt, good, reach, &alx[k], &aly[k], &adx[k], &ady[k])) {
@@ -3755,13 +3678,13 @@ retake:
 
 static int fit_sides(const image_view *im, const vec2 in[4], vec2 out[4], double r_out, double r_in, int min_edge,
                      int outermost, int max_points, double *edge_width, edge_levels *levels, double cells, int *frame_sides) {
-    return fit_sides_impl(im, in, out, r_out, r_in, min_edge, outermost, max_points, edge_width, levels, cells, NULL, NULL, NULL, NULL, NULL, NULL, frame_sides);
+    return fit_sides_impl(im, in, out, r_out, r_in, min_edge, outermost, max_points, edge_width, levels, cells,
+                          NULL, NULL, NULL, NULL, NULL, frame_sides);
 }
 
-static int fit_initial_captured(const image_view *im, const vec2 in[4], vec2 out[4],
-                                double r_out, double r_in, int min_edge, double *width,
-                                double cells, initial_capture *capture, int *frame_sides) {
-    if (capture != NULL) capture->rejection_mask = 0;
+static int fit_initial_sides(const image_view *im, const vec2 in[4], vec2 out[4],
+                             double r_out, double r_in, int min_edge, double *width,
+                             double cells, int *frame_sides) {
     /* A short later side will fail the same fit after sampling earlier sides.
      * Check those lengths before spending profiles; side zero is checked first
      * by the fitter itself. Failed initial-fit outputs are never consumed. */
@@ -3770,7 +3693,7 @@ static int fit_initial_captured(const image_view *im, const vec2 in[4], vec2 out
         if (x * x + y * y < 36.0) return 0;
     }
     return fit_sides_impl(im, in, out, r_out, r_in, min_edge, 1, INITIAL_SIDE_POINTS, width, NULL, cells,
-                          NULL, NULL, NULL, NULL, NULL, capture, frame_sides);
+                          NULL, NULL, NULL, NULL, NULL, frame_sides);
 }
 
 /* fit_sides with the alternatives the final fit weighs. est_lens / est_ok: near the frame and without a calibrated
@@ -3778,7 +3701,8 @@ static int fit_initial_captured(const image_view *im, const vec2 in[4], vec2 out
  * one was found. */
 static int fit_sides_alternate(const image_view *im, const vec2 in[4], vec2 out[4], double r_out, double r_in, int min_edge,
                      int outermost, int max_points, double *edge_width, edge_levels *levels, double cells, vec2 alternate[4], vec2 curved[4], vec2 est_lens[4], int *est_ok, double *width_ratio, int *frame_sides) {
-    return fit_sides_impl(im, in, out, r_out, r_in, min_edge, outermost, max_points, edge_width, levels, cells, alternate, curved, est_lens, est_ok, width_ratio, NULL, frame_sides);
+    return fit_sides_impl(im, in, out, r_out, r_in, min_edge, outermost, max_points, edge_width, levels, cells,
+                          alternate, curved, est_lens, est_ok, width_ratio, frame_sides);
 }
 
 /* The shared-white model denoises geometry after a tag already decodes.
@@ -4664,9 +4588,9 @@ static void blocked_capture(napa_detector *det, const vec2 q[4], double black, d
  * border and Hamming limits, for a cheap early decode on unrefined corners. Optionally reports each
  * side's border level (side_level), the tag's black and white levels, and its matched code in q's
  * observed orientation (code_out). */
-static int decode_quad_impl(napa_detector *det, const image_view *im, vec2 q[4],
+static int decode_quad(napa_detector *det, const image_view *im, vec2 q[4],
                        const napa_params *params, int slack, napa_detection *out, double side_level[4],
-                       edge_levels *levels, int exact, uint64_t *code_out) {
+                       edge_levels *levels, uint64_t *code_out) {
     const family_layout *L = &det->fam;
     const int W = L->width, o = L->outer, G = L->grid;
     if (signed_area(q) < 0) {
@@ -4754,7 +4678,7 @@ static int decode_quad_impl(napa_detector *det, const image_view *im, vec2 q[4],
     int max_hamming = params->max_hamming < L->max_hamming ? params->max_hamming : L->max_hamming;
     int soft = L->soft_hamming > max_hamming ? L->soft_hamming : max_hamming;
     int best = 64;
-    int bi = nearest_code(det, code, exact ? 0 : (slack ? soft : max_hamming) + slack, &best);
+    int bi = nearest_code(det, code, (slack ? soft : max_hamming) + slack, &best);
     if (bi < 0 && slack == 0 && params->sharpening_x100 > 0 && L->piece_hamming >= 0) {
         /* Sharpening can flip a cell that read correctly before it. Only an exact code counts here: a corrected one
          * would raise the chance of a false match for a very small gain. Families with short codes don't retry. */
@@ -4763,7 +4687,7 @@ static int decode_quad_impl(napa_detector *det, const image_view *im, vec2 q[4],
         int unsharpened_best = 64, match = nearest_code(det, unsharpened_code, 0, &unsharpened_best);
         if (match >= 0) bi = match, best = unsharpened_best, code = unsharpened_code, memcpy(grid, unsharpened, sizeof(double) * (size_t)(G * G));
     }
-    if (!exact && bi < 0 && slack == 0 && soft > max_hamming) {
+    if (bi < 0 && slack == 0 && soft > max_hamming) {
         /* Soft decision, for families whose codes are too close for more hard corrections: accept up to
          * `soft` wrong bits only if they are exactly the least certain readings (nearest the threshold),
          * as blur and compression make them. A random pattern's wrong bits are that set by chance only
@@ -4812,12 +4736,6 @@ static int decode_quad_impl(napa_detector *det, const image_view *im, vec2 q[4],
         levels->model_pending = 1;
     }
     return 1;
-}
-
-static int decode_quad(napa_detector *det, const image_view *im, vec2 q[4],
-                       const napa_params *params, int slack, napa_detection *out, double side_level[4],
-                       edge_levels *levels, uint64_t *code_out) {
-    return decode_quad_impl(det,im,q,params,slack,out,side_level,levels,0, code_out);
 }
 
 /* Points on the inner edge of the square's border along one side (0 top, v = 0, then clockwise), for the square
@@ -5134,26 +5052,9 @@ static int reserve_fine_whole(napa_detector *det, size_t index) {
 
 static int remember_fine_whole(napa_detector *det, size_t index, const component *shape, int stride, int terminal) {
     if (!reserve_fine_whole(det, index)) return 0;
-    det->fine_wholes[index].data.shape = *shape;
+    det->fine_wholes[index].shape = *shape;
     det->fine_wholes[index].stride = stride;
     det->fine_wholes[index].terminal = terminal;
-    det->fine_wholes[index].kind = FINE_WHOLE_OUTLINE;
-    return 1;
-}
-
-static int remember_confidence(napa_detector *det, size_t index, const vec2 fine[4],
-                               double reach, double edge_width, const edge_levels *lv,
-                               int early_id, int stride, int terminal) {
-    if (!reserve_fine_whole(det, index)) return 0;
-    fine_whole *entry = &det->fine_wholes[index];
-    memcpy(entry->data.confidence.fine, fine, sizeof entry->data.confidence.fine);
-    entry->data.confidence.reach = reach;
-    entry->data.confidence.edge_width = edge_width;
-    entry->data.confidence.lv = *lv;
-    entry->data.confidence.early_id = early_id;
-    entry->stride = stride;
-    entry->terminal = terminal;
-    entry->kind = FINE_WHOLE_CONFIDENCE_PENDING;
     return 1;
 }
 
@@ -6211,9 +6112,9 @@ static int rough_screen_mode(int s, int last, int shadow, int piece, int undersi
 }
 
 static int fit_initial_from_level(const image_view *view, const vec2 rough[4], vec2 fine[4], int s, double scale,
-                                   int min_contrast, double *width, double cells, initial_capture *capture, int *frame_sides) {
-    return fit_initial_captured(view, rough, fine, 1.5 * s * scale + 1.0, 0.5 * s * scale + 1.0,
-                                min_contrast, width, cells, capture, frame_sides);
+                                   int min_contrast, double *width, double cells, int *frame_sides) {
+    return fit_initial_sides(view, rough, fine, 1.5 * s * scale + 1.0, 0.5 * s * scale + 1.0,
+                             min_contrast, width, cells, frame_sides);
 }
 
 /* threads: a candidate's rough quad, screen and first fit, for the candidate loop. screen and fit are -1 where the
@@ -6224,7 +6125,6 @@ typedef struct cand_memo {
     int frame_sides;
     vec2 fine[4];
     double edge_w;
-    initial_capture capture;
 } cand_memo;
 
 enum { MEMO_CHUNK = 4 };
@@ -6265,7 +6165,7 @@ static void memo_candidates(void *ctx, int chunk) {
         }
         double width = 0;
         m->fit = (signed char)fit_initial_from_level(j->view, rough, fine, s, j->smax,
-                                                   j->params->min_contrast, &width, j->cells, &m->capture, &m->frame_sides);
+                                                   j->params->min_contrast, &width, j->cells, &m->frame_sides);
         memcpy(m->fine, fine, sizeof fine);
         m->edge_w = width;
     }
@@ -6291,7 +6191,7 @@ typedef struct {
 
 typedef struct {
     const napa_params *params, *decode_params;
-    int shadow, piece, confidence, require_exact;
+    int shadow, piece, require_exact;
 } decode_policy;
 
 /* The converged profile and its alternate geometric hypotheses. */
@@ -6345,7 +6245,7 @@ static void correct_border_geometry(napa_detector *det, const image_view *rview,
         int refit = r >= 1.0 && fit_sides(rview, moved, first, r, r, policy->params->min_contrast, 0, NAPA_FINAL_POINTS, &q->edge_w, &q->lv, cells, NULL);
         if (refit && r2 < r) refit = fit_sides(rview, first, fixed, r2, r2, policy->params->min_contrast, 0, NAPA_FINAL_POINTS, &q->edge_w, &q->lv, cells, NULL);
         else if (refit) memcpy(fixed, first, sizeof fixed);
-        if (refit && decode_quad_impl(det, rview, fixed, policy->decode_params, 0, &d2, side2, NULL, policy->confidence, NULL) &&
+        if (refit && decode_quad(det, rview, fixed, policy->decode_params, 0, &d2, side2, NULL, NULL) &&
             (!policy->require_exact || d2.hamming == 0) && d2.id == q->d.id) {
             for (int k = 0; k < 4; k++) level_after += side2[k];
             if (level_after < level_before - 0.2) {
@@ -6389,7 +6289,7 @@ static void correct_border_geometry(napa_detector *det, const image_view *rview,
             vec2 grown[4];
             napa_detection d3;
             grow_quad(q->finer, share * delta, grown);
-            if (decode_quad_impl(det, rview, grown, policy->decode_params, 0, &d3, NULL, NULL, policy->confidence, NULL) &&
+            if (decode_quad(det, rview, grown, policy->decode_params, 0, &d3, NULL, NULL, NULL) &&
                 (!policy->require_exact || d3.hamming == 0) && d3.id == q->d.id) {
                 q->d = d3;
                 c->measured_bias = delta;
@@ -6407,7 +6307,8 @@ static void correct_border_geometry(napa_detector *det, const image_view *rview,
         double alternative_border[4];
         /* The fits share the same biased edge location, so they share its correction. */
         if (c->edge_shift != 0) grow_quad(q->alternative, c->edge_shift, q->alternative);
-        if (decode_quad_impl(det, rview, q->alternative, policy->decode_params, 0, &refined, alternative_border, NULL, policy->confidence, NULL) &&
+        if (decode_quad(det, rview, q->alternative, policy->decode_params, 0, &refined, alternative_border, NULL,
+                        NULL) &&
             (!policy->require_exact || refined.hamming == 0) && refined.id == q->d.id && refined.hamming <= policy->params->max_hamming &&
             refined.hamming <= det->fam.max_hamming && (!policy->shadow || refined.hamming == 0) &&
             (!policy->piece || refined.hamming <= det->fam.piece_hamming)) {
@@ -6459,7 +6360,7 @@ static void select_curve_geometry(napa_detector *det, const image_view *rview, c
         if (lens_bias == 0 && q->final_lv.white < 250 && c->bias_estimate >= NAPA_LOCAL_BIAS_MIN && c->bias_estimate < 1.5) lens_bias = c->bias_estimate;
         if (signed_area(q->lens_quad) < 0) { vec2 swap = q->lens_quad[1]; q->lens_quad[1] = q->lens_quad[3]; q->lens_quad[3] = swap; }
         if (lens_bias != 0) grow_quad(q->lens_quad, lens_bias, q->lens_quad);
-        if (decode_quad_impl(det, rview, q->lens_quad, policy->decode_params, 0, &proposal, NULL, NULL, policy->confidence, NULL) &&
+        if (decode_quad(det, rview, q->lens_quad, policy->decode_params, 0, &proposal, NULL, NULL, NULL) &&
             (!policy->require_exact || proposal.hamming == 0) && proposal.id == q->d.id && proposal.hamming <= q->d.hamming &&
             (!policy->shadow || proposal.hamming == 0) && (!policy->piece || proposal.hamming <= det->fam.piece_hamming)) {
             q->d = proposal;
@@ -6477,7 +6378,7 @@ static void select_curve_geometry(napa_detector *det, const image_view *rview, c
         if (curve_move > 0.02 && !c->near_frame) {
             napa_detection proposal;
             if (c->edge_shift != 0) grow_quad(q->curved, c->edge_shift, q->curved);
-            if (decode_quad_impl(det, rview, q->curved, policy->decode_params, 0, &proposal, NULL, NULL, policy->confidence, NULL) &&
+            if (decode_quad(det, rview, q->curved, policy->decode_params, 0, &proposal, NULL, NULL, NULL) &&
                 (!policy->require_exact || proposal.hamming == 0) && proposal.id == q->d.id && proposal.hamming <= q->d.hamming &&
                 proposal.hamming <= policy->params->max_hamming && proposal.hamming <= det->fam.max_hamming &&
                 (!policy->shadow || proposal.hamming == 0) && (!policy->piece || proposal.hamming <= det->fam.piece_hamming))
@@ -6551,7 +6452,7 @@ static int polish_decoded_corners(napa_detector *det, const image_view *rview, c
         }
         napa_detection polished;
         if (moved && q->edge_w <= NAPA_POLISH_MAX_EDGE_CELLS * one_cell &&
-            decode_quad_impl(det, rview, local, policy->decode_params, 0, &polished, NULL, NULL, policy->confidence, NULL) &&
+            decode_quad(det, rview, local, policy->decode_params, 0, &polished, NULL, NULL, NULL) &&
             polished.id == q->d.id && polished.hamming <= q->d.hamming) q->d = polished;
     }
     if (!q->cut) {
@@ -6562,10 +6463,10 @@ static int polish_decoded_corners(napa_detector *det, const image_view *rview, c
             vec2 sized[4], aligned[4];
             napa_detection redone;
             if (tone_corrected_quad(&q->d, &tone, sized) &&
-                decode_quad_impl(det, rview, sized, policy->decode_params, 0, &redone, NULL, NULL, policy->confidence, NULL) &&
+                decode_quad(det, rview, sized, policy->decode_params, 0, &redone, NULL, NULL, NULL) &&
                 redone.id == q->d.id && redone.hamming <= q->d.hamming) q->d = redone;
             if (det->align_corners && tone_aligned_quad(rview, &q->d, &tone, aligned) &&
-                decode_quad_impl(det, rview, aligned, policy->decode_params, 0, &redone, NULL, NULL, policy->confidence, NULL) &&
+                decode_quad(det, rview, aligned, policy->decode_params, 0, &redone, NULL, NULL, NULL) &&
                 redone.id == q->d.id && redone.hamming <= q->d.hamming) q->d = redone;
         }
     }
@@ -6672,7 +6573,7 @@ refine_candidate:
     q.final_lv.black = 255; q.final_lv.white = 0; q.final_lv.has_model = 0; q.final_lv.model_pending = 0;
     uint64_t code = 0;
     vec2 second = q.finer[1];
-    int decoded_ = decode_quad_impl(det, rview, q.finer, policy->decode_params, 0, &q.d, q.side_level, &q.final_lv, policy->confidence, &code);
+    int decoded_ = decode_quad(det, rview, q.finer, policy->decode_params, 0, &q.d, q.side_level, &q.final_lv, &code);
     if (decoded_ && policy->require_exact && q.d.hamming != 0) decoded_ = 0;
     /* The ordinary fit may fail decoding because its edge levels were mixed by blur.
      * Reuse the already-fitted alternate, with the same strict decode and path limits. */
@@ -6687,7 +6588,9 @@ refine_candidate:
             double move = 0;
             for (int k = 0; k < 4; k++)
                 move += fabs(q.alternative[k].x - q.finer[k].x) + fabs(q.alternative[k].y - q.finer[k].y);
-            if (move > 0.02 && decode_quad_impl(det, rview, q.alternative, policy->decode_params, 0, &q.d, q.side_level, &q.final_lv, policy->confidence, &code) &&
+            if (move > 0.02 &&
+                decode_quad(det, rview, q.alternative, policy->decode_params, 0, &q.d, q.side_level, &q.final_lv,
+                            &code) &&
                 (!policy->require_exact || q.d.hamming == 0) && q.d.id == fit->early.id && q.d.hamming <= policy->params->max_hamming && q.d.hamming <= det->fam.max_hamming &&
                 (!policy->shadow || q.d.hamming == 0) && (!policy->piece || q.d.hamming <= det->fam.piece_hamming)) {
                 q.accepted_blur = 1;
@@ -6715,7 +6618,7 @@ refine_candidate:
         vec2 extended[4];
         napa_detection d1;
         if (!extend_cut_sides(&det->fam, rview, q.finer, q.cut, code, q.final_lv.black, q.final_lv.white, extended) ||
-            !decode_quad_impl(det, rview, extended, policy->decode_params, 0, &d1, NULL, NULL, policy->confidence, NULL) ||
+            !decode_quad(det, rview, extended, policy->decode_params, 0, &d1, NULL, NULL, NULL) ||
             (policy->require_exact && d1.hamming != 0) || d1.id != q.d.id) {
             return REFINE_CUT_FAILED; /* cut extension failed without changing the component fate */
         }
@@ -7042,7 +6945,7 @@ static int assemble_level_candidates(napa_detector *det, const pass_config *conf
     return 0;
 }
 
-/* Regrowth uses full-resolution extrema and its own fixed fit window, without confidence samples. */
+/* Regrowth uses full-resolution extrema and its own fixed fit window. */
 static int regrow_and_fit(napa_detector *det, const image_view *view, const napa_params *params,
                           const vec2 rough[4], double extent, vec2 fitted[4], double *edge_width) {
     component grown;
@@ -7055,8 +6958,8 @@ static int regrow_and_fit(napa_detector *det, const image_view *view, const napa
     rough_pick(&grown, 0, pick);
     for (int k = 0; k < 4; k++) quad[k].x = pick[k][0] + ox, quad[k].y = pick[k][1] + oy;
     *edge_width = 0;
-    return fit_initial_captured(view, quad, fitted, 2.5, 1.5, params->min_contrast, edge_width,
-                                det->fam.cells, NULL, NULL);
+    return fit_initial_sides(view, quad, fitted, 2.5, 1.5, params->min_contrast, edge_width,
+                             det->fam.cells, NULL);
 }
 
 static int decode_initial_candidate(napa_detector *det, const image_view *view, const napa_params *params,
@@ -7155,9 +7058,6 @@ static int process_level_candidates(napa_detector *det, const pass_config *confi
     for (int ci = 0; ci < candidate_count; ci++) {
         const int delayed = ci >= ordinary_count;
         const size_t pending_index = delayed ? (size_t)(ci - ordinary_count) : 0;
-        const int confidence = delayed && det->fine_wholes[pending_index].kind != FINE_WHOLE_OUTLINE;
-        /* Process confidence entries once, even when neck splitting restarts the levels. */
-        if (confidence && det->fine_wholes[pending_index].kind != FINE_WHOLE_CONFIDENCE_PENDING) continue;
         const int piece = !delayed && ci >= ncand;
         /* A saved outline retains its original coordinate grid and terminal fit policy. */
         const int s = delayed ? det->fine_wholes[pending_index].stride : level_stride;
@@ -7167,12 +7067,7 @@ static int process_level_candidates(napa_detector *det, const pass_config *confi
         int k = piece ? (ci - ncand < npieces - fine ? fine + ci - ncand : ci - ncand - (npieces - fine)) : 0;
         /* Redone levels decode only the pieces deferred until neck splitting. */
         if (!delayed && redo && (!piece || (k >= fine && det->pieces[k].work.candidate.fate != CANDIDATE_WAITING_FOR_NECKS))) continue;
-        /* These locals are shared with the predecoded confidence entry below. Every
-         * value read after refine_candidate is assigned on both incoming paths. */
-        int confidence_fate;
-        int *candidate_fate = &confidence_fate;
         component comp;
-        int undersized_whole = 0, require_exact = confidence, extended_shape = 0;
         int t_minx, t_maxx, t_miny, t_maxy;
         napa_params strict_border;
         const napa_params *decode_params = params;
@@ -7181,41 +7076,14 @@ static int process_level_candidates(napa_detector *det, const pass_config *confi
         image_view lin_view = view;
         const image_view *rview = &view;
         fit.frame_sides = 0;
-        if (confidence) {
-            /* Mark rejected before refinement: each failure continue keeps that state.
-             * No pointer into the deferred buffer survives an append/reallocation. */
-            det->fine_wholes[pending_index].kind = FINE_WHOLE_CONFIDENCE_REJECTED;
-            if (outputs->found >= outputs->max_out) continue;
-            memcpy(fit.fine, det->fine_wholes[pending_index].data.confidence.fine, sizeof fit.fine);
-            fit.reach = det->fine_wholes[pending_index].data.confidence.reach;
-            fit.edge_w = det->fine_wholes[pending_index].data.confidence.edge_width;
-            fit.lv = det->fine_wholes[pending_index].data.confidence.lv;
-            fit.early.id = det->fine_wholes[pending_index].data.confidence.early_id;
-            strict_border = *params;
-            strict_border.max_hamming = 0;
-            decode_params = &strict_border;
-            /* Confidence entries have no component fate; shared-tail writes stay local. */
-#ifdef NAPA_TRACE
-            t_minx = t_maxx = (int)floor(fit.fine[0].x / s);
-            t_miny = t_maxy = (int)floor(fit.fine[0].y / s);
-            for (int side = 0; side < 4; side++) {
-                int x0 = (int)floor(fit.fine[side].x / s), x1 = (int)ceil(fit.fine[side].x / s);
-                int y0 = (int)floor(fit.fine[side].y / s), y1 = (int)ceil(fit.fine[side].y / s);
-                if (x0 < t_minx) t_minx = x0;
-                if (x1 > t_maxx) t_maxx = x1;
-                if (y0 < t_miny) t_miny = y0;
-                if (y1 > t_maxy) t_maxy = y1;
-            }
-#endif
-            goto refine_candidate;
-        }
-        component *self = delayed ? &det->fine_wholes[pending_index].data.shape
+        component *self = delayed ? &det->fine_wholes[pending_index].shape
                           : piece ? &det->pieces[k] : &det->cands[ci];
-        candidate_fate = &self->work.candidate.fate;
+        int *candidate_fate = &self->work.candidate.fate;
         comp = *self;
-        undersized_whole = !piece && base > 1 &&
+        const int undersized_whole = !piece && base > 1 &&
             (comp.maxx - comp.minx + 1 < lo || comp.maxy - comp.miny + 1 < lo);
-        require_exact = undersized_whole || confidence;
+        const int require_exact = undersized_whole;
+        int extended_shape = 0;
         if (!delayed && !piece && (undersized_whole || dense_whole_needs_deferral(base, s, last,
                 comp.maxx - comp.minx + 1, comp.maxy - comp.miny + 1))) {
             if (!remember_fine_whole(det, outputs->fine_whole_count, &comp, s, last)) return -2;
@@ -7338,9 +7206,6 @@ static int process_level_candidates(napa_detector *det, const pass_config *confi
         }
         fit.reach = 0.5 * ((1.5 * s * smax + 1.0) + (0.5 * s * smax + 1.0));
         fit.edge_w = 0;
-        initial_capture initial_samples;
-        const int confidence_eligible = s > 1 && !shadow && !piece && !delayed &&
-            !extended_shape && det->fam.piece_hamming >= 0 && outputs->found < outputs->max_out;
         int first_fit;
         if (mm && mm->fit >= 0) {
             first_fit = mm->fit;
@@ -7348,11 +7213,10 @@ static int process_level_candidates(napa_detector *det, const pass_config *confi
             if (first_fit) {
                 memcpy(fit.fine, mm->fine, sizeof fit.fine);
                 fit.edge_w = mm->edge_w;
-                if (confidence_eligible) initial_samples = mm->capture;
             }
         } else {
             first_fit = fit_initial_from_level(&view, rough, fit.fine, s, smax,
-                params->min_contrast, &fit.edge_w, cells, confidence_eligible ? &initial_samples : NULL, &fit.frame_sides);
+                params->min_contrast, &fit.edge_w, cells, &fit.frame_sides);
         }
         if (!first_fit && !piece && !shadow && !extended_shape) {
             int supported_pick[4][2];
@@ -7367,14 +7231,12 @@ static int process_level_candidates(napa_detector *det, const pass_config *confi
                 if (quiet_zone_passes(&view, supported, 0.5 * s * smax, cells, params->min_contrast, 1, 0)) {
                     fit.edge_w = 0, fit.frame_sides = 0;
                     first_fit = fit_initial_from_level(&view, supported, fit.fine, s, smax,
-                        params->min_contrast, &fit.edge_w, cells,
-                        confidence_eligible ? &initial_samples : NULL, &fit.frame_sides);
+                        params->min_contrast, &fit.edge_w, cells, &fit.frame_sides);
                     if (first_fit) memcpy(rough, supported, sizeof supported);
                 }
             }
         }
-        /* The same for a small candidate whose first fit fails: a fragment's quad may not fit at all. A regrown
-         * fit captured no samples for confidence_quad, which also works from the fragment's rough quad. */
+        /* The same for a small candidate whose first fit fails: a fragment's quad may not fit at all. */
         int regrown = 0;
         if (!first_fit && !shadow && !piece && (base >= 2 || shaped) && s == base && big_px + s <= NAPA_REGROW_MAX_PX) {
             regrown = regrow_and_fit(det, &view, params, rough, big_px + s, fit.fine, &fit.edge_w);
@@ -7387,7 +7249,6 @@ static int process_level_candidates(napa_detector *det, const pass_config *confi
             *candidate_fate = extended_shape ? CANDIDATE_ROUGH_REJECTED : CANDIDATE_FIT_FAILED;
             continue;
         }
-        const double initial_width = fit.edge_w;
         /* The first fit is already within a fraction of a cell: decode now, with two bits of
          * slack, and spend the refinement passes only on quads that are tags. A random quad
          * passes this only about 1.5% of the time. */
@@ -7412,34 +7273,10 @@ static int process_level_candidates(napa_detector *det, const pass_config *confi
             /* Pieces only read the list. A stricter border failure also cannot prove
              * that an ordinary proposal at another level will fail the caller's check. */
             if (!piece && !extended_shape && decode_params == params) remember_failure(det, fit.fine, s);
-            if (confidence_eligible && !regrown) {
-                vec2 confidence[4];
-                if (confidence_quad(&initial_samples,rough,fit.reach,confidence)) {
-                    double movement = 0;
-                    for (int side = 0; side < 4; side++)
-                        movement += fabs(confidence[side].x - fit.fine[side].x) +
-                                    fabs(confidence[side].y - fit.fine[side].y);
-                    if (movement <= 0.02) continue;
-                    napa_detection trial;
-                    edge_levels trial_lv = {0};
-                    trial_lv.black = 255;
-                    if (decode_quad_impl(det,&view,confidence,decode_params,2,&trial,NULL,&trial_lv,1, NULL) &&
-                        trial.hamming==0) {
-                        if (!remember_confidence(det, outputs->fine_whole_count, confidence, fit.reach,
-                                initial_width, &trial_lv, trial.id, s, last)) return -2;
-                        outputs->fine_whole_count++;
-                        if (terminal_level) {
-                            if (outputs->fine_whole_count > (size_t)(INT32_MAX - ordinary_count)) return -2;
-                            candidate_count = ordinary_count + (int)outputs->fine_whole_count;
-                        }
-                    }
-                }
-            }
             continue;
         }
         PROF_MARK(PROF_DECODE1);
-    refine_candidate:;
-        decode_policy policy = {params, decode_params, shadow, piece, confidence, require_exact};
+        decode_policy policy = {params, decode_params, shadow, piece, require_exact};
         napa_detection d;
         refinement_result rejected = refine_decoded_candidate(det, &view, &policy, &fit, &d, &lin_view, timer);
         if (rejected == REFINE_NO_MEMORY) return -2;
@@ -7451,12 +7288,6 @@ static int process_level_candidates(napa_detector *det, const pass_config *confi
         }
         rview = &lin_view;
         if ((shadow || require_exact) && d.hamming != 0) continue;
-        if (confidence) {
-            if (d.id != fit.early.id) continue;
-            det->fine_wholes[pending_index].data.completed = d;
-            det->fine_wholes[pending_index].kind = FINE_WHOLE_CONFIDENCE_FINISHED;
-            continue; /* No established fates, coverage, outputs or restart changes. */
-        }
         if (piece) {
             /* Pieces are many and mostly not tags: correct fewer bits (in tag36h11, three admitted
              * chance matches from random-payload grids), and keep them apart until the end. */
@@ -7532,15 +7363,6 @@ static int append_deferred_outputs(napa_detector *det, pass_outputs *outputs) {
             if (!save_center(&det->out_centers, &det->out_center_capacity, outputs->found, &det->shape_out[k])) return -2;
             outputs->out[outputs->found++] = det->shape_out[k];
         }
-    }
-    /* Confidence successes must not suppress ordinary proposals through coverage checks.
-     * Append them after wholes/shapes and before optional pieces, preserving their prefix. */
-    for (size_t k = 0; k < outputs->fine_whole_count && outputs->found < outputs->max_out; k++) {
-        if (det->fine_wholes[k].kind != FINE_WHOLE_CONFIDENCE_FINISHED) continue;
-        const napa_detection *d = &det->fine_wholes[k].data.completed;
-        if (already_found_footprint(outputs->out, det->out_centers, outputs->found, d)) continue;
-        if (!save_center(&det->out_centers, &det->out_center_capacity, outputs->found, d)) return -2;
-        outputs->out[outputs->found++] = *d;
     }
     /* Pieces come last, so the other detections are unchanged by split_touching. */
     for (int k = 0; k < outputs->piece_found && outputs->found < outputs->max_out; k++) {
@@ -8260,7 +8082,7 @@ static int blocked_pass(napa_detector *det, const image_view *view, const napa_p
         napa_detection unused;
         memset(&probe, 0, sizeof probe);
         det->grid_probe = &probe;
-        decode_quad_impl(det, view, refined, params, 0, &unused, NULL, NULL, 0, NULL);
+        decode_quad(det, view, refined, params, 0, &unused, NULL, NULL, NULL);
         det->grid_probe = NULL;
         if (!probe.order) continue;
         for (int k = 0; k < 4; k++) refined[k].x = probe.quad[2 * k], refined[k].y = probe.quad[2 * k + 1];
@@ -8445,7 +8267,7 @@ int napa_border_bias_cells(napa_detector *det, const uint8_t *img, int width, in
     edge_levels levels;
     napa_detection unused;
     levels.black = 255, levels.white = 0;
-    decode_quad_impl(det, &view, q, params, 0, &unused, NULL, &levels, 0, NULL);
+    decode_quad(det, &view, q, params, 0, &unused, NULL, &levels, NULL);
     if (!(levels.black < levels.white)) return 1;
     border_bias(&det->fam, &view, q, levels.black, levels.white, &delta, &disagreement);
     if (!isfinite(delta)) return 1;

@@ -8,20 +8,6 @@ from pathlib import Path
 import pytest
 
 
-def _confidence_growth_input(tmp_path: Path) -> Path:
-    """Align 65 copies with stride-three levels so each needs confidence recovery."""
-    np = pytest.importorskip("numpy")
-    with np.load(Path(__file__).parent / "fixtures" / "initial-background-2.npz") as fixture:
-        tile = fixture["image"]
-    image = np.full((8 * 288, 9 * 384), 190, np.uint8)
-    for index in range(65):
-        row, col = divmod(index, 9)
-        image[row * 288 : row * 288 + 240, col * 384 : col * 384 + 320] = tile
-    path = tmp_path / "confidence-growth.raw"
-    image.tofile(path)
-    return path
-
-
 def _shape_growth_input(tmp_path: Path, small: bool = False) -> Path:
     """65 disjoint thin tags force both deferred-output buffers beyond their initial 64 entries."""
     cv2 = pytest.importorskip("cv2")
@@ -64,7 +50,6 @@ def _shape_growth_input(tmp_path: Path, small: bool = False) -> Path:
         "native_footprint_kernels.c",
         "native_shape_storage.c",
         "native_run_kernels.c",
-        "native_confidence_storage.c",
         "native_small_outline.c",
         "native_borrowed_gray.c",
         "native_border_batch.c",
@@ -99,8 +84,6 @@ def _run_native_kernels(tmp_path: Path, scalar: bool, source_name: str, small_st
         command.append(f"-DNAPA_SHAPE_GROWTH_INPUT={json.dumps(str(_shape_growth_input(tmp_path, small_storage)))}")
         if small_storage:
             command.append("-DNAPA_SMALL_STORAGE")
-    if source_name == "native_confidence_storage.c":
-        command.append(f"-DNAPA_CONFIDENCE_GROWTH_INPUT={json.dumps(str(_confidence_growth_input(tmp_path)))}")
     command.extend([str(root / "tests" / source_name), "-lm", "-o", str(executable)])
     subprocess.run(command, check=True, capture_output=True, text=True)
     result = subprocess.run([str(executable)], check=True, capture_output=True, text=True)
@@ -116,11 +99,6 @@ def _run_native_kernels(tmp_path: Path, scalar: bool, source_name: str, small_st
         assert "65 distinct shapes, capped prefixes, six allocation-failure/retry cases passed" in result.stdout
     elif source_name == "native_run_kernels.c":
         assert "459292 exact pixel-scan run oracle cases passed" in result.stdout
-    elif source_name == "native_confidence_storage.c":
-        assert (
-            "65 actual confidence readings, growth, capped prefixes, four allocation failures and retries passed"
-            in result.stdout
-        )
     elif source_name == "native_border_batch.c":
         assert (
             "2560 sampler cases, 49408 scalar-oracle points, 152 family profiles, 5016 profile points passed"

@@ -6,7 +6,6 @@ import numpy as np
 import pytest
 
 from napa_vision import NapaDetector
-from napa_vision.tags import tag_image
 
 FIXTURE = Path(__file__).parent / "fixtures" / "initial-background-2.npz"
 
@@ -20,11 +19,20 @@ def _max_error(actual, expected):
     return min(float(np.linalg.norm(actual - np.roll(expected, k, axis=0), axis=1).max()) for k in range(4))
 
 
-def _raw(observations):
-    return [(o.tag_id, o.hamming, o.decision_margin, o.corners.tolist()) for o in observations]
-
-
-@pytest.mark.parametrize("turns", range(4))
+@pytest.mark.parametrize(
+    "turns",
+    [
+        pytest.param(
+            0,
+            marks=pytest.mark.xfail(
+                strict=True, reason="only the removed confidence-quad retry found the unturned tag at min_tag_px=32"
+            ),
+        ),
+        1,
+        2,
+        3,
+    ],
+)
 def test_oblique_tag_beside_weaker_background(turns):
     image, corners = _fixture()
     for _ in range(turns):
@@ -32,7 +40,7 @@ def test_oblique_tag_beside_weaker_background(turns):
         image = np.rot90(image).copy()
         corners = np.column_stack((corners[:, 1], width - 1 - corners[:, 0]))
     before = image.copy()
-    # The fixture targets the min_tag_px=32 grid; at the default 22 one rotation is missed (see the xfail below).
+    # The fixture targets the min_tag_px=32 grid; the default 22 misses turns 1 and 2 (the xfail below covers one).
     detector = NapaDetector(min_tag_px=32)
     try:
         observations = detector.detect(image)
@@ -62,27 +70,3 @@ def test_default_grid_finds_oblique_tag_turned_twice():
         detector.close()
     assert [o.tag_id for o in observations] == [2]
     assert _max_error(observations[0].corners, corners) < 0.25
-
-
-@pytest.mark.filterwarnings("ignore:a frame filled all:RuntimeWarning")
-@pytest.mark.parametrize("capacity", [1, 2, 64])
-@pytest.mark.parametrize(("split", "shadows"), [(False, False), (True, False), (False, True), (True, True)])
-def test_recovered_outline_follows_established_detection(capacity, split, shadows):
-    left, _ = _fixture()
-    image = np.full((240, 640), 190, np.uint8)
-    image[:, :320] = left
-    marker = tag_image(5, cell_px=8)
-    image[72 : 72 + marker.shape[0], 432 : 432 + marker.shape[1]] = marker
-    # At min_tag_px=32 tag 2 is a recovered outline appended after tag 5; at 22 it is an ordinary detection.
-    ordinary = NapaDetector(min_tag_px=32)
-    try:
-        expected = _raw(ordinary.detect(image))
-    finally:
-        ordinary.close()
-    assert [o[0] for o in expected] == [5, 2]
-    detector = NapaDetector(min_tag_px=32, max_detections=capacity, split_touching=split, recover_shadows=shadows)
-    try:
-        actual = _raw(detector.detect(image))
-    finally:
-        detector.close()
-    assert actual == expected[:capacity]
