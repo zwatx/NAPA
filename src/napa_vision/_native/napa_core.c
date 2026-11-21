@@ -6880,6 +6880,7 @@ typedef struct {
     const uint8_t *gray;
     int prev_lw, floor_stride, contrast;
     int boxed; /* some level so far was replaced by box averages, so every later one samples them */
+    int prev_s; /* the previous level's stride */
 } level_sampling;
 
 typedef struct {
@@ -6920,14 +6921,15 @@ static int sample_threshold_level(napa_detector *det, const pass_config *config,
         }
     } else {
         for (int y = 0; y < level->lh; y++) {
-            const uint8_t *src = sampling->gray + (size_t)(2 * y) * sampling->prev_lw;
-            if (sampling->gray == det->level) gather2(det->level + (size_t)y * level->lw, src, level->lw);
+            const int step = level->s / sampling->prev_s; /* 2, or 4 where the ordinary pass skips a level */
+            const uint8_t *src = sampling->gray + (size_t)(step * y) * sampling->prev_lw;
+            if (sampling->gray == det->level && step == 2) gather2(det->level + (size_t)y * level->lw, src, level->lw);
             /* Unlike owned scratch, an odd borrowed final row has no spare byte. */
-            else gather_row(det->level + (size_t)y * level->lw, src, level->lw, 2, det->ssse3);
+            else gather_row(det->level + (size_t)y * level->lw, src, level->lw, step, det->ssse3);
         }
         sampling->gray = det->level;
     }
-    sampling->prev_lw = level->lw;
+    sampling->prev_lw = level->lw, sampling->prev_s = level->s;
     PROF_MARK(PROF_RAKE);
     if (level->s == base || (base == 1 && level->s == 2 && sampling->contrast > NAPA_NOISY_FLOOR)) {
         /* Do not blur stride-one proposals: a tiny border can be just one pixel wide. Its
@@ -6963,7 +6965,9 @@ static int sample_threshold_level(napa_detector *det, const pass_config *config,
         ? (uint8_t)(params->min_contrast * NAPA_FINEST_CONTRAST_NUM / NAPA_FINEST_CONTRAST_DEN > 255
                         ? 255 : params->min_contrast * NAPA_FINEST_CONTRAST_NUM / NAPA_FINEST_CONTRAST_DEN)
         : 0;
-    det->level_half = !shadow && base == 2 && level->s == base;
+    /* The ordinary pass's stride-two finest level, and the stride-eight level that follows it (stride four is skipped,
+     * see detect_pass): there a half tile's neighbourhood spans the 48 px the skipped level's tiles did. */
+    det->level_half = !shadow && base == 2 && (level->s == base || (!config->split && level->s == 4 * base));
 
     det->level_view = sampling->gray == det->level ? NULL : sampling->gray;
     /* Keyed by sampling step: the passes can start from different steps. On one frame, with one contrast setting, a
@@ -7735,7 +7739,12 @@ start:;
     outputs.fate_off = 0;
     level_sampling sampling = {NULL, 0, base, params->min_contrast, 0};
     pass_timer timing, *timer = &timing;
-    for (int s = base;; s *= 2) {
+    /* After a stride-two finest level, whose half-tile caps (level_half) separate what a wider window merges, the ordinary
+     * pass skips stride four: strides two and eight (capped the same way) find nearly all of its tags, for a sixth less
+     * time. Splitting passes (boards) keep it, because a board's large tags often come apart only there. Every other pass
+     * doubles the stride level by level. */
+    const int skip_four = !shadow && !split && base == 2;
+    for (int s = base;; s *= skip_four && s == base ? 4 : 2) {
         candidate_level level;
         level.s = s;
         level.lw = (pw + s - 1) / s;

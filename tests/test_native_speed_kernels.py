@@ -135,7 +135,7 @@ def _run_native_kernels(tmp_path: Path, scalar: bool, source_name: str, small_st
     elif source_name == "native_box_rake.c":
         assert "6000 box_rake cases match the block-mean definition" in result.stdout
     elif source_name == "native_extrema_cache.c":
-        assert "14 recovery cases at 1 and 4 threads match fresh thresholds, 24 saved levels reused" in result.stdout
+        assert "14 recovery cases at 1 and 4 threads match fresh thresholds, 20 saved levels reused" in result.stdout
     elif source_name == "native_nearest_code.c":
         assert "737973 reads match the nearest rotated code at max_bits 0-5" in result.stdout
     elif source_name == "native_borrowed_gray.c":
