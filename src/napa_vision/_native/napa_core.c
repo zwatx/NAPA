@@ -7836,7 +7836,7 @@ static int detect_pass(napa_detector *det, const uint8_t *img, int width, int he
                                 split, watch, shadow, shaped, sx, sy, offx, offy, smax};
 start:;
     outputs.fate_off = 0;
-    level_sampling sampling = {NULL, 0, base, params->min_contrast, 0};
+    level_sampling sampling = {NULL, 0, base, params->min_contrast, 0, 0};
     pass_timer timing, *timer = &timing;
     /* After a stride-two finest level, whose half-tile caps (level_half) separate what a wider window merges, the ordinary
      * pass skips stride four: strides two and eight (capped the same way) find nearly all of its tags, for a sixth less
