@@ -23,12 +23,22 @@ def render(seed: int) -> tuple[np.ndarray, np.ndarray, int]:
     corners = square @ rotation.T + center
     scale, margin = 16, 16  # 16 px per cell in the artwork; a one-cell quiet zone
     artwork = np.ones((10 * scale, 10 * scale))
-    artwork[margin:margin + 8 * scale, margin:margin + 8 * scale] = np.kron(
-        tag_cells(tag_id, quiet_zone_cells=0).astype(float), np.ones((scale, scale)))
+    artwork[margin : margin + 8 * scale, margin : margin + 8 * scale] = np.kron(
+        tag_cells(tag_id, quiet_zone_cells=0).astype(float), np.ones((scale, scale))
+    )
     grey, black, background = 132 + rng.uniform(-20, 20), 29 + rng.uniform(-10, 10), 238
     texture = np.where(artwork > 0.5, grey, black).astype(np.float32)
-    source = np.float32([[margin, margin], [margin + 8 * scale, margin], [margin + 8 * scale, margin + 8 * scale],
-                         [margin, margin + 8 * scale]]) - 0.5
+    source = (
+        np.float32(
+            [
+                [margin, margin],
+                [margin + 8 * scale, margin],
+                [margin + 8 * scale, margin + 8 * scale],
+                [margin, margin + 8 * scale],
+            ]
+        )
+        - 0.5
+    )
     warp = cv2.getPerspectiveTransform(source, np.float32(corners))
     image = cv2.warpPerspective(texture, warp, (640, 480), flags=cv2.INTER_AREA, borderValue=-1)
     cover = cv2.warpPerspective(np.ones_like(texture), warp, (640, 480), flags=cv2.INTER_LINEAR, borderValue=0)
@@ -40,4 +50,6 @@ def render(seed: int) -> tuple[np.ndarray, np.ndarray, int]:
 if __name__ == "__main__":
     for seed in map(int, sys.argv[1:]):
         image, corners, tag_id = render(seed)
-        np.savez_compressed(Path(__file__).with_name(f"grey-margin-{seed}.npz"), image=image, corners=corners, tag_id=tag_id)
+        np.savez_compressed(
+            Path(__file__).with_name(f"grey-margin-{seed}.npz"), image=image, corners=corners, tag_id=tag_id
+        )

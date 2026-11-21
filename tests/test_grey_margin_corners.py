@@ -7,7 +7,9 @@ from napa_vision import NapaDetector
 
 
 @pytest.mark.parametrize("seed", [32, 241, 470])
-@pytest.mark.parametrize("options", [{}, {"split_touching": True, "recover_shadows": True}], ids=["default", "recovery"])
+@pytest.mark.parametrize(
+    "options", [{}, {"split_touching": True, "recover_shadows": True}], ids=["default", "recovery"]
+)
 def test_grey_margin_side_ends(seed: int, options: dict) -> None:
     # A quiet zone as grey as the white cells, on a lighter background: specks of the margin can join the border's
     # blob near one corner, and the fitted side then pivots out onto the margin's outer edge at that end while the tag
