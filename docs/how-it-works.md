@@ -56,8 +56,8 @@ A few shapes need repairs. Each is kept only if the tag still decodes to the sam
   resolution and try its outline again, within a fixed attempt budget.
 - **Grey quiet zone**: if the outline was really the margin, retry at its inner eight tenths.
 - **Side one cell out**: move it in a cell and re-fit.
-- **One end of a side out**: a speck of a grey margin can pull one end of a side onto the margin's edge. If the
-  border reads white at that end, step that corner in a cell at a time and re-fit. Keep it only if the ID, the
+- **One corner out**: a speck of a grey margin can pull a corner onto the margin's edge, along one side or both. If
+  the border reads white there, step that corner in a cell at a time and re-fit. Keep it only if the ID, the
   corrected bits and a dark border all hold.
 - **Clipped exposure**: the border must be exactly one cell wide; measure the shrink on the tag and undo it.
 - **Blur and tone curves**: blur on gamma-encoded cameras reads tags a few percent small. NAPA measures blur and tone
