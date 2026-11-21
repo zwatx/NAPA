@@ -6437,6 +6437,28 @@ typedef struct {
     double edge_shift, measured_bias, whole_share, bias_estimate, accepted_border_level, curve_span;
 } border_correction;
 
+/* Each side's two border cells at each end (the corner cell and its neighbour along the side) as a fraction of the way
+ * from the tag's black to its white: about 0 where the side runs along the border, about 1 where it runs out on the quiet
+ * zone. levels[side][end], sides top, right, bottom, left of q's square; end 0 at the side's first corner. 0 if the
+ * border can't be read. */
+static int side_end_levels(const family_layout *L, const image_view *im, const vec2 q[4], int min_contrast,
+                           double levels[4][2]) {
+    const int W = L->width, o = L->outer, G = L->grid;
+    double H[9], grid[256], border[64], black, white;
+    square_to_quad(q, H);
+    if (read_border(L, im, H, min_contrast, grid, border, &black, &white, NULL) < 0 || white <= black) return 0;
+    for (int k = 0; k < 4; k++)
+        for (int e = 0; e < 2; e++) {
+            double sum = 0;
+            for (int j = 0; j <= 1; j++) {
+                const int along = e ? W - 1 - j : j;
+                sum += grid[((k == 0 ? 0 : k == 2 ? W - 1 : along) + o) * G + (k == 1 ? W - 1 : k == 3 ? 0 : along) + o];
+            }
+            levels[k][e] = (0.5 * sum - black) / (white - black);
+        }
+    return 1;
+}
+
 static void correct_border_geometry(napa_detector *det, const image_view *rview, const decode_policy *policy,
                                     refined_quad *q, border_correction *c) {
     const int W = det->fam.width;
@@ -6485,6 +6507,64 @@ static void correct_border_geometry(napa_detector *det, const image_view *rview,
             }
         }
     }
+    /* One end of a side fitted out on the quiet zone (a speck of the margin joined the blob there, and the side
+     * pivots on its far end): the side as a whole doesn't read white, but its border cells near that end do. Step that
+     * end's corner in a cell at a time, square to the side, until those cells read dark, refit once in a narrow window,
+     * and keep the result if the same tag decodes with that end dark and the border as a whole no lighter. Steps may
+     * pass through a decode with more corrected bits; the repair as a whole must not end with more. */
+    const refined_quad before_ends = *q;
+    const border_correction before_c = *c;
+    static const int end_corner[4][2] = {{0, 1}, {1, 2}, {3, 2}, {0, 3}};
+    for (int rep = 0, changed = 1; rep < 3 && changed && !q->cut && bad != 15; rep++) {
+        changed = 0;
+        double levels[4][2], end_white = 0.6;
+        int side = -1, end = 0;
+        if (side_end_levels(&det->fam, rview, q->finer, policy->params->min_contrast, levels))
+            for (int k = 0; k < 4; k++)
+                for (int e = 0; e < 2; e++)
+                    if (levels[k][e] > end_white) end_white = levels[k][e], side = k, end = e;
+        if (side < 0) break;
+        const int corner = end_corner[side][end];
+        vec2 trial[4];
+        memcpy(trial, q->finer, sizeof trial);
+        double level = end_white;
+        for (int step = 0; step < 3 && level > 0.6; step++) {
+            double Hs[9], cu = (corner == 1 || corner == 2) ? 1.0 : 0.0, cv = corner >= 2 ? 1.0 : 0.0;
+            if (side == 0) cv += 1.0 / W; else if (side == 2) cv -= 1.0 / W; else if (side == 1) cu -= 1.0 / W; else cu += 1.0 / W;
+            square_to_quad(trial, Hs);
+            trial[corner] = project(Hs, cu, cv);
+            if (!side_end_levels(&det->fam, rview, trial, policy->params->min_contrast, levels)) break;
+            level = levels[side][end];
+        }
+        if (level >= end_white - 0.3) continue;
+        const double reach = 1.25 * q->edge_w > 1.5 ? 1.25 * q->edge_w : 1.5;
+        vec2 fixed[4];
+        napa_detection d2;
+        double side2[4], level_after = 0, edge_w = q->edge_w;
+        edge_levels lv = q->lv;
+        if (!fit_sides(rview, trial, fixed, reach, reach, policy->params->min_contrast, 0, NAPA_FINAL_POINTS, &edge_w, &lv, cells, NULL) ||
+            signed_area(fixed) * signed_area(q->finer) <= 0 ||
+            !decode_quad_impl(det, rview, fixed, policy->decode_params, 0, &d2, side2, NULL, policy->confidence, NULL) ||
+            (policy->require_exact && d2.hamming != 0) || d2.id != q->d.id ||
+            d2.hamming > policy->params->max_hamming || d2.hamming > det->fam.max_hamming ||
+            (policy->shadow && d2.hamming != 0) || (policy->piece && d2.hamming > det->fam.piece_hamming))
+            continue;
+        for (int k = 0; k < 4; k++) level_after += side2[k];
+        if (!side_end_levels(&det->fam, rview, fixed, policy->params->min_contrast, levels)) continue;
+        if (levels[side][end] < 0.5 && levels[side][end] < end_white - 0.3 && level_after <= c->accepted_border_level) {
+            q->d = d2;
+            c->corrected_border = 1;
+            c->accepted_border_level = level_after;
+            q->edge_w = edge_w, q->lv = lv;
+            memcpy(q->finer, fixed, sizeof q->finer);
+            /* The fits' alternatives described the quad before the repair. */
+            memcpy(q->alternative, fixed, sizeof q->alternative);
+            memcpy(q->curved, fixed, sizeof q->curved);
+            q->lens_ok = 0;
+            changed = 1;
+        }
+    }
+    if (q->d.hamming > before_ends.d.hamming) *q = before_ends, *c = before_c;
     /* Clipped levels, and gamma-encoded images under blur, bias every edge the same way: the half-level
      * isn't the true edge. Measure the bias from the border's own width, which is one cell whatever the
      * camera, and undo it. Without visible clipping only a clear narrowing counts: gamma can only narrow a
