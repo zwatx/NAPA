@@ -918,6 +918,42 @@ static inline double sample_bilinear(const image_view *im, double x, double y) {
     return im->invert ? 255.0 - v : v;
 }
 
+#ifdef NAPA_SSE2
+/* sample_bilinear at two points at once: the scalar operation order and NaN-safe clamps, so the same values. */
+static inline __m128d sample_bilinear_pair(const image_view *im, __m128d x, __m128d y) {
+    const uint8_t *img = im->p;
+    const int stride = im->stride;
+    const __m128d zero = _mm_setzero_pd(), xmax = _mm_set1_pd(im->w - 1.001), ymax = _mm_set1_pd(im->h - 1.001);
+    x = _mm_and_pd(_mm_cmpge_pd(x, zero), x); /* !(x >= 0): 0 */
+    y = _mm_and_pd(_mm_cmpge_pd(y, zero), y);
+    __m128d in = _mm_cmple_pd(x, xmax); /* !(x <= w - 1.001): w - 1.001 */
+    x = _mm_or_pd(_mm_and_pd(in, x), _mm_andnot_pd(in, xmax));
+    in = _mm_cmple_pd(y, ymax);
+    y = _mm_or_pd(_mm_and_pd(in, y), _mm_andnot_pd(in, ymax));
+    __m128i xi = _mm_cvttpd_epi32(x), yi = _mm_cvttpd_epi32(y);
+    const uint8_t *pa = img + (size_t)_mm_cvtsi128_si32(yi) * stride + _mm_cvtsi128_si32(xi);
+    const uint8_t *pb = img + (size_t)_mm_cvtsi128_si32(_mm_srli_si128(yi, 4)) * stride +
+                        _mm_cvtsi128_si32(_mm_srli_si128(xi, 4));
+    __m128d p0 = _mm_cvtepi32_pd(_mm_setr_epi32(pa[0], pb[0], 0, 0));
+    __m128d d01 = _mm_cvtepi32_pd(_mm_setr_epi32(pa[1] - pa[0], pb[1] - pb[0], 0, 0));
+    __m128d p2 = _mm_cvtepi32_pd(_mm_setr_epi32(pa[stride], pb[stride], 0, 0));
+    __m128d d23 = _mm_cvtepi32_pd(_mm_setr_epi32(pa[stride + 1] - pa[stride], pb[stride + 1] - pb[stride], 0, 0));
+    __m128d fx = _mm_sub_pd(x, _mm_cvtepi32_pd(xi)), fy = _mm_sub_pd(y, _mm_cvtepi32_pd(yi));
+    __m128d a = _mm_add_pd(p0, _mm_mul_pd(d01, fx)), b = _mm_add_pd(p2, _mm_mul_pd(d23, fx));
+    __m128d val = _mm_add_pd(a, _mm_mul_pd(_mm_sub_pd(b, a), fy));
+    return im->invert ? _mm_sub_pd(_mm_set1_pd(255.0), val) : val;
+}
+#endif
+
+/* sample_bilinear at n pixel positions, two at a time where the CPU allows. */
+static void sample_at(const image_view *im, const double *x, const double *y, int n, double *out) {
+    int i = 0;
+#ifdef NAPA_SSE2
+    for (; i + 2 <= n; i += 2) _mm_storeu_pd(out + i, sample_bilinear_pair(im, _mm_loadu_pd(x + i), _mm_loadu_pd(y + i)));
+#endif
+    for (; i < n; i++) out[i] = sample_bilinear(im, x[i], y[i]);
+}
+
 /* ---------------------------------------------------------------- threshold */
 
 #define TILE 4
@@ -3547,10 +3583,11 @@ retake:
                 }
                 double half = len / (2.0 * cells);
                 for (int iter = 0; iter < NAPA_CROSS_ITERS; iter++) {
-                    double pos0 = -r_out + cj * step;
-                    double wl = sample_bilinear(im, bx + pnx * (pos0 - half), by + pny * (pos0 - half));
-                    double bl = sample_bilinear(im, bx + pnx * (pos0 + half), by + pny * (pos0 + half));
-                    double mid = 0.5 * (wl + bl) * 16777216.0;
+                    double pos0 = -r_out + cj * step, level[2]; /* white outside, black inside */
+                    const double level_x[2] = {bx + pnx * (pos0 - half), bx + pnx * (pos0 + half)};
+                    const double level_y[2] = {by + pny * (pos0 - half), by + pny * (pos0 + half)};
+                    sample_at(im, level_x, level_y, 2, level);
+                    double mid = 0.5 * (level[0] + level[1]) * 16777216.0;
                     double best_c = nearest_midpoint_crossing(prof, K, jl, jr, mid, cj);
                     if (best_c < 0) break;
                     int settled = fabs(best_c - cj) < 1e-3; /* the next pass would re-read the same levels */
@@ -3839,12 +3876,9 @@ static void sample_points_impl(const image_view *im, const double H[9], double *
                                double *out, vec2 *rawcoords) {
     int i = 0;
 #ifdef NAPA_SSE2
-    const uint8_t *img = im->p;
-    const int stride = im->stride;
     const __m128d h0 = _mm_set1_pd(H[0]), h1 = _mm_set1_pd(H[1]), h2 = _mm_set1_pd(H[2]), h3 = _mm_set1_pd(H[3]);
     const __m128d h4 = _mm_set1_pd(H[4]), h5 = _mm_set1_pd(H[5]), h6 = _mm_set1_pd(H[6]), h7 = _mm_set1_pd(H[7]);
-    const __m128d h8 = _mm_set1_pd(H[8]), one = _mm_set1_pd(1.0), zero = _mm_setzero_pd();
-    const __m128d xmax = _mm_set1_pd(im->w - 1.001), ymax = _mm_set1_pd(im->h - 1.001);
+    const __m128d h8 = _mm_set1_pd(H[8]), one = _mm_set1_pd(1.0);
     for (; i + 2 <= n; i += 2) {
         __m128d U = _mm_loadu_pd(u + i), V = _mm_loadu_pd(v + i);
         __m128d iz = _mm_div_pd(one, _mm_add_pd(_mm_add_pd(_mm_mul_pd(h6, U), _mm_mul_pd(h7, V)), h8));
@@ -3856,25 +3890,7 @@ static void sample_points_impl(const image_view *im, const double H[9], double *
             rawcoords[i + 1].x = _mm_cvtsd_f64(_mm_unpackhi_pd(x, x));
             rawcoords[i + 1].y = _mm_cvtsd_f64(_mm_unpackhi_pd(y, y));
         }
-        x = _mm_and_pd(_mm_cmpge_pd(x, zero), x); /* !(x >= 0): 0 */
-        y = _mm_and_pd(_mm_cmpge_pd(y, zero), y);
-        __m128d in = _mm_cmple_pd(x, xmax); /* !(x <= w - 1.001): w - 1.001 */
-        x = _mm_or_pd(_mm_and_pd(in, x), _mm_andnot_pd(in, xmax));
-        in = _mm_cmple_pd(y, ymax);
-        y = _mm_or_pd(_mm_and_pd(in, y), _mm_andnot_pd(in, ymax));
-        __m128i xi = _mm_cvttpd_epi32(x), yi = _mm_cvttpd_epi32(y);
-        const uint8_t *pa = img + (size_t)_mm_cvtsi128_si32(yi) * stride + _mm_cvtsi128_si32(xi);
-        const uint8_t *pb = img + (size_t)_mm_cvtsi128_si32(_mm_srli_si128(yi, 4)) * stride +
-                            _mm_cvtsi128_si32(_mm_srli_si128(xi, 4));
-        __m128d p0 = _mm_cvtepi32_pd(_mm_setr_epi32(pa[0], pb[0], 0, 0));
-        __m128d d01 = _mm_cvtepi32_pd(_mm_setr_epi32(pa[1] - pa[0], pb[1] - pb[0], 0, 0));
-        __m128d p2 = _mm_cvtepi32_pd(_mm_setr_epi32(pa[stride], pb[stride], 0, 0));
-        __m128d d23 = _mm_cvtepi32_pd(_mm_setr_epi32(pa[stride + 1] - pa[stride], pb[stride + 1] - pb[stride], 0, 0));
-        __m128d fx = _mm_sub_pd(x, _mm_cvtepi32_pd(xi)), fy = _mm_sub_pd(y, _mm_cvtepi32_pd(yi));
-        __m128d a = _mm_add_pd(p0, _mm_mul_pd(d01, fx)), b = _mm_add_pd(p2, _mm_mul_pd(d23, fx));
-        __m128d val = _mm_add_pd(a, _mm_mul_pd(_mm_sub_pd(b, a), fy));
-        if (im->invert) val = _mm_sub_pd(_mm_set1_pd(255.0), val);
-        _mm_storeu_pd(out + i, val);
+        _mm_storeu_pd(out + i, sample_bilinear_pair(im, x, y));
     }
 #endif
     for (; i < n; i++) {
@@ -4186,10 +4202,21 @@ static int payload_bias(const family_layout *L, const image_view *im, const vec2
             const double across = (line + 0.5) / cells;
             quad_line ln;
             quad_line_init(&ln, &M, axis, across, cells, 1.0, cells - 1.0);
+            double scan[MAXC * PER + 1], su[MAXC * PER + 1], sv[MAXC * PER + 1];
+            if (!M.lens) { /* the scan's points are plain projections: read them two at a time, the same values */
+                for (int j = 0; j <= steps; j++) {
+                    const double x = 1.5 + (double)j / PER;
+                    su[j] = axis ? across : x / cells, sv[j] = axis ? x / cells : across;
+                }
+                sample_points(im, M.H, su, sv, steps + 1, scan);
+            }
             for (int j = 0; j <= steps && count < MAXC; j++) {
                 const double x = 1.5 + (double)j / PER;
-                const vec2 p = quad_line_point(&ln, x);
-                const double val = sample_bilinear(im, p.x, p.y);
+                double val;
+                if (M.lens) {
+                    const vec2 p = quad_line_point(&ln, x);
+                    val = sample_bilinear(im, p.x, p.y);
+                } else val = scan[j];
                 if (j > 0 && (prev < mid) != (val < mid)) {
                     double xa = xprev, xb = x, va = prev, vb = val;
                     for (int it = 0; it < 5; it++) {
@@ -4239,9 +4266,10 @@ static int payload_bias(const family_layout *L, const image_view *im, const vec2
 static int edge_crossing(const image_view *view, double x, double y, double nx, double ny, double *offset) {
     enum { N = 13 };
     const double start = -3.0, step = 0.5;
-    double v[N], best = 0;
+    double v[N], xs[N], ys[N], best = 0;
     int peak = -1;
-    for (int i = 0; i < N; i++) v[i] = sample_bilinear(view, x + (start + step * i) * nx, y + (start + step * i) * ny);
+    for (int i = 0; i < N; i++) xs[i] = x + (start + step * i) * nx, ys[i] = y + (start + step * i) * ny;
+    sample_at(view, xs, ys, N, v);
     for (int i = 2; i < N - 2; i++)
         if (v[i + 1] - v[i - 1] > best) best = v[i + 1] - v[i - 1], peak = i;
     if (peak < 0) return 0;
@@ -4278,12 +4306,13 @@ static int fit_edge_run(const double *t, const double *y, int n, double scale, d
         if (!solve_3x3(a, c)) return 0;
         if (pass == 2) break;
         double residual[NAPA_LOCAL_EDGE_SAMPLES], sorted[NAPA_LOCAL_EDGE_SAMPLES];
-        for (int i = 0; i < n; i++) {
+        for (int i = 0; i < n; i++) { /* sorted as they come: at most 32, and only the middle one is read */
             const double u = t[i] / scale;
             residual[i] = fabs(y[i] - (c[0] + u * (c[1] + u * c[2])));
-            sorted[i] = residual[i];
+            int j = i - 1;
+            while (j >= 0 && sorted[j] > residual[i]) sorted[j + 1] = sorted[j], j--;
+            sorted[j + 1] = residual[i];
         }
-        qsort(sorted, (size_t)n, sizeof *sorted, compare_doubles);
         double cutoff = 1.5 * sorted[n / 2];
         if (cutoff < 0.08) cutoff = 0.08;
         cutoff *= 2.5;
@@ -5598,15 +5627,17 @@ static int tone_side_visible(const image_view *view, vec2 a, vec2 b, vec2 center
         const double o = corner & 1 ? far_offset : -1.3 * c, d = corner & 2 ? far_row : 0.2 * length, x = a.x + ex * d + px * o, y = a.y + ey * d + py * o;
         if (x < 1 || y < 1 || x > view->w - 2 || y > view->h - 2) return 0;
     }
-    double profile[MAX_OFFSETS];
+    double profile[MAX_OFFSETS], xs[MAX_OFFSETS], ys[MAX_OFFSETS], row[MAX_OFFSETS];
     for (int j = 0; j < offsets; j++) profile[j] = 0;
     for (int i = 0; i < rows; i++) {
         const double d = 0.2 * length + row_gap * i;
         for (int j = 0; j < offsets; j++) {
             const double o = -1.3 * c + dp * j, x = a.x + ex * d + px * o, y = a.y + ey * d + py * o;
             if (x < 1 || y < 1 || x > view->w - 2 || y > view->h - 2) return 0;
-            profile[j] += sample_bilinear(view, x, y);
+            xs[j] = x, ys[j] = y;
         }
+        sample_at(view, xs, ys, offsets, row);
+        for (int j = 0; j < offsets; j++) profile[j] += row[j];
     }
     double white = 0, black = 0;
     int white_n = 0, black_n = 0, peak = -1;
@@ -5696,21 +5727,43 @@ static double tone_fit(const float y[NAPA_SOFT_AREA], const float across[10][30]
     return count - (c[1] * v[0] + c[2] * v[1]);
 }
 
-/* The tag's lattice at every step-th row and column, standardized over those samples. */
-static void tone_sample(const image_view *view, const vec2 q[4], int step, float y[NAPA_SOFT_AREA]) {
-    double H[9], sum = 0, squares = 0;
-    int n = 0;
+/* The tag's lattice at every step-th row and column, as read; points of every have-th row and column are already in
+ * raw (have 0: none are). */
+static void tone_read(const image_view *view, const vec2 q[4], int step, int have, double raw[NAPA_SOFT_AREA]) {
+    double H[9], u[30], v[30], value[30];
+    int column[30];
     square_to_quad(q, H);
     for (int r = 0; r < 30; r += step) {
+        int n = 0;
         for (int c = 0; c < 30; c += step) {
-            const vec2 p = project(H, soft_position(c) / 8, soft_position(r) / 8);
-            const double v = sample_bilinear(view, p.x, p.y);
+            if (have && r % have == 0 && c % have == 0) continue;
+            u[n] = soft_position(c) / 8, v[n] = soft_position(r) / 8, column[n++] = c;
+        }
+        sample_points(view, H, u, v, n, value); /* the values project and sample_bilinear give, two at a time */
+        for (int i = 0; i < n; i++) raw[r * 30 + column[i]] = value[i];
+    }
+}
+
+/* Every step-th row and column of a read lattice, standardized over those samples. */
+static void tone_standardize(const double raw[NAPA_SOFT_AREA], int step, float y[NAPA_SOFT_AREA]) {
+    double sum = 0, squares = 0;
+    int n = 0;
+    for (int r = 0; r < 30; r += step) {
+        for (int c = 0; c < 30; c += step) {
+            const double v = raw[r * 30 + c];
             y[r * 30 + c] = (float)v, sum += v, squares += v * v, n++;
         }
     }
     const double mean = sum / n, sigma = sqrt(squares / n - mean * mean);
     for (int r = 0; r < 30; r += step)
         for (int c = 0; c < 30; c += step) y[r * 30 + c] = sigma > 1e-6 ? (float)((y[r * 30 + c] - mean) / sigma) : 0;
+}
+
+/* The tag's lattice at every step-th row and column, standardized over those samples. */
+static void tone_sample(const image_view *view, const vec2 q[4], int step, float y[NAPA_SOFT_AREA]) {
+    double raw[NAPA_SOFT_AREA];
+    tone_read(view, q, step, 0, raw);
+    tone_standardize(raw, step, y);
 }
 
 /* Blur sweep along one axis, keeping the best fit so far. */
@@ -5772,6 +5825,7 @@ static int tone_measure_tag(napa_detector *det, const image_view *view, const na
     if (!tone_prepare(det)) return -2;
     const family_layout *L = &det->fam;
     float y[NAPA_SOFT_AREA];
+    double raw[NAPA_SOFT_AREA]; /* the lattice is read once: the screen's third of it, then the rest */
     for (int r = 0; r < 10; r++) for (int c = 0; c < 10; c++) m->cells[r][c] = (r == 0 || r == 9 || c == 0 || c == 9) ? 1.0f : -1.0f;
     const uint64_t code = L->f->codes[d->id];
     for (int k = 0; k < 36; k++) m->cells[L->cell[k] / L->grid + 1][L->cell[k] % L->grid + 1] = (code >> (35 - k) & 1) ? 1.0f : -1.0f;
@@ -5780,8 +5834,9 @@ static int tone_measure_tag(napa_detector *det, const image_view *view, const na
     /* A few samples and blurs are enough to see that a tone curve is straight, which is most tags. */
     {
         float across[10][30];
-        tone_across((const float (*)[10])m->cells, (const float (*)[10])det->tone_blur[NAPA_TONE_START], 1, across);
-        tone_sample(view, q, 3, y);
+        tone_across((const float (*)[10])m->cells, (const float (*)[10])det->tone_blur[NAPA_TONE_START], 3, across);
+        tone_read(view, q, 3, 0, raw);
+        tone_standardize(raw, 3, y);
         for (int b = 2; b <= 6; b += 2) {
             double c[3];
             const double sse = tone_fit(y, (const float (*)[30])across, (const float (*)[10])det->tone_blur[b], 3, c);
@@ -5793,7 +5848,8 @@ static int tone_measure_tag(napa_detector *det, const image_view *view, const na
     if (m->straight_only && !(edge_width >= NAPA_TONE_STRAIGHT_EDGE_CELLS * m->mean_side / 8)) return 0;
     m->sides_visible = 1;
     if (!aligning && !tone_sides_visible(view, q, m)) return 0;
-    tone_sample(view, q, 2, y);
+    tone_read(view, q, 1, 3, raw);
+    tone_standardize(raw, 2, y);
     best = HUGE_VAL, u = NAPA_TONE_START, v = NAPA_TONE_START;
     /* If the second sweep keeps u, a third would repeat the first exactly. */
     for (int round = 0, kept_u = u; round < 3 && (round < 2 || u != kept_u); round++) {
@@ -5801,7 +5857,7 @@ static int tone_measure_tag(napa_detector *det, const image_view *view, const na
         tone_sweep(det, (const float (*)[10])m->cells, y, 2, !(round & 1), &u, &v, &best, tone);
     }
     /* The search ran on a quarter of the lattice; judge its answer on all of it. */
-    tone_sample(view, q, 1, y);
+    tone_standardize(raw, 1, y);
     {
         float across[10][30];
         tone_across((const float (*)[10])m->cells, (const float (*)[10])det->tone_blur[u], 1, across);
