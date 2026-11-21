@@ -6507,34 +6507,47 @@ static void correct_border_geometry(napa_detector *det, const image_view *rview,
             }
         }
     }
-    /* One end of a side fitted out on the quiet zone (a speck of the margin joined the blob there, and the side
-     * pivots on its far end): the side as a whole doesn't read white, but its border cells near that end do. Step that
-     * end's corner in a cell at a time, square to the side, until those cells read dark, refit once in a narrow window,
-     * and keep the result if the same tag decodes with that end dark and the border as a whole no lighter. Steps may
-     * pass through a decode with more corrected bits; the repair as a whole must not end with more. */
+    /* A corner fitted out on the quiet zone (a speck of the margin joined the blob there): one side pivots out at that
+     * end, or both sides meeting there do. The sides as a whole needn't read white, but their border cells next to that
+     * corner do. Step the corner in a cell at a time, square to each side whose end there reads white, until those
+     * cells read dark, refit twice in a narrow window, and keep the result if the same tag decodes with them dark and
+     * the border as a whole no lighter. Steps may pass through a decode with more corrected bits; the repair as a
+     * whole must not end with more. */
     const refined_quad before_ends = *q;
     const border_correction before_c = *c;
-    static const int end_corner[4][2] = {{0, 1}, {1, 2}, {3, 2}, {0, 3}};
+    /* The two side ends that meet at each corner: (side, end). Corner 0 (0,0) is side 0's start and side 3's start. */
+    static const int corner_ends[4][2][2] = {{{0, 0}, {3, 0}}, {{0, 1}, {1, 0}}, {{1, 1}, {2, 1}}, {{2, 0}, {3, 1}}};
     for (int rep = 0, changed = 1; rep < 3 && changed && !q->cut && bad != 15; rep++) {
         changed = 0;
         double levels[4][2], end_white = 0.6;
-        int side = -1, end = 0;
+        int corner = -1;
         if (side_end_levels(&det->fam, rview, q->finer, policy->params->min_contrast, levels))
             for (int k = 0; k < 4; k++)
-                for (int e = 0; e < 2; e++)
-                    if (levels[k][e] > end_white) end_white = levels[k][e], side = k, end = e;
-        if (side < 0) break;
-        const int corner = end_corner[side][end];
+                for (int j = 0; j < 2; j++)
+                    if (levels[corner_ends[k][j][0]][corner_ends[k][j][1]] > end_white)
+                        end_white = levels[corner_ends[k][j][0]][corner_ends[k][j][1]], corner = k;
+        if (corner < 0) break;
+        /* Step the corner in square to each side whose end there reads white: one side when only that side pivoted
+         * out, both when the corner itself sits out on the margin. */
+        int across[2];
+        for (int j = 0; j < 2; j++) across[j] = levels[corner_ends[corner][j][0]][corner_ends[corner][j][1]] > 0.6;
         vec2 trial[4];
         memcpy(trial, q->finer, sizeof trial);
         double level = end_white;
         for (int step = 0; step < 3 && level > 0.6; step++) {
             double Hs[9], cu = (corner == 1 || corner == 2) ? 1.0 : 0.0, cv = corner >= 2 ? 1.0 : 0.0;
-            if (side == 0) cv += 1.0 / W; else if (side == 2) cv -= 1.0 / W; else if (side == 1) cu -= 1.0 / W; else cu += 1.0 / W;
+            for (int j = 0; j < 2; j++) {
+                if (!across[j]) continue;
+                const int side = corner_ends[corner][j][0];
+                if (side == 0) cv += 1.0 / W; else if (side == 2) cv -= 1.0 / W; else if (side == 1) cu -= 1.0 / W; else cu += 1.0 / W;
+            }
             square_to_quad(trial, Hs);
             trial[corner] = project(Hs, cu, cv);
             if (!side_end_levels(&det->fam, rview, trial, policy->params->min_contrast, levels)) break;
-            level = levels[side][end];
+            level = 0;
+            for (int j = 0; j < 2; j++)
+                if (across[j] && levels[corner_ends[corner][j][0]][corner_ends[corner][j][1]] > level)
+                    level = levels[corner_ends[corner][j][0]][corner_ends[corner][j][1]];
         }
         if (level >= end_white - 0.3) continue;
         const double reach = 1.25 * q->edge_w > 1.5 ? 1.25 * q->edge_w : 1.5;
@@ -6542,7 +6555,9 @@ static void correct_border_geometry(napa_detector *det, const image_view *rview,
         napa_detection d2;
         double side2[4], level_after = 0, edge_w = q->edge_w;
         edge_levels lv = q->lv;
-        if (!fit_sides(rview, trial, fixed, reach, reach, policy->params->min_contrast, 0, NAPA_FINAL_POINTS, &edge_w, &lv, cells, NULL) ||
+        vec2 first[4];
+        if (!fit_sides(rview, trial, first, reach, reach, policy->params->min_contrast, 0, NAPA_FINAL_POINTS, &edge_w, &lv, cells, NULL) ||
+            !fit_sides(rview, first, fixed, reach, reach, policy->params->min_contrast, 0, NAPA_FINAL_POINTS, &edge_w, &lv, cells, NULL) ||
             signed_area(fixed) * signed_area(q->finer) <= 0 ||
             !decode_quad_impl(det, rview, fixed, policy->decode_params, 0, &d2, side2, NULL, policy->confidence, NULL) ||
             (policy->require_exact && d2.hamming != 0) || d2.id != q->d.id ||
@@ -6551,7 +6566,11 @@ static void correct_border_geometry(napa_detector *det, const image_view *rview,
             continue;
         for (int k = 0; k < 4; k++) level_after += side2[k];
         if (!side_end_levels(&det->fam, rview, fixed, policy->params->min_contrast, levels)) continue;
-        if (levels[side][end] < 0.5 && levels[side][end] < end_white - 0.3 && level_after <= c->accepted_border_level) {
+        double end_after = 0;
+        for (int j = 0; j < 2; j++)
+            if (across[j] && levels[corner_ends[corner][j][0]][corner_ends[corner][j][1]] > end_after)
+                end_after = levels[corner_ends[corner][j][0]][corner_ends[corner][j][1]];
+        if (end_after < 0.5 && end_after < end_white - 0.3 && level_after <= c->accepted_border_level) {
             q->d = d2;
             c->corrected_border = 1;
             c->accepted_border_level = level_after;
