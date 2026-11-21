@@ -1863,7 +1863,13 @@ static NAPA_FORCE_INLINE uint64_t boundary_word(const label_context *ctx, int lw
     const uint64_t u = up[w], d = dn[w], ul = u << 1 | (uint64_t)(*carry & 1), dl = d << 1 | (uint64_t)(*carry >> 1);
     *carry = (int)(u >> 63) | (int)(d >> 63) << 1;
     uint64_t win = (u | ul) & (d | dl);
-    for (uint64_t diag = win & ((ul & ~u & d & ~dl) | (dl & ~d & u & ~ul)); diag; diag &= diag - 1) {
+    /* Bit x of u2 / d2: column x - 2 of up / dn; of u1 / d1: column x + 1 (rows end in a zero padding word). A
+     * diagonal at window x touches columns x - 1 and x; separate_bit_contact keeps it only when the dark sample
+     * before it and the one after it are dark too, so it is called for no other. */
+    const uint64_t u2 = u << 2 | (w ? up[w - 1] >> 62 : 0), d2 = d << 2 | (w ? dn[w - 1] >> 62 : 0);
+    const uint64_t u1 = u >> 1 | up[w + 1] << 63, d1 = d >> 1 | dn[w + 1] << 63;
+    const uint64_t kept = (ul & ~u & d & ~dl & u2 & d1) | (dl & ~d & u & ~ul & d2 & u1);
+    for (uint64_t diag = win & kept; diag; diag &= diag - 1) {
         const int x = 64 * w + napa_ctz64(diag);
         if (separate_bit_contact(ctx, lw, lh, factor, up, dn, x - 1, y, (int)(ul >> (x & 63)) & 1))
             win &= ~((uint64_t)1 << (x & 63));
@@ -1898,7 +1904,12 @@ static NAPA_FORCE_INLINE int index_pair(const label_context *ctx, int lw, int lh
         /* Bit x: the rows meet only diagonally between columns x and x + 1 (a row's word past its end
          * is the zero padding word). */
         const uint64_t tn = t >> 1 | top[w + 1] << 63, bn = has_bottom ? b >> 1 | bot[w + 1] << 63 : 0;
-        for (uint64_t d = (t & ~b & bn & ~tn) | (b & ~t & tn & ~bn); d; d &= d - 1) {
+        /* As in boundary_word: only diagonals whose dark sample before and after are dark too (bit x of tp / bp:
+         * column x - 1; of t2 / b2: column x + 2) can be kept apart by separate_bit_contact. */
+        const uint64_t tp = t << 1 | (w ? top[w - 1] >> 63 : 0), t2 = t >> 2 | top[w + 1] << 62;
+        const uint64_t bp = has_bottom ? b << 1 | (w ? bot[w - 1] >> 63 : 0) : 0;
+        const uint64_t b2 = has_bottom ? b >> 2 | bot[w + 1] << 62 : 0;
+        for (uint64_t d = (t & ~b & bn & ~tn & tp & b2) | (b & ~t & tn & ~bn & bp & t2); d; d &= d - 1) {
             const int at = 64 * w + napa_ctz64(d);
             if (separate_bit_contact(ctx, lw, lh, factor, top, bot, at, y + 1, (int)(t >> (at & 63)) & 1)) return 0;
         }
@@ -5019,21 +5030,42 @@ static int bits_count_both(const uint64_t *a, const uint64_t *b, int x0, int x1)
     return count + napa_popcount64(v & (~(uint64_t)0 >> (63 - (x1 & 63))));
 }
 
+/* Both rows of a pair, y (x0t..x1t) and y + 1 (x0b..x1b), in one update: comp_flush_row on the top row, then on
+ * the bottom row. Per direction the bottom row's value replaces the top row's only when strictly greater, so the
+ * winner of the two is the one the two strict updates in raster order would keep. */
+static void comp_flush_two(component *c, int y, int x0t, int x1t, int x0b, int x1b) {
+    for (int k = 0; k < 16; k++) {
+        const int dx = comp_dirs[k][0], dy = comp_dirs[k][1];
+        const int xt = dx > 0 ? x1t : x0t, xb = dx > 0 ? x1b : x0b;
+        const int vt = dx * xt + dy * y, vb = dx * xb + dy * (y + 1);
+        const int lower = vb > vt;
+        const int v = lower ? vb : vt, x = lower ? xb : xt, yy = y + lower;
+        const int up = v > c->extv[k];
+        c->extv[k] = up ? v : c->extv[k];
+        c->ext[k][0] = up ? x : c->ext[k][0];
+        c->ext[k][1] = up ? yy : c->ext[k][1];
+    }
+}
+
 /* Fold the pending row pair into the extremes: its top row, then its bottom row, as comp_add_run's
  * flushes would. A negative x1 is -x1 - 1 of a union run whose last dark sample is still to find. */
 static void comp_flush_pair(component *c, const uint64_t *bits, int stride) {
     if (c->work.rows.pair_y < 0) return;
     const uint64_t *t = bits + (size_t)c->work.rows.pair_y * stride;
-    if (c->work.rows.top_x0 >= 0) {
-        c->work.rows.y = c->work.rows.pair_y, c->work.rows.x0 = c->work.rows.top_x0;
-        c->work.rows.x1 = c->work.rows.top_x1 >= 0 ? c->work.rows.top_x1 : last_bit(t, -c->work.rows.top_x1 - 1);
-        comp_flush_row(c);
+    const int y = c->work.rows.pair_y;
+    const int tx0 = c->work.rows.top_x0, bx0 = c->work.rows.bot_x0;
+    const int top_x1 = c->work.rows.top_x1, bot_x1 = c->work.rows.bot_x1;
+    const int tx1 = tx0 < 0 ? 0 : top_x1 >= 0 ? top_x1 : last_bit(t, -top_x1 - 1);
+    const int bx1 = bx0 < 0 ? 0 : bot_x1 >= 0 ? bot_x1 : last_bit(t + stride, -bot_x1 - 1);
+    if (tx0 >= 0 && bx0 >= 0) {
+        comp_flush_two(c, y, tx0, tx1, bx0, bx1);
+        c->work.rows.y = y + 1, c->work.rows.x0 = bx0, c->work.rows.x1 = bx1;
+        return;
     }
-    if (c->work.rows.bot_x0 >= 0) {
-        c->work.rows.y = c->work.rows.pair_y + 1, c->work.rows.x0 = c->work.rows.bot_x0;
-        c->work.rows.x1 = c->work.rows.bot_x1 >= 0 ? c->work.rows.bot_x1 : last_bit(t + stride, -c->work.rows.bot_x1 - 1);
-        comp_flush_row(c);
-    }
+    if (tx0 >= 0) c->work.rows.y = y, c->work.rows.x0 = tx0, c->work.rows.x1 = tx1;
+    else if (bx0 >= 0) c->work.rows.y = y + 1, c->work.rows.x0 = bx0, c->work.rows.x1 = bx1;
+    else return;
+    comp_flush_row(c);
 }
 
 /* comp_add_run for row-pair runs, which arrive pair by pair: runs dark in the top row left to right,
@@ -7004,10 +7036,16 @@ static int assemble_level_candidates(napa_detector *det, const pass_config *conf
     if (paired) {
         const uint64_t *bits = det->level_bits;
         const int stride = (level->lw + 63) / 64 + 1;
+        /* The candidates' runs, gathered without a branch per run into the blob boxes' storage (no longer read
+         * without splitting), then added in the same order. */
+        int32_t *list = (int32_t *)(void *)B;
+        int nl = 0;
         for (int i = 0; i < level->nruns; i++) {
-            int32_t c = det->slot[-P[i] - 1];
-            if (c >= 0) comp_add_pair_run(&det->cands[c], &R[i], bits, stride);
+            const int32_t c = det->slot[-P[i] - 1];
+            list[2 * nl] = i, list[2 * nl + 1] = c;
+            nl += c >= 0;
         }
+        for (int k = 0; k < nl; k++) comp_add_pair_run(&det->cands[list[2 * k + 1]], &R[list[2 * k]], bits, stride);
         for (int ci = 0; ci < level->ncand; ci++) comp_flush_pair(&det->cands[ci], bits, stride);
     } else if (level->npieces == 0) {
         for (int i = 0; i < level->nruns; i++) {
