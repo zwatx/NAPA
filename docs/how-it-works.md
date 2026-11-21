@@ -24,8 +24,9 @@ The grid is tiled. Tiles without enough dark-to-bright range cannot contain a ta
 The bar rises with measured sensor noise, region by region, so one noisy patch does not blind the rest of the frame.
 On noisy frames samples average their neighbours, except on the finest grid, where that would erase tiny borders.
 
-A sample is dark when it falls below the midpoint of its 24 px neighbourhood. On a grid of every other pixel, a sample
-in the brightest part of its 12 px neighbourhood also stays light. That keeps a grey quiet zone light beside the black
+A sample is dark when it falls below the midpoint of its neighbourhood, 3x3 tiles of 4x4 samples (24 px on a grid of
+every other pixel). On that grid, and on the every-eighth-pixel grid after it, a sample in the brightest part of its
+half-tile neighbourhood (12 px on the finer grid) also stays light. That keeps a grey quiet zone light beside the black
 border even when a brighter scene lies just beyond it.
 
 ## 3. Group dark samples into blobs
