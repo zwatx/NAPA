@@ -6327,8 +6327,12 @@ static void memo_candidates(void *ctx, int index, int worker) {
         if (j->runs != NULL) {
             /* The extremes assemble_level_candidates left: this candidate's runs, in the order it would have added them. */
             component *c = &det->cands[ci];
-            for (int32_t e = ci ? det->cand_run_end[ci - 1] : 0; e < det->cand_run_end[ci]; e++)
-                comp_add_pair_run(c, &j->runs[det->cand_runs[e]], j->bits, j->bit_stride);
+            const int32_t *next_run = det->cand_runs, tail = det->cand_run_end[ci];
+            int32_t e = tail;
+            do {
+                e = next_run[e];
+                comp_add_pair_run(c, &j->runs[e], j->bits, j->bit_stride);
+            } while (e != tail);
             comp_flush_pair(c, j->bits, j->bit_stride);
             c->work.candidate.fate = CANDIDATE_UNTRIED, c->work.candidate.piece_count = 0;
         }
@@ -7015,38 +7019,25 @@ static void sample_next_level(next_level_job *job) {
 
 /* Whether a level's ordinary candidates get the threaded pre-pass (memo_candidates). (A camera's lens memo isn't
  * shared safely.) */
+static int level_pre_pass_possible(const napa_detector *det, const image_view *view, const candidate_level *level) {
+    return det->pool != NULL && view->lens == NULL && !level->redo;
+}
 static int level_pre_pass(const napa_detector *det, const image_view *view, const candidate_level *level) {
-    return det->pool != NULL && view->lens == NULL && !level->redo && level->ncand >= 2 * MEMO_CHUNK;
+    return level_pre_pass_possible(det, view, level) && level->ncand >= 2 * MEMO_CHUNK;
 }
 
-/* Group the level's candidate runs by candidate, keeping their order within each, for the pre-pass to add (see
- * memo_candidates). Returns 0 when out of memory. */
-static int group_candidate_runs(napa_detector *det, const candidate_level *level) {
-    const int32_t *P = det->parent;
-    const int ncand = level->ncand;
-    if ((size_t)level->nruns > det->cand_runs_capacity) {
-        int32_t *p = (int32_t *)realloc(det->cand_runs, (size_t)level->nruns * sizeof(int32_t));
+/* Room for the candidate run lists (memo_candidates): a next run for each of the level's runs, and a tail for each of
+ * its components. Returns 0 when out of memory. */
+static int reserve_run_lists(napa_detector *det, int nruns) {
+    if ((size_t)nruns > det->cand_runs_capacity) {
+        int32_t *p = (int32_t *)realloc(det->cand_runs, (size_t)nruns * sizeof(int32_t));
         if (p == NULL) return 0;
-        det->cand_runs = p, det->cand_runs_capacity = (size_t)level->nruns;
+        det->cand_runs = p, det->cand_runs_capacity = (size_t)nruns;
     }
-    if ((size_t)ncand > det->cand_run_end_capacity) {
-        int32_t *p = (int32_t *)realloc(det->cand_run_end, (size_t)ncand * sizeof(int32_t));
+    if ((size_t)nruns > det->cand_run_end_capacity) { /* candidates are at most the components, at most the runs */
+        int32_t *p = (int32_t *)realloc(det->cand_run_end, (size_t)nruns * sizeof(int32_t));
         if (p == NULL) return 0;
-        det->cand_run_end = p, det->cand_run_end_capacity = (size_t)ncand;
-    }
-    int32_t *end = det->cand_run_end;
-    for (int ci = 0; ci < ncand; ci++) end[ci] = 0;
-    for (int i = 0; i < level->nruns; i++) {
-        const int32_t c = det->slot[-P[i] - 1];
-        if (c >= 0) end[c]++;
-    }
-    for (int ci = 0, sum = 0; ci < ncand; ci++) {
-        const int32_t n = end[ci];
-        end[ci] = sum, sum += n; /* each group's start, until the fill below moves it to the group's end */
-    }
-    for (int i = 0; i < level->nruns; i++) {
-        const int32_t c = det->slot[-P[i] - 1];
-        if (c >= 0) det->cand_runs[end[c]++] = i;
+        det->cand_run_end = p, det->cand_run_end_capacity = (size_t)nruns;
     }
     return 1;
 }
@@ -7071,7 +7062,31 @@ static int assemble_level_candidates(napa_detector *det, const pass_config *conf
     blob_box *B = det->boxes;
     int32_t nroots = 0;
     const int paired = !split && !shadow; /* row-pair runs (label_row_pair) */
-    if (paired) {
+    /* With threads, the candidates' extremes may be left to the pre-pass: thread each component's runs into a
+     * circular list in run order as they resolve (next run in cand_runs; the tail in the box's count, which only
+     * splitting reads), for each candidate's job to walk (memo_candidates). */
+    const int listed = paired && level_pre_pass_possible(det, &config->view, level) && reserve_run_lists(det, level->nruns);
+    int32_t *next_run = det->cand_runs;
+    if (listed) {
+        for (int i = 0; i < level->nruns; i++) {
+            const uint16_t miny = (uint16_t)(R[i].y + !(R[i].rows & 1)), maxy = (uint16_t)(R[i].y + (R[i].rows >> 1));
+            int32_t r;
+            if (P[i] == i) {
+                r = nroots++;
+                B[r].count = i, next_run[i] = i;
+                B[r].minx = R[i].x0, B[r].maxx = R[i].x1;
+                B[r].miny = miny, B[r].maxy = maxy;
+            } else {
+                r = -P[P[i]] - 1;
+                const int32_t tail = B[r].count;
+                next_run[i] = next_run[tail], next_run[tail] = i, B[r].count = i;
+                B[r].minx = R[i].x0 < B[r].minx ? R[i].x0 : B[r].minx;
+                B[r].maxx = R[i].x1 > B[r].maxx ? R[i].x1 : B[r].maxx;
+                B[r].maxy = maxy > B[r].maxy ? maxy : B[r].maxy;
+            }
+            P[i] = -r - 1;
+        }
+    } else if (paired) {
         /* Row-pair runs: the same, with each run's rows giving its first and last row. A blob's
          * first run holds its top row; later runs can end above earlier ones. Splitting alone
          * reads blob counts. */
@@ -7155,8 +7170,10 @@ static int assemble_level_candidates(napa_detector *det, const pass_config *conf
         for (int k = 0; k < 16; k++) c->extv[k] = INT32_MIN;
         c->work.rows.y = c->work.rows.pair_y = -1;
         c->minx = t_minx, c->maxx = t_maxx, c->miny = t_miny, c->maxy = t_maxy;
+        if (listed) det->cand_run_end[level->ncand] = B[i].count;
         det->slot[i] = level->ncand++;
     }
+    if (listed) for (int i = 0; i < nroots; i++) B[i].count = 0;
     /* Extreme points only for the candidates: one more pass over the runs. */
     if (det->diag_n || det->neck_n) {
         /* Runs carry their piece. A joined piece takes the slot of what joined it: its blob's
@@ -7191,8 +7208,8 @@ static int assemble_level_candidates(napa_detector *det, const pass_config *conf
         }
     }
     /* With threads, each candidate's pre-pass job adds its own runs instead (memo_candidates). */
-    level->extremes_deferred = paired && level->npieces == 0 && level_pre_pass(det, &config->view, level) &&
-        memo_reserve(det, level->ncand) && group_candidate_runs(det, level);
+    level->extremes_deferred = listed && level->npieces == 0 && level_pre_pass(det, &config->view, level) &&
+        memo_reserve(det, level->ncand);
     if (level->extremes_deferred) {
         /* fates and piece counts too, once each candidate's extremes are complete */
     } else if (paired) {
