@@ -46,7 +46,8 @@ static void fill_level(uint8_t *level, int w, int h, int mode) {
         }
 }
 
-/* Banded threshold_level at 2-8 threads against the serial pass (threshold_rows), ordinary and shadow. */
+/* Banded threshold_level at 2-8 threads against the serial pass (threshold_rows): ordinary, shadow, and ordinary with
+ * half tiles (level_half). */
 static void check_banded_labels(void) {
     static const int sizes[][2] = {{320, 320}, {385, 257}, {640, 160}, {129, 777}, {1000, 101}, {64, 1601}};
     long cases = 0, boundaries = 0, single_above = 0, single_below = 0, joined = 0;
@@ -56,8 +57,9 @@ static void check_banded_labels(void) {
         assert(pixels >= NAPA_THREAD_MIN_SAMPLES && th / 4 >= 2);
         for (int mode = 0; mode < 4; mode++)
             for (int regional = 0; regional < 2; regional++)
-                for (int shadow = 0; shadow < 2; shadow++)
+                for (int kind = 0; kind < 3; kind++)
                     for (int factor = 1; factor <= 4; factor++) {
+                        const int shadow = kind == 1;
                         napa_detector *det = napa_create();
                         assert(det != NULL && ensure_buffers(det, pixels, (size_t)tw * th, (size_t)w, pixels / 2 + (size_t)h + 1) == 0);
                         fill_level(det->level, w, h, mode);
@@ -67,6 +69,7 @@ static void check_banded_labels(void) {
                         assert(det->floors != NULL);
                         for (int i = 0; i < cols * rows; i++) det->floors[i] = (uint8_t)(regional ? rnd() % 60 : 8);
                         det->floor_cols = cols, det->floor_rows = rows, det->floor_uniform = !regional;
+                        det->level_half = kind == 2;
                         const int n = threshold_rows(det, w, h, factor, 0, shadow, 0, th, 0);
                         assert(n > 0);
                         napa_run *runs = (napa_run *)malloc((size_t)n * sizeof(napa_run));
@@ -80,8 +83,8 @@ static void check_banded_labels(void) {
                             for (int i = 0; i < n; i++) {
                                 const napa_run *a = &det->runs[i], *b = &runs[i];
                                 if (a->x0 != b->x0 || a->x1 != b->x1 || a->y != b->y || (!shadow && a->rows != b->rows)) {
-                                    fprintf(stderr, "%dx%d mode %d regional %d shadow %d threads %d: run %d differs\n", w, h,
-                                            mode, regional, shadow, threads, i);
+                                    fprintf(stderr, "%dx%d mode %d regional %d kind %d threads %d: run %d differs\n", w, h,
+                                            mode, regional, kind, threads, i);
                                     exit(1);
                                 }
                             }
