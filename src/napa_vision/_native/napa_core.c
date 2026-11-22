@@ -7297,6 +7297,80 @@ static int decode_and_refine(napa_detector *det, const image_view *view, const d
     return out->refined == REFINE_NO_MEMORY ? -2 : 0;
 }
 
+/* A whole candidate's or a piece's way from its rough corners (pick) to a first fit of its sides, as the candidate loop
+ * takes it: the quiet-zone screen, the first fit, and for a whole that fails it, a restored corner or a regrown blob.
+ * mm, when not NULL, holds the pre-pass's screen and first fit. Returns 1 with rough, *fit and *regrown set, 0 when the
+ * candidate goes no further, -2 when out of memory. */
+static int first_fit_stage(napa_detector *det, const image_view *view_in, const pass_config *config, const component *comp,
+                           int pick[4][2], int s, int last, int piece, int undersized_whole, int extended_shape,
+                           const cand_memo *mm, vec2 rough[4], candidate_fit *out, int *regrown_out) {
+    const image_view view = *view_in;
+    const napa_params *params = config->params;
+    const int base = config->base, shaped = config->shaped, shadow = config->shadow;
+    const double sx = config->sx, sy = config->sy, offx = config->offx, offy = config->offy, smax = config->smax;
+    const double cells = det->fam.cells;
+    const int bw = comp->maxx - comp->minx + 1, bh = comp->maxy - comp->miny + 1;
+    const double big_px = s * (bw * sx > bh * sy ? bw * sx : bh * sy);
+    candidate_fit fit = *out;
+    rough_corners(pick, s, sx, sy, offx, offy, rough);
+    /* Ordinary rough corners are dark samples. A completed small corner is a
+     * geometric hypothesis from the same component bounds, not a new dark sample.
+     * Retain the established mostly-outward fit window and final payload validation. */
+    /* Sparse paired border samples reject noise before the expensive edge profiles.
+     * Permit one weak side and leave terminal proposals unscreened: their ring can have
+     * local clutter that a later level would normally resolve. Final decode is unchanged. */
+    const int screen_mode = rough_screen_mode(s, last, shadow, piece, undersized_whole, params->min_border_cells);
+    if (screen_mode != QUIET_ZONE_SKIP) {
+        /* A tag's quiet zone is brighter than its border all the way round; the interior
+         * fragments and clutter that dominate proposals average near zero. */
+        const int pass = mm && mm->screen >= 0 ? mm->screen
+            : quiet_zone_passes(&view, rough, 0.5 * s * smax, cells, params->min_contrast,
+                                screen_mode == QUIET_ZONE_STRICT, shadow);
+        if (!pass) return 0;
+    }
+    fit.reach = 0.5 * ((1.5 * s * smax + 1.0) + (0.5 * s * smax + 1.0));
+    fit.edge_w = 0;
+    int first_fit;
+    if (mm && mm->fit >= 0) {
+        first_fit = mm->fit;
+        fit.frame_sides = mm->frame_sides;
+        if (first_fit) {
+            memcpy(fit.fine, mm->fine, sizeof fit.fine);
+            fit.edge_w = mm->edge_w;
+        }
+    } else {
+        first_fit = fit_initial_from_level(&view, rough, fit.fine, s, smax,
+            params->min_contrast, &fit.edge_w, cells, &fit.frame_sides);
+    }
+    if (!first_fit && !piece && !shadow && !extended_shape) {
+        int supported_pick[4][2];
+        memcpy(supported_pick, pick, sizeof supported_pick);
+        double supported_area, supported_perimeter;
+        if (restore_rough_corner(comp, supported_pick, s * sx, s * sy,
+                                 1.5 * s * smax + 1.0, 4.0 * fit.reach + 2.0) &&
+            !rough_quad_too_full(&det->fam, comp, supported_pick, &supported_area, &supported_perimeter) &&
+            supported_area >= 0.3 * bw * bh) {
+            vec2 supported[4];
+            rough_corners(supported_pick, s, sx, sy, offx, offy, supported);
+            if (quiet_zone_passes(&view, supported, 0.5 * s * smax, cells, params->min_contrast, 1, 0)) {
+                fit.edge_w = 0, fit.frame_sides = 0;
+                first_fit = fit_initial_from_level(&view, supported, fit.fine, s, smax,
+                    params->min_contrast, &fit.edge_w, cells, &fit.frame_sides);
+                if (first_fit) memcpy(rough, supported, sizeof supported);
+            }
+        }
+    }
+    /* The same for a small candidate whose first fit fails: a fragment's quad may not fit at all. */
+    int regrown = 0;
+    if (!first_fit && !shadow && !piece && (base >= 2 || shaped) && s == base && big_px + s <= NAPA_REGROW_MAX_PX) {
+        regrown = regrow_and_fit(det, &view, params, rough, big_px + s, fit.fine, &fit.edge_w);
+        if (regrown < 0) return -2;
+        if (regrown) first_fit = 1, fit.reach = 2.0, fit.frame_sides = 0;
+    }
+    *out = fit, *regrown_out = regrown;
+    return first_fit;
+}
+
 static int process_level_candidates(napa_detector *det, const pass_config *config, pass_outputs *outputs,
                                     const candidate_level *level, pass_timer *timer, next_level_job *next) {
     image_view view = config->view;
@@ -7466,67 +7540,11 @@ static int process_level_candidates(napa_detector *det, const pass_config *confi
         }
         decode_params = candidate_decode_params(det, params, extended_shape, undersized_whole, &strict_border);
         PROF_MARK(PROF_QUAD);
-        rough_corners(pick, s, sx, sy, offx, offy, rough);
-        /* Ordinary rough corners are dark samples. A completed small corner is a
-         * geometric hypothesis from the same component bounds, not a new dark sample.
-         * Retain the established mostly-outward fit window and final payload validation. */
-        /* Sparse paired border samples reject noise before the expensive edge profiles.
-         * Permit one weak side and leave terminal proposals unscreened: their ring can have
-         * local clutter that a later level would normally resolve. Final decode is unchanged. */
-        const int screen_mode = rough_screen_mode(s, last, shadow, piece, undersized_whole, params->min_border_cells);
-        if (screen_mode != QUIET_ZONE_SKIP) {
-            /* A tag's quiet zone is brighter than its border all the way round; the interior
-             * fragments and clutter that dominate proposals average near zero. */
-            const int pass = mm && mm->screen >= 0 ? mm->screen
-                : quiet_zone_passes(&view, rough, 0.5 * s * smax, cells, params->min_contrast,
-                                    screen_mode == QUIET_ZONE_STRICT, shadow);
-            if (!pass) {
-                PROF_MARK(PROF_FIT1);
-                TRACE(7);
-                *candidate_fate = extended_shape ? CANDIDATE_ROUGH_REJECTED : CANDIDATE_FIT_FAILED;
-                continue;
-            }
-        }
-        fit.reach = 0.5 * ((1.5 * s * smax + 1.0) + (0.5 * s * smax + 1.0));
-        fit.edge_w = 0;
-        int first_fit;
-        if (mm && mm->fit >= 0) {
-            first_fit = mm->fit;
-            fit.frame_sides = mm->frame_sides;
-            if (first_fit) {
-                memcpy(fit.fine, mm->fine, sizeof fit.fine);
-                fit.edge_w = mm->edge_w;
-            }
-        } else {
-            first_fit = fit_initial_from_level(&view, rough, fit.fine, s, smax,
-                params->min_contrast, &fit.edge_w, cells, &fit.frame_sides);
-        }
-        if (!first_fit && !piece && !shadow && !extended_shape) {
-            int supported_pick[4][2];
-            memcpy(supported_pick, pick, sizeof supported_pick);
-            double supported_area, supported_perimeter;
-            if (restore_rough_corner(&comp, supported_pick, s * sx, s * sy,
-                                     1.5 * s * smax + 1.0, 4.0 * fit.reach + 2.0) &&
-                !rough_quad_too_full(&det->fam, &comp, supported_pick, &supported_area, &supported_perimeter) &&
-                supported_area >= 0.3 * bw * bh) {
-                vec2 supported[4];
-                rough_corners(supported_pick, s, sx, sy, offx, offy, supported);
-                if (quiet_zone_passes(&view, supported, 0.5 * s * smax, cells, params->min_contrast, 1, 0)) {
-                    fit.edge_w = 0, fit.frame_sides = 0;
-                    first_fit = fit_initial_from_level(&view, supported, fit.fine, s, smax,
-                        params->min_contrast, &fit.edge_w, cells, &fit.frame_sides);
-                    if (first_fit) memcpy(rough, supported, sizeof supported);
-                }
-            }
-        }
-        /* The same for a small candidate whose first fit fails: a fragment's quad may not fit at all. */
         int regrown = 0;
-        if (!first_fit && !shadow && !piece && (base >= 2 || shaped) && s == base && big_px + s <= NAPA_REGROW_MAX_PX) {
-            regrown = regrow_and_fit(det, &view, params, rough, big_px + s, fit.fine, &fit.edge_w);
-            if (regrown < 0) return -2;
-            if (regrown) first_fit = 1, fit.reach = 2.0, fit.frame_sides = 0;
-        }
-        if (!first_fit) {
+        const int fitted = first_fit_stage(det, &view, config, &comp, pick, s, last, piece, undersized_whole, extended_shape,
+                                           mm, rough, &fit, &regrown);
+        if (fitted < 0) return -2;
+        if (!fitted) {
             PROF_MARK(PROF_FIT1);
             TRACE(7);
             *candidate_fate = extended_shape ? CANDIDATE_ROUGH_REJECTED : CANDIDATE_FIT_FAILED;
