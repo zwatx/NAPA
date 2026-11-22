@@ -460,6 +460,8 @@ struct napa_detector {
     struct cand_memo *memo; /* threads: each candidate's rough quad, screen and first fit, worked out in parallel per level */
     int32_t *memo_order;    /* memo_capacity entries: the order the pre-pass takes candidates in when decoding ahead */
     size_t memo_capacity;
+    int32_t *cand_runs, *cand_run_end; /* deferred extremes: the candidates' runs grouped by candidate, and each group's end */
+    size_t cand_runs_capacity, cand_run_end_capacity;
     /* threads: the pool threads' own detectors for decoding and refining candidates ahead of the loop. Each holds only
      * what that reads (prepare_workers) and its own code stamps; worker_count is 0 if they couldn't be made. */
     struct napa_detector *workers;
@@ -799,7 +801,7 @@ void napa_destroy(napa_detector *det) {
         return;
     }
     free_workers(det);
-    free(det->memo_order);
+    free(det->memo_order), free(det->cand_runs), free(det->cand_run_end);
     pool_destroy(det->pool);
     band_free(det);
     free(det->floor_hist);
@@ -6243,6 +6245,9 @@ typedef struct {
     int n;
     int ahead;            /* also decode and refine, one candidate per index, on each thread's own detector */
     const int32_t *order; /* when decoding ahead: index k takes candidate order[k] */
+    const napa_run *runs; /* deferred extremes: the level's runs and dark bits, else NULL */
+    const uint64_t *bits;
+    int bit_stride;
 } memo_job;
 
 /* The loop's decode_and_refine for a candidate whose first fit the pre-pass made, worked out ahead on this thread's
@@ -6277,6 +6282,14 @@ static void memo_candidates(void *ctx, int index, int worker) {
     for (int k = index * chunk; k < end; k++) {
         const int ci = j->order ? j->order[k] : k;
         cand_memo *m = &det->memo[ci];
+        if (j->runs != NULL) {
+            /* The extremes assemble_level_candidates left: this candidate's runs, in the order it would have added them. */
+            component *c = &det->cands[ci];
+            for (int32_t e = ci ? det->cand_run_end[ci - 1] : 0; e < det->cand_run_end[ci]; e++)
+                comp_add_pair_run(c, &j->runs[det->cand_runs[e]], j->bits, j->bit_stride);
+            comp_flush_pair(c, j->bits, j->bit_stride);
+            c->work.candidate.fate = CANDIDATE_UNTRIED, c->work.candidate.piece_count = 0;
+        }
         const component *comp = &det->cands[ci];
         m->screen = m->fit = -1;
         m->ahead = 0;
@@ -6330,6 +6343,17 @@ static void prepare_workers(napa_detector *det) {
         wd->align_corners = det->align_corners, wd->tone_blur = det->tone_blur;
         memcpy(wd->linearize, det->linearize, sizeof wd->linearize);
     }
+}
+
+/* Room for the pre-pass's results for ncand candidates. */
+static int memo_reserve(napa_detector *det, int ncand) {
+    if ((size_t)ncand > det->memo_capacity) {
+        cand_memo *m = (cand_memo *)realloc(det->memo, (size_t)ncand * sizeof(cand_memo));
+        if (m != NULL) det->memo = m;
+        int32_t *o = m != NULL ? (int32_t *)realloc(det->memo_order, (size_t)ncand * sizeof(int32_t)) : NULL;
+        if (o != NULL) det->memo_order = o, det->memo_capacity = (size_t)ncand;
+    }
+    return (size_t)ncand <= det->memo_capacity;
 }
 
 /* log2 of a candidate's box area, largest first. */
@@ -6806,6 +6830,7 @@ typedef struct {
 typedef struct {
     int s, lw, lh, last, redo;
     int nruns, ncand, npieces, fine, covered_prefix;
+    int extremes_deferred; /* threads: the candidates' extremes are left to the pre-pass (memo_candidates) */
 } candidate_level;
 
 static int sample_threshold_level(napa_detector *det, const pass_config *config, const pass_outputs *outputs,
@@ -6913,8 +6938,47 @@ static int sample_threshold_level(napa_detector *det, const pass_config *config,
     return 0;
 }
 
+/* Whether a level's ordinary candidates get the threaded pre-pass (memo_candidates). (A camera's lens memo isn't
+ * shared safely.) */
+static int level_pre_pass(const napa_detector *det, const image_view *view, const candidate_level *level) {
+    return det->pool != NULL && view->lens == NULL && !level->redo && level->ncand >= 2 * MEMO_CHUNK;
+}
+
+/* Group the level's candidate runs by candidate, keeping their order within each, for the pre-pass to add (see
+ * memo_candidates). Returns 0 when out of memory. */
+static int group_candidate_runs(napa_detector *det, const candidate_level *level) {
+    const int32_t *P = det->parent;
+    const int ncand = level->ncand;
+    if ((size_t)level->nruns > det->cand_runs_capacity) {
+        int32_t *p = (int32_t *)realloc(det->cand_runs, (size_t)level->nruns * sizeof(int32_t));
+        if (p == NULL) return 0;
+        det->cand_runs = p, det->cand_runs_capacity = (size_t)level->nruns;
+    }
+    if ((size_t)ncand > det->cand_run_end_capacity) {
+        int32_t *p = (int32_t *)realloc(det->cand_run_end, (size_t)ncand * sizeof(int32_t));
+        if (p == NULL) return 0;
+        det->cand_run_end = p, det->cand_run_end_capacity = (size_t)ncand;
+    }
+    int32_t *end = det->cand_run_end;
+    for (int ci = 0; ci < ncand; ci++) end[ci] = 0;
+    for (int i = 0; i < level->nruns; i++) {
+        const int32_t c = det->slot[-P[i] - 1];
+        if (c >= 0) end[c]++;
+    }
+    for (int ci = 0, sum = 0; ci < ncand; ci++) {
+        const int32_t n = end[ci];
+        end[ci] = sum, sum += n; /* each group's start, until the fill below moves it to the group's end */
+    }
+    for (int i = 0; i < level->nruns; i++) {
+        const int32_t c = det->slot[-P[i] - 1];
+        if (c >= 0) det->cand_runs[end[c]++] = i;
+    }
+    return 1;
+}
+
 static int assemble_level_candidates(napa_detector *det, const pass_config *config, const pass_outputs *outputs,
                                      candidate_level *level, pass_timer *timer) {
+    level->extremes_deferred = 0;
     int base = config->base;
     int lo = config->lo;
     int hi = config->hi;
@@ -7051,7 +7115,12 @@ static int assemble_level_candidates(napa_detector *det, const pass_config *conf
             if (s > 1 || det->piece_cand[k] < 0) det->slot[det->piece_root[k]] = level->ncand + k;
         }
     }
-    if (paired) {
+    /* With threads, each candidate's pre-pass job adds its own runs instead (memo_candidates). */
+    level->extremes_deferred = paired && level->npieces == 0 && level_pre_pass(det, &config->view, level) &&
+        memo_reserve(det, level->ncand) && group_candidate_runs(det, level);
+    if (level->extremes_deferred) {
+        /* fates and piece counts too, once each candidate's extremes are complete */
+    } else if (paired) {
         const uint64_t *bits = det->level_bits;
         const int stride = (level->lw + 63) / 64 + 1;
         for (int i = 0; i < level->nruns; i++) {
@@ -7075,7 +7144,7 @@ static int assemble_level_candidates(napa_detector *det, const pass_config *conf
     }
     if (!paired) for (int ci = 0; ci < level->ncand; ci++) comp_flush_row(&det->cands[ci]);
     /* All row extrema are complete. Candidates now carry rejection stages and piece counts. */
-    for (int ci = 0; ci < level->ncand; ci++) {
+    if (!level->extremes_deferred) for (int ci = 0; ci < level->ncand; ci++) {
         det->cands[ci].work.candidate.fate = CANDIDATE_UNTRIED;
         det->cands[ci].work.candidate.piece_count = 0;
     }
@@ -7203,14 +7272,8 @@ static int process_level_candidates(napa_detector *det, const pass_config *confi
      * its decode and refinement too; the loop below takes them in order as it would have computed them. (A camera's
      * lens memo isn't shared safely.) */
     int memo_level = 0;
-    if (det->pool != NULL && view.lens == NULL && !redo && ncand >= 2 * MEMO_CHUNK) {
-        if ((size_t)ncand > det->memo_capacity) {
-            cand_memo *m = (cand_memo *)realloc(det->memo, (size_t)ncand * sizeof(cand_memo));
-            if (m != NULL) det->memo = m;
-            int32_t *o = m != NULL ? (int32_t *)realloc(det->memo_order, (size_t)ncand * sizeof(int32_t)) : NULL;
-            if (o != NULL) det->memo_order = o, det->memo_capacity = (size_t)ncand;
-        }
-        if ((size_t)ncand <= det->memo_capacity) {
+    if (level->extremes_deferred || level_pre_pass(det, &view, level)) {
+        if (memo_reserve(det, ncand)) { /* always, when the extremes were deferred: assemble_level_candidates reserved it */
             const int ahead = can_decode_ahead(det);
             if (ahead) {
                 prepare_workers(det);
@@ -7222,7 +7285,8 @@ static int process_level_candidates(napa_detector *det, const pass_config *confi
                 for (int ci = 0; ci < ncand; ci++) det->memo_order[at[area_rank(&det->cands[ci])]++] = ci;
             }
             memo_job job = {det, &view, params, s, base, lo, last, shadow, shaped, sx, sy, offx, offy, smax, cells, ncand,
-                            ahead, ahead ? det->memo_order : NULL};
+                            ahead, ahead ? det->memo_order : NULL, level->extremes_deferred ? det->runs : NULL,
+                            det->level_bits, (level->lw + 63) / 64 + 1};
             pool_run(det->pool, memo_candidates, &job, ahead ? ncand : (ncand + MEMO_CHUNK - 1) / MEMO_CHUNK);
             memo_level = 1;
         }
