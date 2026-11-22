@@ -943,6 +943,27 @@ static inline __m128d sample_bilinear_pair(const image_view *im, __m128d x, __m1
     __m128d val = _mm_add_pd(a, _mm_mul_pd(_mm_sub_pd(b, a), fy));
     return im->invert ? _mm_sub_pd(_mm_set1_pd(255.0), val) : val;
 }
+#elif defined(__aarch64__) && defined(__ARM_NEON) && !defined(NAPA_NO_SIMD)
+/* The same pair on AArch64, with the same order and clamps. Truncating to int64 matches (int) on clamped values. */
+static inline float64x2_t sample_bilinear_pair(const image_view *im, float64x2_t x, float64x2_t y) {
+    const uint8_t *img = im->p;
+    const int stride = im->stride;
+    const float64x2_t zero = vdupq_n_f64(0), xmax = vdupq_n_f64(im->w - 1.001), ymax = vdupq_n_f64(im->h - 1.001);
+    x = vbslq_f64(vcgeq_f64(x, zero), x, zero); /* !(x >= 0): 0 */
+    y = vbslq_f64(vcgeq_f64(y, zero), y, zero);
+    x = vbslq_f64(vcleq_f64(x, xmax), x, xmax); /* !(x <= w - 1.001): w - 1.001 */
+    y = vbslq_f64(vcleq_f64(y, ymax), y, ymax);
+    const int64x2_t xi = vcvtq_s64_f64(x), yi = vcvtq_s64_f64(y);
+    const uint8_t *pa = img + (size_t)vgetq_lane_s64(yi, 0) * stride + vgetq_lane_s64(xi, 0);
+    const uint8_t *pb = img + (size_t)vgetq_lane_s64(yi, 1) * stride + vgetq_lane_s64(xi, 1);
+    const float64x2_t p0 = {pa[0], pb[0]}, d01 = {pa[1] - pa[0], pb[1] - pb[0]};
+    const float64x2_t p2 = {pa[stride], pb[stride]};
+    const float64x2_t d23 = {pa[stride + 1] - pa[stride], pb[stride + 1] - pb[stride]};
+    const float64x2_t fx = vsubq_f64(x, vcvtq_f64_s64(xi)), fy = vsubq_f64(y, vcvtq_f64_s64(yi));
+    const float64x2_t a = vaddq_f64(p0, vmulq_f64(d01, fx)), b = vaddq_f64(p2, vmulq_f64(d23, fx));
+    const float64x2_t val = vaddq_f64(a, vmulq_f64(vsubq_f64(b, a), fy));
+    return im->invert ? vsubq_f64(vdupq_n_f64(255.0), val) : val;
+}
 #endif
 
 /* sample_bilinear at n pixel positions, two at a time where the CPU allows. */
@@ -950,6 +971,8 @@ static void sample_at(const image_view *im, const double *x, const double *y, in
     int i = 0;
 #ifdef NAPA_SSE2
     for (; i + 2 <= n; i += 2) _mm_storeu_pd(out + i, sample_bilinear_pair(im, _mm_loadu_pd(x + i), _mm_loadu_pd(y + i)));
+#elif defined(__aarch64__) && defined(__ARM_NEON) && !defined(NAPA_NO_SIMD)
+    for (; i + 2 <= n; i += 2) vst1q_f64(out + i, sample_bilinear_pair(im, vld1q_f64(x + i), vld1q_f64(y + i)));
 #endif
     for (; i < n; i++) out[i] = sample_bilinear(im, x[i], y[i]);
 }
@@ -3891,6 +3914,23 @@ static void sample_points_impl(const image_view *im, const double H[9], double *
             rawcoords[i + 1].y = _mm_cvtsd_f64(_mm_unpackhi_pd(y, y));
         }
         _mm_storeu_pd(out + i, sample_bilinear_pair(im, x, y));
+    }
+#elif defined(__aarch64__) && defined(__ARM_NEON) && !defined(NAPA_NO_SIMD)
+    const float64x2_t h0 = vdupq_n_f64(H[0]), h1 = vdupq_n_f64(H[1]), h2 = vdupq_n_f64(H[2]), h3 = vdupq_n_f64(H[3]);
+    const float64x2_t h4 = vdupq_n_f64(H[4]), h5 = vdupq_n_f64(H[5]), h6 = vdupq_n_f64(H[6]), h7 = vdupq_n_f64(H[7]);
+    const float64x2_t h8 = vdupq_n_f64(H[8]), one = vdupq_n_f64(1.0);
+    for (; i + 2 <= n; i += 2) {
+        const float64x2_t U = vld1q_f64(u + i), V = vld1q_f64(v + i);
+        const float64x2_t iz = vdivq_f64(one, vaddq_f64(vaddq_f64(vmulq_f64(h6, U), vmulq_f64(h7, V)), h8));
+        const float64x2_t x = vmulq_f64(vaddq_f64(vaddq_f64(vmulq_f64(h0, U), vmulq_f64(h1, V)), h2), iz);
+        const float64x2_t y = vmulq_f64(vaddq_f64(vaddq_f64(vmulq_f64(h3, U), vmulq_f64(h4, V)), h5), iz);
+        if (rawcoords) {
+            rawcoords[i].x = vgetq_lane_f64(x, 0);
+            rawcoords[i].y = vgetq_lane_f64(y, 0);
+            rawcoords[i + 1].x = vgetq_lane_f64(x, 1);
+            rawcoords[i + 1].y = vgetq_lane_f64(y, 1);
+        }
+        vst1q_f64(out + i, sample_bilinear_pair(im, x, y));
     }
 #endif
     for (; i < n; i++) {
