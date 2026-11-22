@@ -233,6 +233,17 @@ static void pool_await(napa_pool *pool, const int *flags, int from, int to) {
     napa_mutex_unlock(&pool->lock);
 }
 
+/* From inside an index of the pool's current job (ctx): add n more indices to it. Returns 0, adding none, when the
+ * job is not running on the pool (pool_run ran it serially, for a fixed count). */
+static int pool_extend(napa_pool *pool, const void *ctx, int n) {
+    if (pool == NULL) return 0;
+    napa_mutex_lock(&pool->lock);
+    const int on_pool = pool->ctx == ctx && pool->done < pool->jobs;
+    if (on_pool) pool->jobs += n;
+    napa_mutex_unlock(&pool->lock);
+    return on_pool;
+}
+
 /* The builtin is one instruction on ARM64 and x86 with POPCNT, but a library call on baseline x86-64. */
 #if (defined(__GNUC__) || defined(__clang__)) && (defined(__POPCNT__) || !(defined(__x86_64__) || defined(__i386__)))
 #define napa_popcount64(x) __builtin_popcountll(x)
@@ -503,6 +514,13 @@ struct napa_detector {
         size_t run_capacity, level_bits_capacity;
         uint64_t *level_bits;
         label_scratch scratch;
+        component *cands;
+        size_t cand_capacity;
+        struct cand_memo *memo;
+        int32_t *memo_order;
+        size_t memo_capacity;
+        int32_t *cand_runs, *cand_run_end;
+        size_t cand_runs_capacity, cand_run_end_capacity;
     } spare;
     int runs_swapped;
     /* contrast_floors_raked left the finest level's other rows to rake (rake_rows), alongside the threshold bands */
@@ -511,11 +529,12 @@ struct napa_detector {
     int *rake_done; /* per chunk, set once raked */
     int rake_next, rake_floors_left; /* the next chunk to rake; floor jobs not yet done */
     size_t rake_done_capacity;
+    int cands_swapped; /* threads: the candidate sets are exchanged (cand_set_swap); each pass starts by swapping them back */
     struct delayed_memo *dmemo; /* threads, terminal level: the first dmemo_n deferred fine wholes, worked out ahead */
     size_t dmemo_capacity;
     int dmemo_n;
-    int dmemo_ready; /* threads: the first deferred fine wholes, already worked out by the finest level's pre-pass */
-    int32_t *whole_index; /* threads, finest level: each set-aside candidate's index among the deferred wholes, else -1 */
+    int dmemo_ready; /* threads: the first deferred fine wholes, already worked out by the levels that set them aside */
+    int32_t *whole_index; /* threads: each of the level's set-aside candidates' index among the deferred wholes, else -1 */
     size_t whole_index_capacity;
     /* threads: the pool threads' own detectors for decoding and refining candidates ahead of the loop. Each holds only
      * what that reads (prepare_workers) and its own code stamps; worker_count is 0 if they couldn't be made. */
@@ -859,6 +878,7 @@ void napa_destroy(napa_detector *det) {
     free(det->memo_order), free(det->cand_runs), free(det->cand_run_end);
     free(det->spare.runs), free(det->spare.parent), free(det->spare.slot), free(det->spare.boxes), free(det->spare.level_bits);
     scratch_free(&det->spare.scratch);
+    free(det->spare.cands), free(det->spare.memo), free(det->spare.memo_order), free(det->spare.cand_runs), free(det->spare.cand_run_end);
     free(det->dmemo), free(det->whole_index);
     pool_destroy(det->pool);
     free(det->rake_done);
@@ -2616,8 +2636,12 @@ static void band_place(void *arg, int k, int worker) {
     napa_detector *det = job->det;
     const napa_band *b = &det->bands[k];
     memcpy(det->runs + b->offset, b->runs, (size_t)b->n * sizeof(napa_run));
-    int32_t *P = det->parent + b->offset;
-    for (int i = 0; i < b->n; i++) P[i] = b->parent[i] + b->offset;
+    int32_t *P = det->parent + b->offset, *bp = b->parent;
+    for (int i = 0; i < b->n; i++) {
+        const int32_t p = bp[i], r = p == i ? i : bp[p]; /* bp[p], p < i, is already its root */
+        bp[i] = r;
+        P[i] = r + b->offset;
+    }
 }
 
 static void invert_bytes(uint8_t *p, size_t n);
@@ -2687,9 +2711,20 @@ static int threshold_banded(napa_detector *det, int lw, int lh, int factor, int 
         memset(p + det->band_count, 0, (size_t)(bands - det->band_count) * sizeof(napa_band));
         det->bands = p, det->band_count = bands;
     }
+    /* Guided heights: band k gets (1.8 - 1.6 k / (bands - 1)) even shares, in whole tile rows, and at least four. */
+    int edge[NAPA_MAX_THREADS * 3 + 1];
+    edge[0] = 0, edge[bands] = th;
+    for (int k = 1; k < bands; k++) {
+        /* shares before band k: 1.8 k - 0.8 k (k - 1) / (bands - 1), of bands in all */
+        const double before = 1.8 * k - 0.8 * k * (k - 1) / (bands - 1);
+        edge[k] = (int)(th * before / bands + 0.5);
+        if (edge[k] < edge[k - 1] + 4) edge[k] = edge[k - 1] + 4;
+    }
+    for (int k = bands - 1; k > 0; k--)
+        if (edge[k] > edge[k + 1] - 4) edge[k] = edge[k + 1] - 4;
     for (int k = 0; k < bands; k++) {
         napa_band *b = &det->bands[k];
-        b->ty0 = (int)((long long)th * k / bands), b->ty1 = (int)((long long)th * (k + 1) / bands);
+        b->ty0 = edge[k], b->ty1 = edge[k + 1];
         int rows = (b->ty1 - b->ty0) * TILE;
         if (band_reserve(b, (size_t)rows * ((size_t)lw / 2 + 1) + 1, (size_t)lw, (size_t)(b->ty1 - b->ty0 + 2) * tw) != 0) return -1;
     }
@@ -6684,7 +6719,7 @@ typedef struct delayed_memo {
 
 enum { MEMO_CHUNK = 4 };
 
-typedef struct {
+typedef struct memo_job {
     napa_detector *det;
     const image_view *view;
     const napa_params *params;
@@ -6699,11 +6734,17 @@ typedef struct {
     struct next_level_job *next; /* index 0 samples and labels the next level instead (sample_next_level), else NULL */
     const struct pass_config *config;
     int ordinary_jobs; /* the indices after these (and after next) each take a deferred fine whole (decode_whole_ahead) */
-    int wholes_now;    /* finest level: set-aside candidates are worked out now, into dmemo[det->whole_index[ci]] */
+    int wholes_now;    /* set-aside candidates are worked out now, into dmemo[det->whole_index[ci]] */
+    component *cands;  /* the level's candidate set (cand_set_swap) */
+    struct cand_memo *memo;
+    const int32_t *cand_runs, *cand_run_end;
+    struct memo_job *coarse; /* indices from coarse_from on are the terminal level's (sample_next_level), else NULL */
+    int coarse_from;
+    int fit_only; /* one candidate per index, but no decoding ahead (the terminal level assembled early) */
 } memo_job;
 
 struct next_level_job;
-static void sample_next_level(struct next_level_job *job);
+static void sample_next_level(struct next_level_job *job, int worker);
 static void decode_whole_ahead(const memo_job *j, napa_detector *wd, int index);
 static void decode_shape_ahead(const memo_job *j, napa_detector *wd, const component *comp, int s, int last,
                                struct delayed_memo *dm);
@@ -6735,23 +6776,27 @@ static void decode_ahead(const memo_job *j, napa_detector *wd, cand_memo *m, con
 static void memo_candidates(void *ctx, int index, int worker) {
     const memo_job *j = (const memo_job *)ctx;
     napa_detector *det = j->det;
+    if (j->coarse != NULL && index >= j->coarse_from) {
+        memo_candidates(j->coarse, index - j->coarse_from, worker);
+        return;
+    }
     if (j->next != NULL && index-- == 0) {
-        sample_next_level(j->next);
+        sample_next_level(j->next, worker);
         return;
     }
     if (index >= j->ordinary_jobs) { /* decoding ahead implies a detector per pool thread (can_decode_ahead) */
         decode_whole_ahead(j, worker == 0 ? det : &det->workers[worker - 1], det->dmemo_ready + index - j->ordinary_jobs);
         return;
     }
-    const int chunk = j->ahead ? 1 : MEMO_CHUNK;
+    const int chunk = j->ahead || j->fit_only ? 1 : MEMO_CHUNK;
     const int end = (index + 1) * chunk < j->n ? (index + 1) * chunk : j->n;
     for (int k = index * chunk; k < end; k++) {
         const int ci = j->order ? j->order[k] : k;
-        cand_memo *m = &det->memo[ci];
+        cand_memo *m = &j->memo[ci];
         if (j->runs != NULL) {
             /* The extremes assemble_level_candidates left: this candidate's runs, in the order it would have added them. */
-            component *c = &det->cands[ci];
-            const int32_t *next_run = det->cand_runs, tail = det->cand_run_end[ci];
+            component *c = &j->cands[ci];
+            const int32_t *next_run = j->cand_runs, tail = j->cand_run_end[ci];
             int32_t e = tail;
             do {
                 e = next_run[e];
@@ -6760,7 +6805,7 @@ static void memo_candidates(void *ctx, int index, int worker) {
             comp_flush_pair(c, j->bits, j->bit_stride);
             c->work.candidate.fate = CANDIDATE_UNTRIED, c->work.candidate.piece_count = 0;
         }
-        const component *comp = &det->cands[ci];
+        const component *comp = &j->cands[ci];
         m->screen = m->fit = -1;
         m->ahead = 0;
         m->frame_sides = 0;
@@ -7558,6 +7603,22 @@ static void run_set_swap(napa_detector *det) {
     det->runs_swapped = !det->runs_swapped;
 }
 
+/* Exchange the candidate buffers (candidates, pre-pass results and order, run lists) with the spare set. */
+static void cand_set_swap(napa_detector *det) {
+#define NAPA_SWAP(T, a, b) do { T t_ = a; a = b; b = t_; } while (0)
+    NAPA_SWAP(component *, det->cands, det->spare.cands);
+    NAPA_SWAP(size_t, det->cand_capacity, det->spare.cand_capacity);
+    NAPA_SWAP(cand_memo *, det->memo, det->spare.memo);
+    NAPA_SWAP(int32_t *, det->memo_order, det->spare.memo_order);
+    NAPA_SWAP(size_t, det->memo_capacity, det->spare.memo_capacity);
+    NAPA_SWAP(int32_t *, det->cand_runs, det->spare.cand_runs);
+    NAPA_SWAP(int32_t *, det->cand_run_end, det->spare.cand_run_end);
+    NAPA_SWAP(size_t, det->cand_runs_capacity, det->spare.cand_runs_capacity);
+    NAPA_SWAP(size_t, det->cand_run_end_capacity, det->spare.cand_run_end_capacity);
+#undef NAPA_SWAP
+    det->cands_swapped = !det->cands_swapped;
+}
+
 /* threads: the next level of an ordinary pass, sampled and labelled alongside this level's pre-pass. It depends on
  * nothing this level's candidates decide: sampling reads the frame, the previous level's samples and settings fixed for
  * the pass. The pre-pass reads this level's runs and dark bits through its job, and the next level gets the spare set. */
@@ -7568,12 +7629,111 @@ typedef struct next_level_job {
     level_sampling *sampling;
     candidate_level *level;
     int status, done;
+    /* early: the next level is the terminal one, and its candidates (the spare candidate set) are assembled here too,
+     * before this level's detections are known; its pre-pass joins this level's pool (pool_ctx) as job coarse. */
+    int early, assembled, memo_ready;
+    const void *pool_ctx;
+    memo_job coarse;
 } next_level_job;
 
-static void sample_next_level(next_level_job *job) {
+static int assemble_level_candidates(napa_detector *det, const pass_config *config, const pass_outputs *outputs,
+                                     candidate_level *level, pass_timer *timer);
+
+static void sample_next_level(next_level_job *job, int worker) {
     pass_timer timing = {0};
     job->status = sample_threshold_level(job->det, job->config, job->outputs, job->sampling, job->level, &timing);
+    if (job->status == 0 && job->early) {
+        /* The outputs are this level's starting ones until its loop: assembly drops what they cover now, and
+         * keep_uncovered what this level's loop adds. */
+        napa_detector *det = job->det;
+        const pass_config *config = job->config;
+        candidate_level *level = job->level;
+        job->status = assemble_level_candidates(det, config, job->outputs, level, &timing);
+        job->assembled = job->status == 0;
+        const int ncand = level->ncand;
+        if (job->assembled && ncand > 0 && memo_reserve(det, ncand)) {
+            int at[33] = {0}; /* largest boxes first, as process_level_candidates orders them */
+            for (int ci = 0; ci < ncand; ci++) at[area_rank(&det->cands[ci]) + 1]++;
+            for (int b = 0; b < 32; b++) at[b + 1] += at[b];
+            for (int ci = 0; ci < ncand; ci++) det->memo_order[at[area_rank(&det->cands[ci])]++] = ci;
+            const memo_job c = {det, &config->view, config->params, level->s, config->base, config->lo, level->last,
+                                config->shadow, config->shaped, config->sx, config->sy, config->offx, config->offy,
+                                config->smax, det->fam.cells, ncand, 0, det->memo_order,
+                                level->extremes_deferred ? det->runs : NULL, det->level_bits, (level->lw + 63) / 64 + 1,
+                                NULL, config, ncand, 0, det->cands, det->memo, det->cand_runs, det->cand_run_end, NULL, 0, 1};
+            job->coarse = c;
+            job->memo_ready = 1;
+            if (!pool_extend(det->pool, job->pool_ctx, ncand))
+                for (int k = 0; k < ncand; k++) memo_candidates(&job->coarse, k, worker);
+        }
+    }
     job->done = 1;
+}
+
+/* The terminal level's kept candidates with a first fit (sample_next_level's fit_only pre-pass), decoded and refined
+ * ahead on the pool, one per index, as memo_candidates would have. */
+typedef struct {
+    memo_job job;
+    const int32_t *list;
+} kept_decode_job;
+
+static void decode_kept(void *ctx, int index, int worker) {
+    const kept_decode_job *k = (const kept_decode_job *)ctx;
+    const memo_job *j = &k->job;
+    napa_detector *det = j->det;
+    const int ci = k->list[index];
+    cand_memo *m = &j->memo[ci];
+    const component *comp = &j->cands[ci];
+    const int bw = comp->maxx - comp->minx + 1, bh = comp->maxy - comp->miny + 1;
+    double best_area, perim_q;
+    rough_quad_too_full(&det->fam, comp, m->pick, &best_area, &perim_q); /* false: the pre-pass went on to fit */
+    vec2 rough[4];
+    rough_corners(m->pick, j->s, j->sx, j->sy, j->offx, j->offy, rough);
+    decode_ahead(j, worker == 0 ? det : &det->workers[worker - 1], m, comp, bw, bh, best_area, perim_q, rough);
+}
+
+/* The terminal level assembled early (sample_next_level): drop the candidates the previous level's detections cover,
+ * as assembly would have, keeping the rest and their pre-pass results in order. */
+static void keep_uncovered(napa_detector *det, const pass_config *config, const pass_outputs *outputs,
+                           candidate_level *level, int memo) {
+    const int s = level->s, found = outputs->found < outputs->max_out ? outputs->found : outputs->max_out;
+    const double sx = config->sx, sy = config->sy, offx = config->offx, offy = config->offy;
+    int n = 0;
+    for (int ci = 0; ci < level->ncand; ci++) {
+        const component *c = &det->cands[ci];
+        const int t_minx = c->minx, t_maxx = c->maxx, t_miny = c->miny, t_maxy = c->maxy;
+        const int bw = t_maxx - t_minx + 1, bh = t_maxy - t_miny + 1;
+        if (covered_footprint(outputs->out, det->out_centers, found,
+                              0.5 * (t_minx + t_maxx) * s * sx + offx, 0.5 * (t_miny + t_maxy) * s * sy + offy,
+                              0.3 * s * (bw * sx > bh * sy ? bw * sx : bh * sy) + 2.0)) continue;
+        if (n != ci) {
+            det->cands[n] = det->cands[ci];
+            if (memo) det->memo[n] = det->memo[ci];
+        }
+        n++;
+    }
+    level->ncand = n;
+    level->covered_prefix = found;
+    level->extremes_deferred = 0; /* complete: the pre-pass added them */
+    /* Two or more left to decode: decode them ahead on the pool, as the pre-pass would have. */
+    int nk = 0;
+    if (memo && can_decode_ahead(det))
+        for (int ci = 0; ci < n; ci++) nk += det->memo[ci].fit > 0;
+    if (nk >= 2) {
+        int32_t *list = det->memo_order; /* free: the pre-pass is done */
+        nk = 0;
+        for (int ci = 0; ci < n; ci++) if (det->memo[ci].fit > 0) list[nk++] = ci;
+        kept_decode_job kj;
+        memset(&kj, 0, sizeof kj);
+        kj.job.det = det, kj.job.view = &config->view, kj.job.params = config->params, kj.job.s = s;
+        kj.job.base = config->base, kj.job.lo = config->lo, kj.job.last = level->last, kj.job.shadow = config->shadow;
+        kj.job.shaped = config->shaped, kj.job.sx = sx, kj.job.sy = sy, kj.job.offx = offx, kj.job.offy = offy;
+        kj.job.smax = config->smax, kj.job.cells = det->fam.cells, kj.job.n = n, kj.job.ahead = 1, kj.job.config = config;
+        kj.job.cands = det->cands, kj.job.memo = det->memo;
+        kj.list = list;
+        prepare_workers(det);
+        pool_run(det->pool, decode_kept, &kj, nk);
+    }
 }
 
 /* Whether a level's ordinary candidates get the threaded pre-pass (memo_candidates). (A camera's lens memo isn't
@@ -8015,7 +8175,8 @@ static void decode_shape_ahead(const memo_job *j, napa_detector *wd, const compo
 }
 
 static int process_level_candidates(napa_detector *det, const pass_config *config, pass_outputs *outputs,
-                                    const candidate_level *level, pass_timer *timer, next_level_job *next) {
+                                    const candidate_level *level, pass_timer *timer, next_level_job *next,
+                                    int memo_ready) {
     image_view view = config->view;
     const napa_params *params = config->params;
     int base = config->base;
@@ -8047,7 +8208,9 @@ static int process_level_candidates(napa_detector *det, const pass_config *confi
     /* A level with a next level to label alongside, or the terminal level with deferred wholes to work out ahead, runs
      * the pre-pass for any candidates at all. */
     const size_t pending = last ? outputs->fine_whole_count : 0;
-    if (level->extremes_deferred || level_pre_pass(det, &view, level) ||
+    if (memo_ready) {
+        memo_level = 1; /* the previous level's pool worked it out (sample_next_level) */
+    } else if (level->extremes_deferred || level_pre_pass(det, &view, level) ||
         (det->pool != NULL && view.lens == NULL && !redo && ((next != NULL && ncand >= 1) || pending > 0))) {
         if (memo_reserve(det, ncand)) { /* always, when the extremes were deferred: assemble_level_candidates reserved it */
             const int ahead = can_decode_ahead(det);
@@ -8058,9 +8221,11 @@ static int process_level_candidates(napa_detector *det, const pass_config *confi
                 }
                 if (pending <= det->dmemo_capacity) det->dmemo_n = (int)pending;
             }
-            /* The finest level of an ordinary pass works out the wholes it sets aside in its own pre-pass. */
-            int wholes_now = 0;
-            if (ahead && next != NULL && s == base && outputs->fine_whole_count == 0 && det->dmemo_ready == 0) {
+            /* A level of an ordinary pass with a next level works out the wholes it sets aside in its own pre-pass,
+             * when every earlier level's were. */
+            int wholes_now = 0, wholes_all = 0; /* wholes_all: none are left for the terminal level's pre-pass */
+            const int ready = det->dmemo_ready;
+            if (ahead && next != NULL && outputs->fine_whole_count == (size_t)ready) {
                 if ((size_t)ncand > det->whole_index_capacity) {
                     int32_t *p = (int32_t *)realloc(det->whole_index, (size_t)ncand * sizeof(int32_t));
                     if (p != NULL) det->whole_index = p, det->whole_index_capacity = (size_t)ncand;
@@ -8071,15 +8236,17 @@ static int process_level_candidates(napa_detector *det, const pass_config *confi
                         const component *c = &det->cands[ci];
                         const int bw = c->maxx - c->minx + 1, bh = c->maxy - c->miny + 1;
                         det->whole_index[ci] = (base > 1 && (bw < lo || bh < lo)) || dense_whole_needs_deferral(base, s, last, bw, bh)
-                            ? count++ : -1;
+                            ? ready + count++ : -1;
                     }
-                    if ((size_t)count > det->dmemo_capacity) {
-                        delayed_memo *p = (delayed_memo *)realloc(det->dmemo, (size_t)count * sizeof(delayed_memo));
-                        if (p != NULL) det->dmemo = p, det->dmemo_capacity = (size_t)count;
+                    const size_t total = (size_t)ready + (size_t)count;
+                    if (total > det->dmemo_capacity && total <= (size_t)INT32_MAX / 2) {
+                        delayed_memo *p = (delayed_memo *)realloc(det->dmemo, total * sizeof(delayed_memo));
+                        if (p != NULL) det->dmemo = p, det->dmemo_capacity = total;
                     }
-                    wholes_now = count > 0 && (size_t)count <= det->dmemo_capacity;
+                    wholes_now = count > 0 && total <= det->dmemo_capacity;
+                    wholes_all = count == 0 || wholes_now;
                 }
-                if (wholes_now) det->dmemo_ready = count;
+                if (wholes_now) det->dmemo_ready = ready + count;
             }
             if (ahead) {
                 prepare_workers(det);
@@ -8093,9 +8260,17 @@ static int process_level_candidates(napa_detector *det, const pass_config *confi
             memo_job job = {det, &view, params, s, base, lo, last, shadow, shaped, sx, sy, offx, offy, smax, cells, ncand,
                             ahead, ahead ? det->memo_order : NULL, level->extremes_deferred ? det->runs : NULL,
                             det->level_bits, (level->lw + 63) / 64 + 1, next, config,
-                            ahead ? ncand : (ncand + MEMO_CHUNK - 1) / MEMO_CHUNK, wholes_now};
+                            ahead ? ncand : (ncand + MEMO_CHUNK - 1) / MEMO_CHUNK, wholes_now,
+                            det->cands, det->memo, det->cand_runs, det->cand_run_end, NULL, 0, 0};
+            const int jobs = (next != NULL) + job.ordinary_jobs + (last ? det->dmemo_n - det->dmemo_ready : 0);
+            /* The terminal level next, with nothing deferred to its pre-pass: assemble it and work out its pre-pass
+             * in this pool too (sample_next_level), in the spare candidate set. */
+            const int early = next != NULL && ahead && wholes_all && next->level->last;
+            if (early) next->early = 1, next->pool_ctx = &job, job.coarse = &next->coarse, job.coarse_from = jobs;
             if (next != NULL) run_set_swap(det); /* the job holds this level's buffers; the next level takes the others */
-            pool_run(det->pool, memo_candidates, &job, (next != NULL) + job.ordinary_jobs + (last ? det->dmemo_n - det->dmemo_ready : 0));
+            if (early) cand_set_swap(det);
+            pool_run(det->pool, memo_candidates, &job, jobs);
+            if (early) cand_set_swap(det);
             memo_level = 1;
         }
     }
@@ -8414,6 +8589,7 @@ static int detect_pass(napa_detector *det, const uint8_t *img, int width, int he
     const pass_config config = {view, params, pimg, pw, ph, pstride, base, lo, hi,
                                 split, watch, shadow, shaped, sx, sy, offx, offy, smax};
     if (det->runs_swapped) run_set_swap(det); /* the finest level always gets the same set, so the spare stays small */
+    if (det->cands_swapped) cand_set_swap(det);
     det->dmemo_ready = 0;
     /* With threads, an ordinary pass labels each next level alongside this level's pre-pass (next_level_job). */
 #ifdef NAPA_PROFILE
@@ -8431,7 +8607,7 @@ start:;
      * doubles the stride level by level. */
     const int skip_four = !shadow && !split && base == 2;
     candidate_level ahead; /* the next level, once sampled alongside this one */
-    int sampled_ahead = 0;
+    int sampled_ahead = 0, assembled_ahead = 0, memo_ahead = 0; /* and assembled, and its pre-pass worked out */
     for (int s = base;; s *= skip_four && s == base ? 4 : 2) {
         candidate_level level;
         if (sampled_ahead) {
@@ -8444,8 +8620,15 @@ start:;
             level.redo = s <= outputs.redone;
             if (sample_threshold_level(det, &config, &outputs, &sampling, &level, timer) != 0) return -2;
         }
-        if (assemble_level_candidates(det, &config, &outputs, &level, timer) != 0) return -2;
-        next_level_job next = {det, &config, &outputs, &sampling, &ahead, 0, 0};
+        int memo_ready = 0;
+        if (assembled_ahead) {
+            cand_set_swap(det); /* the terminal level's candidates, in the spare set */
+            keep_uncovered(det, &config, &outputs, &level, memo_ahead);
+            memo_ready = memo_ahead, assembled_ahead = memo_ahead = 0;
+        } else if (assemble_level_candidates(det, &config, &outputs, &level, timer) != 0) return -2;
+        next_level_job next;
+        memset(&next, 0, sizeof next);
+        next.det = det, next.config = &config, next.outputs = &outputs, next.sampling = &sampling, next.level = &ahead;
         if (overlap && !level.last) {
             const int ns = s * (skip_four && s == base ? 4 : 2);
             ahead.s = ns;
@@ -8455,10 +8638,10 @@ start:;
             ahead.redo = ns <= outputs.redone;
         }
         if (process_level_candidates(det, &config, &outputs, &level, timer,
-                                     overlap && !level.last ? &next : NULL) != 0) return -2;
+                                     overlap && !level.last ? &next : NULL, memo_ready) != 0) return -2;
         if (next.done) {
             if (next.status != 0) return -2;
-            sampled_ahead = 1;
+            sampled_ahead = 1, assembled_ahead = next.assembled, memo_ahead = next.memo_ready;
         }
         if (split && !outputs.necks && save_level_fates(det, &outputs, &level) != 0) return -2;
         outputs.fate_off += (size_t)level.ncand + (size_t)(level.npieces - level.fine);
