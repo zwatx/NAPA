@@ -152,14 +152,15 @@ detection got faster.
 
 `NapaDetector(threads=4)` lets one `detect` call use four threads, the caller's included, for lower latency on each
 frame. The detections are identical at every thread count. The search is split into horizontal bands that are joined
-exactly. Each candidate's decode and refinement also run ahead on every thread, and the candidates are then taken in
-their usual order, so a frame with several tags no longer refines them one after another.
+exactly. Each candidate's extremes, decode and refinement also run ahead on every thread, and the candidates are then
+taken in their usual order, so a frame with several tags no longer refines them one after another. Meanwhile the next
+level is sampled and labelled.
 
-On a Raspberry Pi 5 with 1920x1080 FRC frames, four threads took the default from 1.64 to 1.02 ms per frame and
-`min_tag_px=16` from 3.39 to 1.99 ms. Search levels below about 100,000 samples, and `split_touching`'s labelling, run
-on one thread. Decoding ahead needs at least 8 candidates on a level. It is off with `camera_gamma`, a camera lens or
-`soft_decode`, and with `regrow_small_tags` until the frame's regrowth budget is spent. With several cameras already
-keeping the cores busy, leave it at 1 and run one detector per camera instead.
+On a Raspberry Pi 5 with 1920x1080 FRC frames, four threads took the default from 1.66 to 0.89 ms per frame and
+`min_tag_px=16` from 3.40 to 1.90 ms. Search levels below about 100,000 samples, and `split_touching`'s labelling, run
+on one thread. Decoding ahead is off with `camera_gamma`, a camera lens or `soft_decode`, and with `regrow_small_tags`
+until the frame's regrowth budget is spent. With several cameras already keeping the cores busy, leave it at 1 and run
+one detector per camera instead.
 
 ## Tag families
 
