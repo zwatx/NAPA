@@ -2802,6 +2802,48 @@ static void profile_fixed(const uint8_t *img, int stride, int32_t fxp, int32_t f
         _mm_storeu_si128((__m128i *)(prof + g), _mm_unpacklo_epi32(v, zero));
         _mm_storeu_si128((__m128i *)(prof + g + 2), _mm_unpackhi_epi32(v, zero));
     }
+#elif defined(__aarch64__) && defined(__AARCH64EL__) && defined(__ARM_NEON) && !defined(NAPA_NO_SIMD)
+    /* The scalar formula four samples at a time, all in exact integer arithmetic. Byte pairs move
+     * to the NEON registers as two packed words (little-endian: low byte left) instead of through
+     * memory, and positions are running sums, as in the SSE2 path above. */
+    static const int32_t lanes[4] = {0, 1, 2, 3};
+    const int32x4_t frac = vdupq_n_s32(4095);
+    int32x4_t px = vaddq_s32(vdupq_n_s32(fxp), vmulq_s32(vdupq_n_s32(ixp), vld1q_s32(lanes)));
+    int32x4_t py = vaddq_s32(vdupq_n_s32(fyp), vmulq_s32(vdupq_n_s32(iyp), vld1q_s32(lanes)));
+    const int32x4_t px4 = vdupq_n_s32(4 * ixp), py4 = vdupq_n_s32(4 * iyp);
+    int j = 0;
+    for (; j + 4 <= K; j += 4, px = vaddq_s32(px, px4), py = vaddq_s32(py, py4)) {
+        uint64_t u = 0, d = 0;
+        for (int k = 0; k < 4; k++, fxp += ixp, fyp += iyp) {
+            const uint8_t *q = img + (size_t)(fyp >> 16) * stride + (fxp >> 16);
+            uint16_t a, b;
+            memcpy(&a, q, 2), memcpy(&b, q + stride, 2);
+            u |= (uint64_t)a << (16 * k), d |= (uint64_t)b << (16 * k);
+        }
+        const uint16x8_t ub = vmovl_u8(vreinterpret_u8_u64(vcreate_u64(u)));
+        const uint16x8_t db = vmovl_u8(vreinterpret_u8_u64(vcreate_u64(d)));
+        /* Unzip the interleaved bytes: even lanes are each pair's left pixel, odd its right. */
+        const int32x4_t a0 = vreinterpretq_s32_u32(vmovl_u16(vuzp1_u16(vget_low_u16(ub), vget_high_u16(ub))));
+        const int32x4_t a1 = vreinterpretq_s32_u32(vmovl_u16(vuzp2_u16(vget_low_u16(ub), vget_high_u16(ub))));
+        const int32x4_t b0 = vreinterpretq_s32_u32(vmovl_u16(vuzp1_u16(vget_low_u16(db), vget_high_u16(db))));
+        const int32x4_t b1 = vreinterpretq_s32_u32(vmovl_u16(vuzp2_u16(vget_low_u16(db), vget_high_u16(db))));
+        const int32x4_t fx = vandq_s32(vshrq_n_s32(px, 4), frac), fy = vandq_s32(vshrq_n_s32(py, 4), frac);
+        const int32x4_t top = vaddq_s32(vshlq_n_s32(a0, 12), vmulq_s32(vsubq_s32(a1, a0), fx));
+        const int32x4_t bot = vaddq_s32(vshlq_n_s32(b0, 12), vmulq_s32(vsubq_s32(b1, b0), fx));
+        const int32x4_t diff = vsubq_s32(bot, top);
+        vst1q_s64(prof + j, vaddq_s64(vshlq_n_s64(vmovl_s32(vget_low_s32(top)), 12),
+                                      vmull_s32(vget_low_s32(diff), vget_low_s32(fy))));
+        vst1q_s64(prof + j + 2, vaddq_s64(vshlq_n_s64(vmovl_s32(vget_high_s32(top)), 12),
+                                          vmull_s32(vget_high_s32(diff), vget_high_s32(fy))));
+    }
+    for (; j < K; j++, fxp += ixp, fyp += iyp) {
+        int x0 = fxp >> 16, y0 = fyp >> 16;
+        int32_t fx = (fxp >> 4) & 4095, fy = (fyp >> 4) & 4095;
+        const uint8_t *q = img + (size_t)y0 * stride + x0;
+        int32_t top = (q[0] << 12) + (q[1] - q[0]) * fx;
+        int32_t bot = (q[stride] << 12) + (q[stride + 1] - q[stride]) * fx;
+        prof[j] = ((int64_t)top << 12) + (int64_t)(bot - top) * fy;
+    }
 #else
     for (int j = 0; j < K; j++, fxp += ixp, fyp += iyp) {
         int x0 = fxp >> 16, y0 = fyp >> 16;
@@ -2939,16 +2981,17 @@ static void fit_curve_side(curve_side *s, vec2 a, vec2 b, const double *px, cons
     s->nx = -s->ey;
     s->ny = s->ex;
     double m[5] = {0}, v[3] = {0}, half[2] = {0};
+    double us[NAPA_SIDE_SAMPLES], ys[NAPA_SIDE_SAMPLES]; /* the caller's px holds at most this many */
+    const int kept = n <= NAPA_SIDE_SAMPLES;
     for (int i = 0; i < n; i++) {
         double u = ((px[i] - a.x) * s->ex + (py[i] - a.y) * s->ey) / s->len - 0.5;
-        double y = (px[i] - a.x) * s->nx + (py[i] - a.y) * s->ny, p = 1;
+        double y = (px[i] - a.x) * s->nx + (py[i] - a.y) * s->ny;
         if (!isfinite(u) || !isfinite(y) || !(wt[i] > 0) || !isfinite(wt[i])) return;
+        if (kept) us[i] = u, ys[i] = y;
         half[u >= 0] += wt[i];
-        for (int j = 0; j < 5; j++) {
-            m[j] += wt[i] * p;
-            if (j < 3) v[j] += wt[i] * y * p;
-            p *= u;
-        }
+        const double w = wt[i], wy = w * y, u2 = u * u, u3 = u2 * u, u4 = u3 * u;
+        m[0] += w, m[1] += w * u, m[2] += w * u2, m[3] += w * u3, m[4] += w * u4;
+        v[0] += wy, v[1] += wy * u, v[2] += wy * u2;
     }
     /* Require meaningful weighted support across the side and a conditioned tangent spread. */
     if (!(m[0] > 0) || half[0] < 0.15 * m[0] || half[1] < 0.15 * m[0]) return;
@@ -2986,8 +3029,8 @@ static void fit_curve_side(curve_side *s, vec2 a, vec2 b, const double *px, cons
     }
     double sse1 = 0, sse2 = 0;
     for (int i = 0; i < n; i++) {
-        double u = ((px[i] - a.x) * s->ex + (py[i] - a.y) * s->ey) / s->len - 0.5;
-        double y = (px[i] - a.x) * s->nx + (py[i] - a.y) * s->ny;
+        double u = kept ? us[i] : ((px[i] - a.x) * s->ex + (py[i] - a.y) * s->ey) / s->len - 0.5;
+        double y = kept ? ys[i] : (px[i] - a.x) * s->nx + (py[i] - a.y) * s->ny;
         double r1 = y - line[0] - line[1] * u;
         double r2 = y - s->c[0] - u * (s->c[1] + u * s->c[2]);
         sse1 += wt[i] * r1 * r1;
@@ -3622,10 +3665,26 @@ static NAPA_NOINLINE void lens_profiles(const lens_side *ls, vec2 a, vec2 b, dou
 /* Nearest falling midpoint crossing; equal distances retain the first crossing. */
 static double nearest_midpoint_crossing(const int64_t *prof, int K, int jl, int jr, double mid, double center) {
     double best_c = -1, best_d = 1e9;
+    /* prof holds fixed-point grey levels (under 2^33), which a double holds exactly, so for an
+     * entry p the tests (double)p >= mid and (double)p < mid are p >= ceil(mid) and
+     * p < ceil(mid): scan in integers and convert only a found crossing. */
+    if (mid >= -9223372036854775808.0 && mid < 9223372036854775808.0) {
+        /* ceil(mid) without libm: truncation toward zero already is it below zero. */
+        int64_t level = (int64_t)mid;
+        if ((double)level < mid) level++;
+        for (int j = jl - 1; j <= jr && j + 1 < K; j++) {
+            if (j < 0 || !(prof[j] >= level && prof[j + 1] < level)) continue;
+            double c = j + ((double)prof[j] - mid) / (double)(prof[j] - prof[j + 1]);
+            double d = fabs(c - center);
+            if (d < best_d) best_d = d, best_c = c;
+        }
+        return best_c;
+    }
     for (int j = jl - 1; j <= jr && j + 1 < K; j++) {
         if (j < 0 || !((double)prof[j] >= mid && (double)prof[j + 1] < mid)) continue;
         double c = j + ((double)prof[j] - mid) / (double)(prof[j] - prof[j + 1]);
-        if (fabs(c - center) < best_d) best_d = fabs(c - center), best_c = c;
+        double d = fabs(c - center);
+        if (d < best_d) best_d = d, best_c = c;
     }
     return best_c;
 }
@@ -3772,6 +3831,7 @@ static NAPA_FORCE_INLINE int fit_sides_impl(const image_view *im, const vec2 in[
             if (margin > NAPA_SIDE_MARGIN) margin = NAPA_SIDE_MARGIN;
         }
         double dt = (1 - 2 * margin) / np, min_g = min_edge * 0.5 * step * 16777216.0; /* best / (2 step) >= min_edge / 4 */
+        const double cell_len = len / cells, cross_limit = NAPA_CROSSING_CELLS * len / cells, half_cell = len / (2.0 * cells);
         /* The profile step in 16.16 fixed point, rounded to nearest. */
         double ixd = nx * step * 65536.0, iyd = ny * step * 65536.0;
         int32_t ixp = (int32_t)(ixd < 0 ? ixd - 0.5 : ixd + 0.5), iyp = (int32_t)(iyd < 0 ? iyd - 0.5 : iyd + 0.5);
@@ -3860,7 +3920,7 @@ retake:
              * the tag's black and white reduces that bias when those local levels are measured accurately.
              * Black is scaled by the local white, so it follows lighting that varies across the tag. */
             if (levels != NULL && levels->black < levels->white &&
-                (jr - jl + 1) * step > NAPA_CROSSING_CELLS * len / cells) {
+                (jr - jl + 1) * step > cross_limit) {
                 /* Levels from the centres of the cells either side (white margin, black border), half
                  * a cell from the edge: outside the blurred ramp the window would sit in. */
                 if (alternate != NULL) {
@@ -3875,10 +3935,10 @@ retake:
                         double mid = local_mid * 16777216.0;
                         double crossing = nearest_midpoint_crossing(prof, K, jl, jr, mid, cj);
                         if (crossing >= 0) acj = crossing, alternate_crossing = 1;
-                        if (alternate_crossing && len / cells >= NAPA_BALANCE_MIN_CELL) acj = balanced_crossing(prof, K, step, acj, mid);
+                        if (alternate_crossing && cell_len >= NAPA_BALANCE_MIN_CELL) acj = balanced_crossing(prof, K, step, acj, mid);
                     }
                 }
-                double half = len / (2.0 * cells);
+                double half = half_cell;
                 for (int iter = 0; iter < NAPA_CROSS_ITERS; iter++) {
                     double pos0 = -r_out + cj * step, level[2]; /* white outside, black inside */
                     const double level_x[2] = {bx + pnx * (pos0 - half), bx + pnx * (pos0 + half)};
@@ -3890,7 +3950,7 @@ retake:
                     int settled = fabs(best_c - cj) < 1e-3; /* the next pass would re-read the same levels */
                     cj = best_c;
                     if (settled || iter == NAPA_CROSS_ITERS - 1) {
-                        if (len / cells >= NAPA_BALANCE_MIN_CELL) cj = balanced_crossing(prof, K, step, cj, mid);
+                        if (cell_len >= NAPA_BALANCE_MIN_CELL) cj = balanced_crossing(prof, K, step, cj, mid);
                         break;
                     }
                 }
