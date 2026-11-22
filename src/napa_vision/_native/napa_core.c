@@ -343,6 +343,11 @@ typedef struct {
     double x, y;
 } vec2;
 
+/* A vector's length. Not libm's hypot: its last bit differs between C libraries (glibc on x86-64 and on ARM disagree),
+ * which made detections differ between machines. A correctly rounded square root gives the same bits everywhere, and
+ * every length here is far from overflow. */
+static inline double vec_length(double x, double y) { return sqrt(x * x + y * y); }
+
 /* A calibrated camera's lens (napa_set_lens), OpenCV's conventions: pixel centres at integers, normalized coordinates
  * x = X/Z, y = Y/Z. Brown-Conrady k: k1 k2 p1 p2 k3 k4 k5 k6 s1 s2 s3 s4; fisheye (Kannala-Brandt) k: k1 k2 k3 k4. */
 typedef struct lens_memo lens_memo;
@@ -2892,7 +2897,7 @@ static void fit_curve_side(curve_side *s, vec2 a, vec2 b, const double *px, cons
                            const double *wt, int n) {
     memset(s, 0, sizeof *s);
     s->a = a;
-    s->len = hypot(b.x - a.x, b.y - a.y);
+    s->len = vec_length(b.x - a.x, b.y - a.y);
     if (n < 12 || !(s->len >= 6)) return;
     s->ex = (b.x - a.x) / s->len;
     s->ey = (b.y - a.y) / s->len;
@@ -3009,7 +3014,7 @@ static int intersect_curves(const curve_side sides[4], const vec2 in[4], const v
         double cross = (b.x - a.x) * (c.y - b.y) - (b.y - a.y) * (c.x - b.x);
         double original = (in[(k + 1) & 3].x - in[k].x) * (in[(k + 2) & 3].y - in[(k + 1) & 3].y) -
                           (in[(k + 1) & 3].y - in[k].y) * (in[(k + 2) & 3].x - in[(k + 1) & 3].x);
-        if (!(hypot(b.x - a.x, b.y - a.y) >= 6) || !isfinite(cross) || cross * original <= 0 ||
+        if (!(vec_length(b.x - a.x, b.y - a.y) >= 6) || !isfinite(cross) || cross * original <= 0 ||
             (k && cross * sign <= 0)) return 0;
         sign = cross;
     }
@@ -3171,7 +3176,7 @@ static int shared_lens_quad(const image_view *im, side_samples *s, const int sid
         const double t = ((mx[k] - mx[p]) * dy[k] - (my[k] - my[p]) * dx[k]) / cross;
         /* Back through the lens: Newton on r (1 + kappa r^2 / scale^2) = |q| from r = |q| approaches the root from one
          * side while the map stays one to one; a corner past the fold has no preimage. */
-        const double qx = mx[p] + t * dx[p] - cx, qy = my[p] + t * dy[p] - cy, rq = hypot(qx, qy);
+        const double qx = mx[p] + t * dx[p] - cx, qy = my[p] + t * dy[p] - cy, rq = vec_length(qx, qy);
         double r = rq, step = HUGE_VAL;
         for (int iter = 0; iter < 30 && !(fabs(step) <= 1e-9 * (1 + rq)); iter++) {
             const double slope = 1 + 3 * kappa * r * r / (scale * scale);
@@ -3331,7 +3336,7 @@ static int lens_project(const napa_lens *L, const double r[3], vec2 *p) { return
 static int lens_ray(const napa_lens *L, vec2 p, double r[3]) {
     const double *k = L->k, yd = (p.y - L->cy) / L->fy, xd = (p.x - L->cx - L->skew * yd) / L->fx;
     if (L->model == NAPA_LENS_FISHEYE) {
-        const double td = hypot(xd, yd);
+        const double td = vec_length(xd, yd);
         double t = td < 3.0 ? td : 3.0, f = 0;
         if (!(td > 1e-12)) {
             r[0] = 0, r[1] = 0, r[2] = 1;
@@ -3432,7 +3437,7 @@ static double lens_bow(const lens_frame *f, const vec2 in[4], const vec2 plane[4
         const vec2 a = plane[k], b = plane[(k + 1) & 3];
         vec2 m;
         if (!lens_from_plane(f, 0.5 * (a.x + b.x), 0.5 * (a.y + b.y), &m)) return -1;
-        const double d = hypot(m.x - 0.5 * (in[k].x + in[(k + 1) & 3].x), m.y - 0.5 * (in[k].y + in[(k + 1) & 3].y));
+        const double d = vec_length(m.x - 0.5 * (in[k].x + in[(k + 1) & 3].x), m.y - 0.5 * (in[k].y + in[(k + 1) & 3].y));
         if (d > bow) bow = d;
     }
     return bow;
@@ -3520,7 +3525,7 @@ typedef struct {
 } lens_side;
 
 static NAPA_NOINLINE int lens_side_init(const lens_frame *f, vec2 a, vec2 b, double pixel_len, double cnx, double cny, lens_side *ls) {
-    const double ex = b.x - a.x, ey = b.y - a.y, len = hypot(ex, ey);
+    const double ex = b.x - a.x, ey = b.y - a.y, len = vec_length(ex, ey);
     int m = (int)(pixel_len / NAPA_LENS_KNOT_PX) + 2;
     if (m > NAPA_LENS_KNOTS) m = NAPA_LENS_KNOTS;
     if (!(len > 0)) return 0;
@@ -4193,7 +4198,7 @@ static void quad_map_init(const image_view *im, const vec2 q[4], quad_map *m) {
                 departure = HUGE_VAL;
                 break;
             }
-            departure = fmax(departure, hypot(c.x - b.x, c.y - b.y));
+            departure = fmax(departure, vec_length(c.x - b.x, c.y - b.y));
         }
         if (memo != NULL && memo->valid && same_corners(q, memo->key)) memo->departure = departure;
     }
@@ -4358,7 +4363,7 @@ static int border_bias(const family_layout *L, const image_view *im, const vec2 
          * A projected cell's direction is generally oblique to its edge under perspective. */
         double nx = q[side].y - q[(side + 1) & 3].y;
         double ny = q[(side + 1) & 3].x - q[side].x;
-        double side_len = hypot(nx, ny);
+        double side_len = vec_length(nx, ny);
         nx /= side_len; ny /= side_len;
         for (int c = 1; c < L->width - 1; c++) {
             double prof[N];
@@ -4391,7 +4396,7 @@ static int border_bias(const family_layout *L, const image_view *im, const vec2 
         sorted[j + 1] = v;
     }
     const double middle = n & 1 ? sorted[n / 2] : 0.5 * (sorted[n / 2 - 1] + sorted[n / 2]);
-    for (int k = 0; k < 4; k++) mean_cell += 0.25 * hypot(q[(k + 1) & 3].x - q[k].x, q[(k + 1) & 3].y - q[k].y) / L->cells;
+    for (int k = 0; k < 4; k++) mean_cell += 0.25 * vec_length(q[(k + 1) & 3].x - q[k].x, q[(k + 1) & 3].y - q[k].y) / L->cells;
     double reach = NAPA_BORDER_CELL_REACH * mean_cell;
     if (reach < 0.1) reach = 0.1;
     int kept = 0;
@@ -4488,7 +4493,7 @@ static int payload_bias(const family_layout *L, const image_view *im, const vec2
                     xs[count] = vb != va ? xa + (mid - va) / (vb - va) * (xb - xa) : 0.5 * (xa + xb);
                     const vec2 p0 = quad_line_point(&ln, xs[count] - 0.5);
                     const vec2 p1 = quad_line_point(&ln, xs[count] + 0.5);
-                    px[count] = hypot(p1.x - p0.x, p1.y - p0.y);
+                    px[count] = vec_length(p1.x - p0.x, p1.y - p0.y);
                     dark_after[count++] = val < mid;
                 }
                 prev = val, xprev = x;
@@ -4591,7 +4596,7 @@ static int measure_corner_sides(const vec2 q[4], int k, double cell, corner_side
     const vec2 c = q[k], ends[2] = {q[(k + 1) & 3], q[(k + 3) & 3]};
     const double mx = 0.25 * (q[0].x + q[1].x + q[2].x + q[3].x), my = 0.25 * (q[0].y + q[1].y + q[2].y + q[3].y);
     for (int e = 0; e < 2; e++) {
-        const double len = hypot(ends[e].x - c.x, ends[e].y - c.y);
+        const double len = vec_length(ends[e].x - c.x, ends[e].y - c.y);
         if (len < 1) return 0;
         f->ux[e] = (ends[e].x - c.x) / len, f->uy[e] = (ends[e].y - c.y) / len;
         f->nx[e] = -f->uy[e], f->ny[e] = f->ux[e];
@@ -4662,7 +4667,7 @@ static int refit_corner(const image_view *view, const vec2 c, const corner_sides
     }
     const double ua = a / scale, ya = fits[0][0] + ua * (fits[0][1] + ua * fits[0][2]);
     const double dx = a * f->ux[0] + ya * f->nx[0], dy = a * f->uy[0] + ya * f->ny[0];
-    if (!(fabs(a) < 6 && fabs(b) < 6) || !(hypot(dx, dy) < 4)) return 0;
+    if (!(fabs(a) < 6 && fabs(b) < 6) || !(vec_length(dx, dy) < 4)) return 0;
     out->x = c.x + dx, out->y = c.y + dy;
     return 1;
 }
@@ -4706,7 +4711,7 @@ static void grow_quad(const vec2 q[4], double d, vec2 out[4]) {
     for (int k = 0; k < 4; k++) cx += 0.25 * q[k].x, cy += 0.25 * q[k].y;
     for (int k = 0; k < 4; k++) {
         vec2 a = q[k], b = q[(k + 1) & 3];
-        double ex = b.x - a.x, ey = b.y - a.y, len = hypot(ex, ey);
+        double ex = b.x - a.x, ey = b.y - a.y, len = vec_length(ex, ey);
         ex /= len, ey /= len;
         double nx = ey, ny = -ex;
         if ((a.x - cx) * nx + (a.y - cy) * ny < 0) nx = -nx, ny = -ny;
@@ -4816,7 +4821,7 @@ static void edge_light_model(const family_layout *L, const double H[9], const ve
     levels->cx = levels->cy = levels->scale = 0;
     for (int k = 0; k < 4; k++) {
         levels->cx += q[k].x * 0.25; levels->cy += q[k].y * 0.25;
-        levels->scale += hypot(q[k].x-q[(k+1)&3].x, q[k].y-q[(k+1)&3].y) * 0.25;
+        levels->scale += vec_length(q[k].x-q[(k+1)&3].x, q[k].y-q[(k+1)&3].y) * 0.25;
     }
     if (!(levels->scale > 0)) return;
     for (int r = 0; r < W; r++) for (int c = 0; c < W; c += (r == 0 || r == W - 1) ? 1 : W - 1) {
@@ -4887,7 +4892,7 @@ static void soft_capture(napa_detector *det, const vec2 q[4], double black, doub
     const double contrast = white - black;
     if (contrast < NAPA_SOFT_MIN_CONTRAST || contrast > NAPA_SOFT_MAX_CONTRAST) return;
     double side = 0;
-    for (int k = 0; k < 4; k++) side += 0.25 * hypot(q[(k + 1) & 3].x - q[k].x, q[(k + 1) & 3].y - q[k].y);
+    for (int k = 0; k < 4; k++) side += 0.25 * vec_length(q[(k + 1) & 3].x - q[k].x, q[(k + 1) & 3].y - q[k].y);
     if (!(side >= NAPA_SOFT_MIN_SIDE && side <= NAPA_SOFT_MAX_SIDE)) return;
     const double mid = 0.5 * (black + white), half = 0.5 * contrast;
     int dark = 0;
@@ -5163,7 +5168,7 @@ static int extend_cut_sides(const family_layout *L, const image_view *im, const 
     double lx[4], ly[4], dx[4], dy[4], inset[4], cell_px = 0, px[MAXPTS], py[MAXPTS], depth[MAXPTS];
     for (int k = 0; k < 4; k++) {
         vec2 a = q[k], b = q[(k + 1) & 3];
-        double len = hypot(b.x - a.x, b.y - a.y);
+        double len = vec_length(b.x - a.x, b.y - a.y);
         lx[k] = a.x, ly[k] = a.y, dx[k] = (b.x - a.x) / len, dy[k] = (b.y - a.y) / len, inset[k] = 0;
         cell_px += len / (4.0 * L->width);
     }
@@ -5240,7 +5245,7 @@ static int extend_cut_sides(const family_layout *L, const image_view *im, const 
         if (fabs(mid - 1.0) > 0.1) return 0;
     }
     for (int k = 0; k < 4; k++)
-        if (!(hypot(cur[k].x - q[k].x, cur[k].y - q[k].y) <= 1.25 * cell_px)) return 0;
+        if (!(vec_length(cur[k].x - q[k].x, cur[k].y - q[k].y) <= 1.25 * cell_px)) return 0;
     memcpy(out, cur, sizeof cur);
     return 1;
 }
@@ -5924,7 +5929,7 @@ static int tone_prepare(napa_detector *det) {
 #endif
 static int tone_side_visible(const image_view *view, vec2 a, vec2 b, vec2 center, double *cell, double *nx, double *ny, double *tx, double *ty) {
     enum { MAX_OFFSETS = 1024 };
-    const double length = hypot(b.x - a.x, b.y - a.y);
+    const double length = vec_length(b.x - a.x, b.y - a.y);
     if (length < 8) return 0;
     const double c = length / 8;
     if (c > NAPA_TONE_MAX_CELL) return 0;
@@ -6135,7 +6140,7 @@ static int tone_measure_tag(napa_detector *det, const image_view *view, const na
     vec2 q[4];
     m->center.x = m->center.y = m->mean_side = 0;
     for (int k = 0; k < 4; k++) q[k].x = d->corners[2 * k], q[k].y = d->corners[2 * k + 1], m->center.x += 0.25 * q[k].x, m->center.y += 0.25 * q[k].y;
-    for (int k = 0; k < 4; k++) m->mean_side += 0.25 * hypot(q[(k + 1) & 3].x - q[k].x, q[(k + 1) & 3].y - q[k].y);
+    for (int k = 0; k < 4; k++) m->mean_side += 0.25 * vec_length(q[(k + 1) & 3].x - q[k].x, q[(k + 1) & 3].y - q[k].y);
     if (m->mean_side < NAPA_TONE_MIN_SIDE || edge_width < NAPA_TONE_MIN_EDGE_CELLS * m->mean_side / 8 || signed_area(q) <= 0) return 0;
     if (strcmp(det->fam.f->name, "tag36h11") != 0) return 0;
     if (!tone_prepare(det)) return -2;
@@ -6308,7 +6313,7 @@ static int tone_aligned_quad(const image_view *view, const napa_detection *d, co
         if (!solve_8x8(a, step)) break;
         for (int k = 0; k < 8; k++) x[k] += step[k];
         for (int k = 0; k < 4; k++) {
-            const double dx = x[2 * k] - origin[2 * k], dy = x[2 * k + 1] - origin[2 * k + 1], len = hypot(dx, dy);
+            const double dx = x[2 * k] - origin[2 * k], dy = x[2 * k + 1] - origin[2 * k + 1], len = vec_length(dx, dy);
             if (len > limit) x[2 * k] = origin[2 * k] + dx * limit / len, x[2 * k + 1] = origin[2 * k + 1] + dy * limit / len;
         }
         for (int k = 0; k < 4; k++) q[k].x = x[2 * k], q[k].y = x[2 * k + 1];
@@ -6504,7 +6509,7 @@ static int restore_rough_corner(const component *comp, int pick[4][2], double st
         int next = (k + 1) & 3;
         double ex = (pick[next][0] - pick[k][0]) * step_x;
         double ey = (pick[next][1] - pick[k][1]) * step_y;
-        double len = hypot(ex, ey);
+        double len = vec_length(ex, ey);
         if (!(len > 0)) return 0;
         for (int j = 0; j < 16; j++) {
             double x = (comp->ext[j][0] - pick[k][0]) * step_x;
@@ -6923,7 +6928,7 @@ static void correct_border_geometry(napa_detector *det, const image_view *rview,
         double u0 = (bad & 8) ? one : 0, v0 = (bad & 1) ? one : 0;
         double u1 = (bad & 2) ? rest : 1, v1 = (bad & 4) ? rest : 1;
         vec2 moved[4] = {project(Hs, u0, v0), project(Hs, u1, v0), project(Hs, u1, v1), project(Hs, u0, v1)};
-        for (int k = 0; k < 4; k++) perim += hypot(moved[(k + 1) & 3].x - moved[k].x, moved[(k + 1) & 3].y - moved[k].y);
+        for (int k = 0; k < 4; k++) perim += vec_length(moved[(k + 1) & 3].x - moved[k].x, moved[(k + 1) & 3].y - moved[k].y);
         double r = 0.45 * perim / (4.0 * W);
         vec2 fixed[4];
         napa_detection d2;
@@ -7047,7 +7052,7 @@ static void correct_border_geometry(napa_detector *det, const image_view *rview,
         memcpy(bowed, q->curved, sizeof bowed);
         if (signed_area(bowed) < 0) { vec2 swap = bowed[1]; bowed[1] = bowed[3]; bowed[3] = swap; }
         for (int k = 0; k < 4; k++) {
-            const double span = hypot(bowed[k].x - q->finer[k].x, bowed[k].y - q->finer[k].y);
+            const double span = vec_length(bowed[k].x - q->finer[k].x, bowed[k].y - q->finer[k].y);
             if (span > bow) bow = span;
         }
         if (share > 0 && bow < NAPA_CURVED_TAG_MIN && payload_bias(&det->fam, rview, q->finer, q->final_lv.black, q->final_lv.white, &payload_delta))
@@ -7100,7 +7105,7 @@ static void select_curve_geometry(napa_detector *det, const image_view *rview, c
             c->near_frame |= c->corner_out[k];
         }
         for (int k = 0; k < 4; k++) {
-            double span = hypot(ordered[k].x - q->finer[k].x, ordered[k].y - q->finer[k].y);
+            double span = vec_length(ordered[k].x - q->finer[k].x, ordered[k].y - q->finer[k].y);
             if (span > c->curve_span) c->curve_span = span;
             if (span > clear_span && !c->corner_out[k] && !c->corner_out[(k + 1) & 3] && !c->corner_out[(k + 3) & 3]) clear_span = span;
         }
@@ -7112,7 +7117,7 @@ static void select_curve_geometry(napa_detector *det, const image_view *rview, c
             double span[4], top = 0;
             int moved_corners = 0;
             for (int k = 0; k < 4; k++) {
-                span[k] = hypot(ordered[k].x - q->finer[k].x, ordered[k].y - q->finer[k].y);
+                span[k] = vec_length(ordered[k].x - q->finer[k].x, ordered[k].y - q->finer[k].y);
                 if (span[k] > top) top = span[k];
             }
             for (int k = 0; k < 4; k++) moved_corners += span[k] >= NAPA_BOW_MIN_SHARE * top;
@@ -7165,7 +7170,7 @@ static int polish_decoded_corners(napa_detector *det, const image_view *rview, c
             mx += 0.25 * local[k].x, my += 0.25 * local[k].y;
         }
         for (int k = 0; k < 4; k++)
-            side += 0.25 * hypot(local[(k + 1) & 3].x - local[k].x, local[(k + 1) & 3].y - local[k].y);
+            side += 0.25 * vec_length(local[(k + 1) & 3].x - local[k].x, local[(k + 1) & 3].y - local[k].y);
         const double one_cell = side / W;
         int moved = 0;
         vec2 start[4];
@@ -7195,7 +7200,7 @@ static int polish_decoded_corners(napa_detector *det, const image_view *rview, c
                 if (weight > 0 && refit_corner(rview, start[k], &sides, one_cell, c->measured_bias, &fitted)) {
                     const double dx = fitted.x - start[k].x, dy = fitted.y - start[k].y;
                     /* A small local move can still correct a bowed edge; fade it as bow confidence falls. */
-                    const double move_weight = fade(hypot(dx, dy), NAPA_LOCAL_MIN_MOVE - NAPA_FADE_MOVE, NAPA_LOCAL_MIN_MOVE + NAPA_FADE_MOVE);
+                    const double move_weight = fade(vec_length(dx, dy), NAPA_LOCAL_MIN_MOVE - NAPA_FADE_MOVE, NAPA_LOCAL_MIN_MOVE + NAPA_FADE_MOVE);
                     weight *= bowed_weight + (1 - bowed_weight) * move_weight;
                     if (weight > 0) local[k].x = start[k].x + weight * dx, local[k].y = start[k].y + weight * dy, moved = 1;
                     continue;
@@ -7203,11 +7208,11 @@ static int polish_decoded_corners(napa_detector *det, const image_view *rview, c
                 if (weight > 0 && bowed_weight < 1) continue;
             }
             if (c->curve_span < NAPA_CURVED_TAG_MIN) continue;
-            double px = q->d.corners[2 * k], py = q->d.corners[2 * k + 1], norm = hypot(px - mx, py - my);
+            double px = q->d.corners[2 * k], py = q->d.corners[2 * k + 1], norm = vec_length(px - mx, py - my);
             double ux = (px - mx) / norm, uy = (py - my) / norm;
             vec2 prev = local[(k + 3) & 3], next = local[(k + 1) & 3];
             double ax = next.x - px, ay = next.y - py, bx = prev.x - px, by = prev.y - py;
-            double al = hypot(ax, ay), bl = hypot(bx, by);
+            double al = vec_length(ax, ay), bl = vec_length(bx, by);
             ax /= al, ay /= al, bx /= bl, by /= bl;
             double white = sample_bilinear(rview, px + 0.2 * one_cell * ux - one_cell * ax, py + 0.2 * one_cell * uy - one_cell * ay);
             double white2 = sample_bilinear(rview, px + 0.2 * one_cell * ux - one_cell * bx, py + 0.2 * one_cell * uy - one_cell * by);
@@ -7215,7 +7220,7 @@ static int polish_decoded_corners(napa_detector *det, const image_view *rview, c
             double inside = sample_bilinear(rview, px - one_cell * ux, py - one_cell * uy);
             if (sample_bilinear(rview, px + one_cell * ux, py + one_cell * uy) >= 0.5 * (inside + white)) continue;
             double nx = px, ny = py;
-            if (refine_x_corner(rview, &nx, &ny) && hypot(nx - px, ny - py) < 3.0) local[k].x = nx, local[k].y = ny, moved = 1;
+            if (refine_x_corner(rview, &nx, &ny) && vec_length(nx - px, ny - py) < 3.0) local[k].x = nx, local[k].y = ny, moved = 1;
         }
         napa_detection polished;
         if (moved && q->edge_w <= NAPA_POLISH_MAX_EDGE_CELLS * one_cell &&
@@ -7862,7 +7867,7 @@ static int decode_initial_candidate(napa_detector *det, const image_view *view, 
     square_to_quad(fit->fine, Hq);
     double m0 = 1.0 / (W + 2), m1 = (W + 1.0) / (W + 2);
     vec2 inner[4] = {project(Hq, m0, m0), project(Hq, m1, m0), project(Hq, m1, m1), project(Hq, m0, m1)};
-    for (int k = 0; k < 4; k++) perim += hypot(fit->fine[(k + 1) & 3].x - fit->fine[k].x, fit->fine[(k + 1) & 3].y - fit->fine[k].y);
+    for (int k = 0; k < 4; k++) perim += vec_length(fit->fine[(k + 1) & 3].x - fit->fine[k].x, fit->fine[(k + 1) & 3].y - fit->fine[k].y);
     double r = 0.45 * perim / (4.0 * (W + 2)); /* 0.45 of a cell, if the quad spans W + 2 cells */
     /* Most failed decodes aren't tags at all. Refit only if the unfitted inner square already
      * shows a dark border inside a lighter margin, with loose limits (half the contrast, six
@@ -8877,7 +8882,7 @@ static void soft_align(const image_view *view, const float t[NAPA_SOFT_AREA], co
         if (!solve_8x8(a, step)) break;
         for (int m = 0; m < 8; m++) x[m] += step[m];
         for (int k = 0; k < 4; k++) {
-            const double dx = x[2 * k] - origin[2 * k], dy = x[2 * k + 1] - origin[2 * k + 1], len = hypot(dx, dy);
+            const double dx = x[2 * k] - origin[2 * k], dy = x[2 * k + 1] - origin[2 * k + 1], len = vec_length(dx, dy);
             if (len > limit) x[2 * k] = origin[2 * k] + dx * limit / len, x[2 * k + 1] = origin[2 * k + 1] + dy * limit / len;
         }
         for (int k = 0; k < 4; k++) q[k].x = x[2 * k], q[k].y = x[2 * k + 1];
@@ -8929,7 +8934,7 @@ static int soft_pass(napa_detector *det, const image_view *view, napa_detection 
         vec2 q[4];
         double side = 0;
         for (int k = 0; k < 4; k++) q[k].x = e->quad[2 * k], q[k].y = e->quad[2 * k + 1];
-        for (int k = 0; k < 4; k++) side += 0.25 * hypot(q[(k + 1) & 3].x - q[k].x, q[(k + 1) & 3].y - q[k].y);
+        for (int k = 0; k < 4; k++) side += 0.25 * vec_length(q[(k + 1) & 3].x - q[k].x, q[(k + 1) & 3].y - q[k].y);
         if (convex_area(q) <= 0 || overlaps_found(out, n, q)) continue;
         /* Many attempts land on one tag: one good reading is enough. */
         int known = 0;
@@ -9085,7 +9090,7 @@ static int blocked_pass(napa_detector *det, const image_view *view, const napa_p
         vec2 q[4], fine[4], refined[4];
         double side = 0, edge = 0;
         for (int k = 0; k < 4; k++) q[k].x = e->quad[2 * k], q[k].y = e->quad[2 * k + 1];
-        for (int k = 0; k < 4; k++) side += 0.25 * hypot(q[(k + 1) & 3].x - q[k].x, q[(k + 1) & 3].y - q[k].y);
+        for (int k = 0; k < 4; k++) side += 0.25 * vec_length(q[(k + 1) & 3].x - q[k].x, q[(k + 1) & 3].y - q[k].y);
         if (convex_area(q) <= 0 || overlaps_found(out, n, q)) continue;
         int x0, x1, y0, y1;
         const int code = blocked_code(det, e, &x0, &x1, &y0, &y1);
@@ -9284,7 +9289,7 @@ int napa_border_bias_cells(napa_detector *det, const uint8_t *img, int width, in
     double side = 0, delta = NAN, disagreement = 0;
     for (int k = 0; k < 4; k++) q[k].x = corners[2 * k], q[k].y = corners[2 * k + 1];
     if (signed_area(q) < 0) { vec2 t = q[1]; q[1] = q[3]; q[3] = t; }
-    for (int k = 0; k < 4; k++) side += 0.25 * hypot(q[(k + 1) & 3].x - q[k].x, q[(k + 1) & 3].y - q[k].y);
+    for (int k = 0; k < 4; k++) side += 0.25 * vec_length(q[(k + 1) & 3].x - q[k].x, q[(k + 1) & 3].y - q[k].y);
     edge_levels levels;
     napa_detection unused;
     levels.black = 255, levels.white = 0;
