@@ -7326,7 +7326,9 @@ static int process_level_candidates(napa_detector *det, const pass_config *confi
      * its decode and refinement too; the loop below takes them in order as it would have computed them. (A camera's
      * lens memo isn't shared safely.) */
     int memo_level = 0;
-    if (level->extremes_deferred || level_pre_pass(det, &view, level)) {
+    /* A level with a next level to label alongside runs the pre-pass for any candidates at all. */
+    if (level->extremes_deferred || level_pre_pass(det, &view, level) ||
+        (next != NULL && ncand >= 1 && det->pool != NULL && view.lens == NULL && !redo)) {
         if (memo_reserve(det, ncand)) { /* always, when the extremes were deferred: assemble_level_candidates reserved it */
             const int ahead = can_decode_ahead(det);
             if (ahead) {
