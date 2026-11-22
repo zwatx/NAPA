@@ -4352,6 +4352,26 @@ static double lobe_centroid(const double *prof, int from, int to, int falling) {
 
 enum { BORDER_PROFILE_SAMPLES = 33 };
 
+/* The value at rank k (0-based) in sorted order of a[0..n), without mutating a.
+ * Scratch must hold n doubles. Exact selection: the same element a sort would place there. */
+static double select_kth(const double *a, int n, int k, double *scratch) {
+    memcpy(scratch, a, (size_t)n * sizeof(double));
+    int lo = 0, hi = n - 1;
+    while (lo < hi) {
+        const double p = scratch[(lo + hi) / 2];
+        int i = lo, j = hi;
+        while (i <= j) {
+            while (scratch[i] < p) i++;
+            while (scratch[j] > p) j--;
+            if (i <= j) { const double t = scratch[i]; scratch[i] = scratch[j]; scratch[j] = t; i++; j--; }
+        }
+        if (k <= j) hi = j;
+        else if (k >= i) lo = i;
+        else break;
+    }
+    return scratch[k];
+}
+
 /* Position along a side and depth inward, in cells; side 0 is the top (v = 0). */
 static vec2 border_uv(double cells, int side, int c, double depth) {
     double t = depth / cells, a = (c + 0.5) / cells;
@@ -4423,14 +4443,8 @@ static int border_bias(const family_layout *L, const image_view *im, const vec2 
     /* Something lying across the border (a cable, a strap) spoils the cells under it by a large part of a cell, while
      * clipping, gamma and lenses move every cell by nearly the same amount. Leave out cells far from the middle value. */
     double sorted[NAPA_BORDER_CELLS_MAX];
-    memcpy(sorted, cell_d, (size_t)n * sizeof(double));
-    for (int i = 1; i < n; i++) {
-        const double v = sorted[i];
-        int j = i - 1;
-        while (j >= 0 && sorted[j] > v) sorted[j + 1] = sorted[j], j--;
-        sorted[j + 1] = v;
-    }
-    const double middle = n & 1 ? sorted[n / 2] : 0.5 * (sorted[n / 2 - 1] + sorted[n / 2]);
+    const double middle_hi = select_kth(cell_d, n, n / 2, sorted);
+    const double middle = n & 1 ? middle_hi : 0.5 * (select_kth(cell_d, n, n / 2 - 1, sorted) + middle_hi);
     for (int k = 0; k < 4; k++) mean_cell += 0.25 * vec_length(q[(k + 1) & 3].x - q[k].x, q[(k + 1) & 3].y - q[k].y) / L->cells;
     double reach = NAPA_BORDER_CELL_REACH * mean_cell;
     if (reach < 0.1) reach = 0.1;
@@ -4606,14 +4620,11 @@ static int fit_edge_run(const double *t, const double *y, int n, double scale, d
         if (!solve_3x3(a, c)) return 0;
         if (pass == 2) break;
         double residual[NAPA_LOCAL_EDGE_SAMPLES], sorted[NAPA_LOCAL_EDGE_SAMPLES];
-        for (int i = 0; i < n; i++) { /* sorted as they come: at most 32, and only the middle one is read */
+        for (int i = 0; i < n; i++) { /* only the middle residual is read: select it, don't sort */
             const double u = t[i] / scale;
             residual[i] = fabs(y[i] - (c[0] + u * (c[1] + u * c[2])));
-            int j = i - 1;
-            while (j >= 0 && sorted[j] > residual[i]) sorted[j + 1] = sorted[j], j--;
-            sorted[j + 1] = residual[i];
         }
-        double cutoff = 1.5 * sorted[n / 2];
+        double cutoff = 1.5 * select_kth(residual, n, n / 2, sorted);
         if (cutoff < 0.08) cutoff = 0.08;
         cutoff *= 2.5;
         for (int i = 0; i < n; i++) keep[i] = residual[i] < cutoff;
@@ -5757,12 +5768,21 @@ typedef struct gather_job {
 } gather_job;
 
 /* Chunk k (64 rows) of the rows the noise floors skipped (all but every 8th); inverted for reversed families. */
+/* On ARM, ask for the next source row while this one is gathered: on a wide frame each row is a fresh stretch of
+ * memory. A prefetch is only a hint; it reads nothing and never faults. */
+#if defined(__aarch64__) && (defined(__GNUC__) || defined(__clang__)) && !defined(NAPA_NO_SIMD)
+#define ROW_PREFETCH(p) (__builtin_prefetch((p), 0, 0), __builtin_prefetch((p) + 64, 0, 0))
+#else
+#define ROW_PREFETCH(p) ((void)0)
+#endif
+
 static void gather_rest(void *arg, int k, int worker) {
     (void)worker;
     gather_job *job = (gather_job *)arg;
     const int y1 = (k + 1) * 64 < job->lh ? (k + 1) * 64 : job->lh;
     for (int y = k * 64; y < y1; y++) {
         uint8_t *row = job->det->level + (size_t)y * job->lw;
+        if (y + 1 < job->lh) ROW_PREFETCH(job->img + (size_t)(y + 1) * job->s * job->stride);
         if (y & 7) gather_row(row, job->img + (size_t)y * job->s * job->stride, job->lw, job->s, job->det->ssse3);
         if (job->invert) invert_bytes(row, (size_t)job->lw);
     }
@@ -6044,11 +6064,24 @@ static void tone_across(const float cells[10][10], const float (*blur)[10], int 
         for (int k = 0; k < 10; k++) by_column[k][r] = cells[r][k];
     for (int col = 0; col < 30; col += step) {
         float value[10];
+#if defined(__aarch64__) && defined(__ARM_NEON) && !defined(NAPA_NO_SIMD)
+        float32x4_t v0 = vdupq_n_f32(0), v1 = vdupq_n_f32(0);
+        float32x2_t v2 = vdup_n_f32(0);
+        for (int k = 0; k < 10; k++) {
+            const float weight = blur[col][k];
+            const float32x4_t w = vdupq_n_f32(weight);
+            v0 = vaddq_f32(v0, vmulq_f32(vld1q_f32(by_column[k]), w));
+            v1 = vaddq_f32(v1, vmulq_f32(vld1q_f32(by_column[k] + 4), w));
+            v2 = vadd_f32(v2, vmul_f32(vld1_f32(by_column[k] + 8), vdup_n_f32(weight)));
+        }
+        vst1q_f32(value, v0), vst1q_f32(value + 4, v1), vst1_f32(value + 8, v2);
+#else
         memset(value, 0, sizeof value);
         for (int k = 0; k < 10; k++) {
             const float weight = blur[col][k];
             for (int r = 0; r < 10; r++) value[r] += by_column[k][r] * weight;
         }
+#endif
         for (int r = 0; r < 10; r++) across[r][col] = value[r];
     }
 }
@@ -6065,7 +6098,16 @@ static double tone_fit(const float y[NAPA_SOFT_AREA], const float across[10][30]
         memset(values, 0, sizeof values);
         for (int k = 0; k < 10; k++) {
             const float weight = down[r][k];
+#if defined(__aarch64__) && defined(__ARM_NEON) && !defined(NAPA_NO_SIMD)
+            const float32x4_t w = vdupq_n_f32(weight);
+            const float *pk = packed[k];
+            int i = 0;
+            for (; i + 4 <= columns; i += 4)
+                vst1q_f32(values + i, vaddq_f32(vld1q_f32(values + i), vmulq_f32(w, vld1q_f32(pk + i))));
+            for (; i < columns; i++) values[i] += weight * packed[k][i];
+#else
             for (int i = 0; i < columns; i++) values[i] += weight * packed[k][i];
+#endif
         }
         for (int i = 0; i < columns; i++) {
             const int col = i * step;
@@ -6111,6 +6153,20 @@ static void tone_standardize(const double raw[NAPA_SOFT_AREA], int step, float y
         }
     }
     const double mean = sum / n, sigma = sqrt(squares / n - mean * mean);
+#if defined(__aarch64__) && defined(__ARM_NEON) && !defined(NAPA_NO_SIMD)
+    if (step == 1) {
+        if (sigma > 1e-6) {
+            const float64x2_t mv = vdupq_n_f64(mean), sv = vdupq_n_f64(sigma);
+            for (int i = 0; i < NAPA_SOFT_AREA; i += 2) {
+                const float32x2_t f = vld1_f32(y + i);
+                const float64x2_t d = vdivq_f64(vsubq_f64(vcvt_f64_f32(f), mv), sv);
+                vst1_f32(y + i, vcvt_f32_f64(d));
+            }
+        } else
+            for (int i = 0; i < NAPA_SOFT_AREA; i++) y[i] = 0;
+        return;
+    }
+#endif
     for (int r = 0; r < 30; r += step)
         for (int c = 0; c < 30; c += step) y[r * 30 + c] = sigma > 1e-6 ? (float)((y[r * 30 + c] - mean) / sigma) : 0;
 }
@@ -6129,7 +6185,9 @@ static void tone_sweep(const napa_detector *det, const float cells[10][10], cons
     const int was_u = *u, was_v = *v;
     for (int b = 0; b < NAPA_TONE_SIGMAS; b++) {
         const int su = vary_v ? was_u : b, sv = vary_v ? b : was_v;
-        if (!vary_v || b == 0) tone_across(cells, (const float (*)[10])det->tone_blur[su], step, across);
+        const int incumbent = *best != HUGE_VAL && su == *u && sv == *v;
+        if ((!vary_v && !incumbent) || b == 0) tone_across(cells, (const float (*)[10])det->tone_blur[su], step, across);
+        if (incumbent) continue; /* this pair already produced *best; refitting cannot improve it */
         double c[3];
         const double sse = tone_fit(y, (const float (*)[30])across, (const float (*)[10])det->tone_blur[sv], step, c);
         if (sse < *best) *best = sse, *u = su, *v = sv, memcpy(tone, c, 3 * sizeof *tone);
