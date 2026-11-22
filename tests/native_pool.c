@@ -1,8 +1,8 @@
 /* NAPA. Copyright (c) 2026 Zachary Wilson.
  * SPDX-License-Identifier: GPL-3.0-only. Also available under a commercial license: see NOTICE.
  * Copies and works based on this file must keep this notice and credit Zachary Wilson. */
-/* The worker pool behind napa_set_threads: every index runs exactly once per job, across many back-to-back
- * jobs, thread counts, resizes and teardown. Banded labelling gives the serial pass's runs and components at
+/* The worker pool behind napa_set_threads: every index runs exactly once per job, on a thread numbered from 0
+ * (the caller) to the pool's worker count, across many back-to-back jobs, thread counts, resizes and teardown. Banded labelling gives the serial pass's runs and components at
  * every thread count, row pairs included. */
 #ifdef NDEBUG
 #error "The pool checks require assertions"
@@ -13,13 +13,15 @@
 
 typedef struct {
     int hits[512];
+    int worker[512]; /* the thread that ran each index */
     long long sum;
     napa_mutex_t lock;
 } tally;
 
-static void count(void *ctx, int index) {
+static void count(void *ctx, int index, int worker) {
     tally *t = (tally *)ctx;
     t->hits[index]++; /* each index is owned by exactly one runner: no race if the pool is right */
+    t->worker[index] = worker;
     volatile long long spin = 0;
     for (int k = 0; k < (index * 7919) % 2000; k++) spin += k; /* uneven work */
     napa_mutex_lock(&t->lock);
@@ -168,6 +170,7 @@ int main(void) {
             t.sum = 0;
             pool_run(pool, count, &t, n);
             for (int i = 0; i < 512; i++) assert(t.hits[i] == (i < n));
+            for (int i = 0; i < n; i++) assert(t.worker[i] >= 0 && t.worker[i] <= workers);
             assert(t.sum == (long long)n * (n - 1) / 2);
             jobs++;
         }

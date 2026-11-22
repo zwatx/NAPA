@@ -56,7 +56,8 @@
 
 /* Optional workers for one detector (napa_set_threads). A job is n independent indices; the caller takes
  * indices too and returns once every index has run. Work is split so results never depend on which thread
- * ran an index, so outputs are identical at every thread count. */
+ * ran an index, so outputs are identical at every thread count. Each index is told which thread runs it
+ * (0 for the caller, 1.. for the workers), for jobs that keep scratch per thread. */
 #if defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -104,20 +105,21 @@ typedef struct napa_pool {
     napa_mutex_t lock;
     napa_mutex_t owner; /* held by the one caller using the workers */
     napa_cond_t work, done_cond;
-    void (*fn)(void *ctx, int index);
+    void (*fn)(void *ctx, int index, int worker);
     void *ctx;
+    struct napa_pool_worker { struct napa_pool *pool; int id; } arg[NAPA_MAX_THREADS];
     int jobs, next, done, stop;
     unsigned generation;
 } napa_pool;
 
 /* Run indices of the current job until none are left. Called with the lock held; returns with it held. */
-static void pool_drain(napa_pool *pool) {
+static void pool_drain(napa_pool *pool, int worker) {
     while (pool->next < pool->jobs) {
         int index = pool->next++;
-        void (*fn)(void *, int) = pool->fn;
+        void (*fn)(void *, int, int) = pool->fn;
         void *ctx = pool->ctx;
         napa_mutex_unlock(&pool->lock);
-        fn(ctx, index);
+        fn(ctx, index, worker);
         napa_mutex_lock(&pool->lock);
         if (++pool->done == pool->jobs) napa_cond_broadcast(&pool->done_cond);
     }
@@ -128,14 +130,15 @@ static DWORD WINAPI pool_worker(LPVOID arg) {
 #else
 static void *pool_worker(void *arg) {
 #endif
-    napa_pool *pool = (napa_pool *)arg;
+    napa_pool *pool = ((struct napa_pool_worker *)arg)->pool;
+    const int id = ((struct napa_pool_worker *)arg)->id;
     unsigned seen = 0;
     napa_mutex_lock(&pool->lock);
     for (;;) {
         while (!pool->stop && pool->generation == seen) napa_cond_wait(&pool->work, &pool->lock);
         if (pool->stop) break;
         seen = pool->generation;
-        pool_drain(pool);
+        pool_drain(pool, id);
     }
     napa_mutex_unlock(&pool->lock);
     return 0;
@@ -171,11 +174,12 @@ static napa_pool *pool_create(int workers) {
     napa_cond_init(&pool->work);
     napa_cond_init(&pool->done_cond);
     for (int i = 0; i < workers; i++) {
+        pool->arg[i].pool = pool, pool->arg[i].id = i + 1;
 #if defined(_WIN32)
-        pool->thread[i] = CreateThread(NULL, 0, pool_worker, pool, 0, NULL);
+        pool->thread[i] = CreateThread(NULL, 0, pool_worker, &pool->arg[i], 0, NULL);
         int failed = pool->thread[i] == NULL;
 #else
-        int failed = pthread_create(&pool->thread[i], NULL, pool_worker, pool) != 0;
+        int failed = pthread_create(&pool->thread[i], NULL, pool_worker, &pool->arg[i]) != 0;
 #endif
         if (failed) {
             pool_destroy(pool); /* joins the ones already started */
@@ -186,12 +190,12 @@ static napa_pool *pool_create(int workers) {
     return pool;
 }
 
-/* fn(ctx, i) for every i in [0, n), across the pool and the calling thread; serial without a pool. A detector
+/* fn(ctx, i, worker) for every i in [0, n), across the pool and the calling thread; serial without a pool. A detector
  * must not be used from two threads at once (its scratch is shared), but if it is, the second caller runs its
  * job alone rather than taking over the workers mid-job, which could otherwise wait forever. */
-static void pool_run(napa_pool *pool, void (*fn)(void *, int), void *ctx, int n) {
+static void pool_run(napa_pool *pool, void (*fn)(void *, int, int), void *ctx, int n) {
     if (pool == NULL || n <= 1 || !napa_mutex_trylock(&pool->owner)) {
-        for (int i = 0; i < n; i++) fn(ctx, i);
+        for (int i = 0; i < n; i++) fn(ctx, i, 0);
         return;
     }
     napa_mutex_lock(&pool->lock);
@@ -199,7 +203,7 @@ static void pool_run(napa_pool *pool, void (*fn)(void *, int), void *ctx, int n)
     pool->jobs = n, pool->next = 0, pool->done = 0;
     pool->generation++;
     napa_cond_broadcast(&pool->work);
-    pool_drain(pool);
+    pool_drain(pool, 0);
     while (pool->done < pool->jobs) napa_cond_wait(&pool->done_cond, &pool->lock);
     napa_mutex_unlock(&pool->lock);
     napa_mutex_unlock(&pool->owner);
@@ -2300,7 +2304,8 @@ static void band_free(napa_detector *det) {
 
 /* Each band receives its own runs, parents and scratch, plus shared read-only inputs and its own
  * rows of level_bits. Split contact storage is absent; saved extrema are copied by band below. */
-static void band_label(void *arg, int k) {
+static void band_label(void *arg, int k, int worker) {
+    (void)worker;
     band_job *job = (band_job *)arg;
     napa_band *b = &job->det->bands[k];
     label_context ctx = label_context_for(job->det);
@@ -2319,7 +2324,8 @@ static void band_label(void *arg, int k) {
 }
 
 /* Band k's runs into the level's arrays at its offset, parents shifted with them. */
-static void band_place(void *arg, int k) {
+static void band_place(void *arg, int k, int worker) {
+    (void)worker;
     band_job *job = (band_job *)arg;
     napa_detector *det = job->det;
     const napa_band *b = &det->bands[k];
@@ -5287,7 +5293,8 @@ typedef struct {
 } floor_job;
 
 /* The noise floors of region row ry, and that row's share of the frame histogram. */
-static void floor_row_regions(void *arg, int ry) {
+static void floor_row_regions(void *arg, int ry, int worker) {
+    (void)worker;
     floor_job *job = (floor_job *)arg;
     const int lw = job->lw, lh = job->lh, cols = job->cols;
     uint32_t *all = job->all[ry];
@@ -5328,7 +5335,8 @@ typedef struct {
 } gather_job;
 
 /* Chunk k (64 rows) of the rows the noise floors skipped (all but every 8th); inverted for reversed families. */
-static void gather_rest(void *arg, int k) {
+static void gather_rest(void *arg, int k, int worker) {
+    (void)worker;
     gather_job *job = (gather_job *)arg;
     const int y1 = (k + 1) * 64 < job->lh ? (k + 1) * 64 : job->lh;
     for (int y = k * 64; y < y1; y++) {
@@ -6139,7 +6147,8 @@ typedef struct {
 } memo_job;
 
 /* One chunk of the pre-pass, for the ordinary candidates (det->cands), as the candidate loop treats them. */
-static void memo_candidates(void *ctx, int chunk) {
+static void memo_candidates(void *ctx, int chunk, int worker) {
+    (void)worker;
     const memo_job *j = (const memo_job *)ctx;
     napa_detector *det = j->det;
     const int end = (chunk + 1) * MEMO_CHUNK < j->n ? (chunk + 1) * MEMO_CHUNK : j->n;
@@ -8125,7 +8134,8 @@ typedef struct {
     int width, height, stride, dst_stride, pixel_bytes, colour, chunks;
 } gray_job;
 
-static void gray_rows(void *arg, int k) {
+static void gray_rows(void *arg, int k, int worker) {
+    (void)worker;
     const gray_job *job = (const gray_job *)arg;
     const int y0 = (int)((long long)job->height * k / job->chunks), y1 = (int)((long long)job->height * (k + 1) / job->chunks);
     const int w = job->width, step = job->pixel_bytes;
