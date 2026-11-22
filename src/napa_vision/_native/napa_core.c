@@ -390,7 +390,7 @@ struct lens_memo {
 };
 
 /* What labelling a level (threshold_rows) writes besides its runs and the level's dark bits: row and tile
- * scratch. The detector has one; each band of banded labelling has its own (napa_band). */
+ * scratch. The detector has one, and one per pool thread for banded labelling (band_arena). */
 typedef struct {
     uint8_t *row_min, *row_max, *row_thr; /* one level row's tile extrema and thresholds, expanded to samples */
     uint8_t *nb_lo, *nb_hi, *nb_t, *nb_f; /* one tile row's neighbourhood min, max, threshold and floor */
@@ -431,6 +431,16 @@ typedef struct {
 
 typedef struct soft_tables soft_tables;
 
+/* Banded labelling's buffers for one pool thread (worker index): the runs and parents of the bands it labels, one band
+ * after another from the start of each level, and its labelling scratch. A thread's buffers stay warm across its bands
+ * and frames; buffers of a band's own would come back from memory every frame. */
+typedef struct {
+    napa_run *runs;
+    int32_t *parent;
+    size_t run_capacity, used; /* used: runs of this level's bands so far */
+    label_scratch scratch;
+} band_arena;
+
 /* One sampling step's tile extrema from the ordinary pass, and what its samples were made from. */
 typedef struct {
     uint8_t *tiles; /* the tile minima, then the maxima */
@@ -448,6 +458,7 @@ struct napa_detector {
     uint32_t (*floor_hist)[64]; /* contrast_floors: each region row's histogram */
     size_t floor_hist_rows;
     int band_count;
+    band_arena band_arenas[NAPA_MAX_THREADS]; /* banded labelling's buffers, one per pool thread (worker index) */
     int tag_shape;        /* NAPA_TAG_SHAPE_*: the ordinary pass samples twice as far apart down (tall) or across (wide) */
     int32_t *regrow_stack; /* regrow_small's fill stack and marks, NAPA_REGROW_WINDOW squared each, made on first use */
     uint16_t *regrow_mark; /* a window pixel is marked when it holds regrow_stamp */
@@ -2573,11 +2584,8 @@ static int threshold_rows(napa_detector *det, int lw, int lh, int factor, int sp
 
 typedef struct napa_band napa_band;
 struct napa_band {
-    napa_run *runs;
-    int32_t *parent;
-    size_t run_capacity;
-    label_scratch scratch; /* the level's dark bits (level_bits) are shared: each band writes only its own rows */
-    int ty0, ty1, n, offset; /* offset: where the band's runs go in the level's runs */
+    size_t at; /* the band's runs and parents start here in band_arenas[worker] */
+    int worker, ty0, ty1, n, offset; /* offset: where the band's runs go in the level's runs */
 };
 
 typedef struct {
@@ -2586,46 +2594,57 @@ typedef struct {
     const int *first, *need; /* with the deferred rake: band k's rows lie in chunks [first[k], need[k]) */
 } band_job;
 
-static int band_reserve(napa_band *b, size_t runs, size_t row, size_t tiles) {
-    if (runs > b->run_capacity) {
+/* Room in a for at least `runs` runs; doubling, so a thread's arena settles after a few frames. */
+static int arena_reserve(band_arena *a, size_t runs) {
+    if (runs > a->run_capacity) {
+        size_t cap = a->run_capacity ? 2 * a->run_capacity : 4096;
+        while (cap < runs) cap *= 2;
         void *p;
-        if ((p = realloc(b->runs, runs * sizeof(napa_run))) == NULL) return -1;
-        b->runs = (napa_run *)p;
-        if ((p = realloc(b->parent, runs * sizeof(int32_t))) == NULL) return -1;
-        b->parent = (int32_t *)p;
-        b->run_capacity = runs;
+        if ((p = realloc(a->runs, cap * sizeof(napa_run))) == NULL) return -1;
+        a->runs = (napa_run *)p;
+        if ((p = realloc(a->parent, cap * sizeof(int32_t))) == NULL) return -1;
+        a->parent = (int32_t *)p;
+        a->run_capacity = cap;
     }
-    return scratch_reserve(&b->scratch, row, tiles);
+    return 0;
 }
 
 static void band_free(napa_detector *det) {
-    for (int i = 0; i < det->band_count; i++) {
-        napa_band *b = &det->bands[i];
-        free(b->runs), free(b->parent);
-        scratch_free(&b->scratch);
+    for (int w = 0; w < NAPA_MAX_THREADS; w++) {
+        band_arena *a = &det->band_arenas[w];
+        free(a->runs), free(a->parent);
+        scratch_free(&a->scratch);
     }
     free(det->bands);
     det->bands = NULL, det->band_count = 0;
 }
 
-/* Each band receives its own runs, parents and scratch, plus shared read-only inputs and its own
- * rows of level_bits. Split contact storage is absent; saved extrema are copied by band below. */
+/* Each band receives its thread's buffers (runs and parents after those of the thread's earlier bands), shared
+ * read-only inputs and its own rows of level_bits. Split contact storage is absent; saved extrema are copied by band
+ * below. */
 static void band_label(void *arg, int k, int worker) {
-    (void)worker;
     band_job *job = (band_job *)arg;
     napa_band *b = &job->det->bands[k];
+    band_arena *a = &job->det->band_arenas[worker];
+    /* At most half a row's samples (plus one) start runs, in each of the band's rows. */
+    if (arena_reserve(a, a->used + (size_t)(b->ty1 - b->ty0) * TILE * ((size_t)job->lw / 2 + 1) + 1) != 0) {
+        b->n = -1;
+        return;
+    }
     label_context ctx = label_context_for(job->det);
-    ctx.runs = b->runs, ctx.parent = b->parent;
-    ctx.scratch = &b->scratch;
+    b->worker = worker, b->at = a->used;
+    ctx.runs = a->runs + b->at, ctx.parent = a->parent + b->at;
+    ctx.scratch = &a->scratch;
     ctx.level_extrema_out = NULL;
     const int base = b->ty0 > 0 ? b->ty0 - 1 : 0;
     b->n = threshold_context(&ctx, NULL, job->lw, job->lh, job->factor, 0, job->shadow, b->ty0, b->ty1, base);
+    if (b->n > 0) a->used += (size_t)b->n;
     uint8_t *out = job->det->level_extrema_out;
     if (out != NULL) { /* the band's own rows, saved for a later pass over this level (never set with saved input) */
         const size_t at = (size_t)b->ty0 * job->tw, count = (size_t)(b->ty1 - b->ty0) * job->tw;
         const size_t skip = (size_t)(b->ty0 - base) * job->tw, tile_count = (size_t)job->tw * job->th;
-        memcpy(out + at, b->scratch.tile_min + skip, count);
-        memcpy(out + tile_count + at, b->scratch.tile_max + skip, count);
+        memcpy(out + at, ctx.scratch->tile_min + skip, count);
+        memcpy(out + tile_count + at, ctx.scratch->tile_max + skip, count);
     }
 }
 
@@ -2635,12 +2654,13 @@ static void band_place(void *arg, int k, int worker) {
     band_job *job = (band_job *)arg;
     napa_detector *det = job->det;
     const napa_band *b = &det->bands[k];
-    memcpy(det->runs + b->offset, b->runs, (size_t)b->n * sizeof(napa_run));
-    int32_t *P = det->parent + b->offset, *bp = b->parent;
+    const band_arena *a = &det->band_arenas[b->worker];
+    memcpy(det->runs + b->offset, a->runs + b->at, (size_t)b->n * sizeof(napa_run));
+    int32_t *P = det->parent + b->offset;
+    const int32_t *bp = a->parent + b->at;
     for (int i = 0; i < b->n; i++) {
-        const int32_t p = bp[i], r = p == i ? i : bp[p]; /* bp[p], p < i, is already its root */
-        bp[i] = r;
-        P[i] = r + b->offset;
+        const int32_t p = bp[i];
+        P[i] = p == i ? i + b->offset : P[p]; /* P[p], p < i, is already its root */
     }
 }
 
@@ -2722,11 +2742,15 @@ static int threshold_banded(napa_detector *det, int lw, int lh, int factor, int 
     }
     for (int k = bands - 1; k > 0; k--)
         if (edge[k] > edge[k + 1] - 4) edge[k] = edge[k + 1] - 4;
+    int most = 0; /* the tallest band's tile rows */
     for (int k = 0; k < bands; k++) {
         napa_band *b = &det->bands[k];
         b->ty0 = edge[k], b->ty1 = edge[k + 1];
-        int rows = (b->ty1 - b->ty0) * TILE;
-        if (band_reserve(b, (size_t)rows * ((size_t)lw / 2 + 1) + 1, (size_t)lw, (size_t)(b->ty1 - b->ty0 + 2) * tw) != 0) return -1;
+        if (b->ty1 - b->ty0 > most) most = b->ty1 - b->ty0;
+    }
+    for (int w = 0; w < det->threads; w++) { /* scratch: a band's tile rows and one on each side */
+        det->band_arenas[w].used = 0;
+        if (scratch_reserve(&det->band_arenas[w].scratch, (size_t)lw, (size_t)(most + 2) * tw) != 0) return -1;
     }
     band_job job = {det, lw, lh, factor, shadow, tw, th, NULL, NULL};
     if (det->rake_deferred) {
