@@ -183,6 +183,7 @@ int main(void) {
     for (int k = 1; k <= NAPA_MAX_THREADS; k++) {
         assert(napa_set_threads(det, k) == 0);
         assert(det->threads == k && (k == 1 ? det->pool == NULL : det->pool->workers == k - 1));
+        assert(det->worker_count == k - 1); /* one detector per pool thread, for decoding ahead */
         memset(t.hits, 0, sizeof t.hits);
         pool_run(det->pool, count, &t, 64);
         for (int i = 0; i < 64; i++) assert(t.hits[i] == 1);

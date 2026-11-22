@@ -130,6 +130,13 @@ jobs:
               -lm -o napa_fuzz_driver
             ./napa_fuzz_driver 3000
           done
+      - name: Random fuzz driver with worker threads (gcc, ThreadSanitizer)
+        run: |
+          # The runner's address-space randomization is wider than ThreadSanitizer's shadow memory allows.
+          sudo sysctl -w vm.mmap_rnd_bits=28
+          gcc -std=c99 -g -O1 -pthread -fno-wrapv -fsanitize=thread tests/fuzz/napa_fuzz.c \
+            src/napa_vision/_native/napa_core.c -lm -o napa_fuzz_tsan
+          TSAN_OPTIONS=halt_on_error=1 ./napa_fuzz_tsan 500
       - name: libFuzzer, two minutes (clang, ASan + UBSan)
         run: |
           clang $SAN_FLAGS -fsanitize=fuzzer,address,undefined -DNAPA_LIBFUZZER tests/fuzz/napa_fuzz.c \

@@ -458,7 +458,12 @@ struct napa_detector {
     size_t box_capacity;
     failed_quad *failed; /* this frame's failed candidates, for skipping the same blob at a coarser level */
     struct cand_memo *memo; /* threads: each candidate's rough quad, screen and first fit, worked out in parallel per level */
+    int32_t *memo_order;    /* memo_capacity entries: the order the pre-pass takes candidates in when decoding ahead */
     size_t memo_capacity;
+    /* threads: the pool threads' own detectors for decoding and refining candidates ahead of the loop. Each holds only
+     * what that reads (prepare_workers) and its own code stamps; worker_count is 0 if they couldn't be made. */
+    struct napa_detector *workers;
+    int worker_count;
     size_t failed_n, failed_capacity;
     /* split_touching: run pairs of this level that touch only at a corner, or through a one-sample neck
      * (then their pieces); each neck pair's pieces' roots once the necks are joined; and each piece
@@ -768,10 +773,33 @@ napa_detector *napa_create_family(const char *family) {
 
 static void band_free(napa_detector *det);
 static void scratch_free(label_scratch *s);
+static void free_workers(napa_detector *det) {
+    for (int w = 0; w < det->worker_count; w++) free(det->workers[w].fam.stamp);
+    free(det->workers);
+    det->workers = NULL, det->worker_count = 0;
+}
+
+/* n detectors for the pool's threads (see workers). Without them the threads still run, only without decoding ahead. */
+static void make_workers(napa_detector *det, int n) {
+    napa_detector *w = (napa_detector *)calloc((size_t)n, sizeof(napa_detector));
+    if (w == NULL) return;
+    det->workers = w;
+    for (int i = 0; i < n; i++) {
+        w[i].fam.stamp = (uint32_t *)calloc((size_t)det->fam.nrot, sizeof(uint32_t));
+        if (w[i].fam.stamp == NULL) {
+            free_workers(det);
+            return;
+        }
+        det->worker_count = i + 1;
+    }
+}
+
 void napa_destroy(napa_detector *det) {
     if (det == NULL) {
         return;
     }
+    free_workers(det);
+    free(det->memo_order);
     pool_destroy(det->pool);
     band_free(det);
     free(det->floor_hist);
@@ -6125,14 +6153,83 @@ static int fit_initial_from_level(const image_view *view, const vec2 rough[4], v
                              min_contrast, width, cells, frame_sides);
 }
 
+/* Geometry passed from the early decode into final fitting. It owns no component or queue pointers. */
+typedef struct {
+    vec2 fine[4];
+    double reach, edge_w;
+    edge_levels lv;
+    int frame_sides;
+    napa_detection early;
+} candidate_fit;
+
+typedef struct {
+    const napa_params *params, *decode_params;
+    int shadow, piece, require_exact;
+} decode_policy;
+
+typedef enum {
+    REFINE_NO_MEMORY = -2,
+    REFINE_ACCEPTED = 0,
+    REFINE_FIT_FAILED,
+    REFINE_DECODE_FAILED,
+    REFINE_CUT_FAILED
+} refinement_result;
+
+/* What decoding and refining a fitted candidate came to (decode_and_refine). */
+typedef struct {
+    int decoded;               /* decode_initial_candidate: 1 decoded, 0 not */
+    refinement_result refined; /* refine_decoded_candidate, when decoded */
+    napa_detection d;
+    image_view view;           /* the view d was refined in */
+} candidate_outcome;
+
+static int decode_and_refine(napa_detector *det, const image_view *view, const decode_policy *policy, candidate_fit *fit,
+                             const vec2 rough[4], double regrow_extent, candidate_outcome *out, pass_timer *timer);
+
+/* Whether a whole candidate is an extended shape (set aside as undersized or deferred, sparse, or filling under 0.3
+ * of its box), which gets stricter tests in process_level_candidates. */
+static int whole_is_extended(int base, int s, int last, int undersized_whole, const component *comp, int bw, int bh,
+                             double best_area) {
+    return undersized_whole || dense_whole_needs_deferral(base, s, last, bw, bh) || box_is_sparse(comp->count, bw, bh) ||
+        best_area < 0.3 * bw * bh;
+}
+
+/* An extended shape is kept only if it is compact and filled enough to be a tag. A rectangle of aspect eight has
+ * area/perimeter^2 = 2/81. */
+static int extended_shape_rejected(const component *comp, double best_area, double perim_q) {
+    return 81.0 * best_area < 2.0 * perim_q * perim_q || comp->count < 0.2 * best_area;
+}
+
+/* The decode thresholds for a whole candidate: *params, or *strict filled in from it. Short-code families match
+ * clutter more often even without bit correction, so an extended shape in those families needs a complete dark
+ * border, using the same samples as decoding; an undersized one needs an exact code. */
+static const napa_params *candidate_decode_params(const napa_detector *det, const napa_params *params, int extended_shape,
+                                                  int undersized_whole, napa_params *strict) {
+    if (!extended_shape || !((det->fam.piece_hamming < 0 && params->min_border_cells < 28) ||
+                             (undersized_whole && params->max_hamming != 0))) return params;
+    *strict = *params;
+    if (det->fam.piece_hamming < 0) strict->min_border_cells = 28;
+    if (undersized_whole) strict->max_hamming = 0;
+    return strict;
+}
+
+/* How far a small candidate's early decode may regrow its blob (0: not at all). */
+static double regrow_extent_for(int regrown, int shadow, int piece, int base, int shaped, int s, double big_px) {
+    return !regrown && !shadow && !piece && (base >= 2 || shaped) && s == base && big_px + s <= NAPA_REGROW_MAX_PX ?
+        big_px + s : 0;
+}
+
 /* threads: a candidate's rough quad, screen and first fit, for the candidate loop. screen and fit are -1 where the
- * pre-pass didn't get that far (the loop then works them out itself, if it gets there). */
+ * pre-pass didn't get that far (the loop then works them out itself, if it gets there). When decoding ahead, ahead
+ * says whether outcome holds what the loop's decode_and_refine would make of that first fit. */
 typedef struct cand_memo {
     int pick[4][2];
-    signed char screen, fit;
+    signed char screen, fit, ahead;
     int frame_sides;
     vec2 fine[4];
     double edge_w;
+    candidate_outcome outcome;
+    candidate_fit fit_after; /* the fit as decode_and_refine left it */
 } cand_memo;
 
 enum { MEMO_CHUNK = 4 };
@@ -6141,21 +6238,48 @@ typedef struct {
     napa_detector *det;
     const image_view *view;
     const napa_params *params;
-    int s, base, lo, last, shadow;
+    int s, base, lo, last, shadow, shaped;
     double sx, sy, offx, offy, smax, cells;
     int n;
+    int ahead;            /* also decode and refine, one candidate per index, on each thread's own detector */
+    const int32_t *order; /* when decoding ahead: index k takes candidate order[k] */
 } memo_job;
 
-/* One chunk of the pre-pass, for the ordinary candidates (det->cands), as the candidate loop treats them. */
-static void memo_candidates(void *ctx, int chunk, int worker) {
-    (void)worker;
+/* The loop's decode_and_refine for a candidate whose first fit the pre-pass made, worked out ahead on this thread's
+ * detector wd, with the same rough quad, fit, thresholds and regrowth extent the loop would use. Whether the loop
+ * gets that far (coverage, failed quads, duplicates) is still decided there, in candidate order. */
+static void decode_ahead(const memo_job *j, napa_detector *wd, cand_memo *m, const component *comp, int bw, int bh,
+                         double best_area, double perim_q, const vec2 rough[4]) {
+    const int s = j->s;
+    const int extended_shape = whole_is_extended(j->base, s, j->last, 0, comp, bw, bh, best_area);
+    if (extended_shape && extended_shape_rejected(comp, best_area, perim_q)) return; /* the loop stops before decoding */
+    napa_params strict_border;
+    const napa_params *decode_params = candidate_decode_params(wd, j->params, extended_shape, 0, &strict_border);
+    candidate_fit fit;
+    fit.reach = 0.5 * ((1.5 * s * j->smax + 1.0) + (0.5 * s * j->smax + 1.0));
+    fit.edge_w = m->edge_w, fit.frame_sides = m->frame_sides;
+    memcpy(fit.fine, m->fine, sizeof fit.fine);
+    const double big_px = s * (bw * j->sx > bh * j->sy ? bw * j->sx : bh * j->sy);
+    const decode_policy policy = {j->params, decode_params, j->shadow, 0, 0};
+    pass_timer timing = {0};
+    const double regrow_extent = regrow_extent_for(0, j->shadow, 0, j->base, j->shaped, s, big_px);
+    m->ahead = decode_and_refine(wd, j->view, &policy, &fit, rough, regrow_extent, &m->outcome, &timing) == 0;
+    m->fit_after = fit;
+}
+
+/* One index of the pre-pass, for the ordinary candidates (det->cands), as the candidate loop treats them: MEMO_CHUNK
+ * candidates, or one when decoding ahead. */
+static void memo_candidates(void *ctx, int index, int worker) {
     const memo_job *j = (const memo_job *)ctx;
     napa_detector *det = j->det;
-    const int end = (chunk + 1) * MEMO_CHUNK < j->n ? (chunk + 1) * MEMO_CHUNK : j->n;
-    for (int ci = chunk * MEMO_CHUNK; ci < end; ci++) {
+    const int chunk = j->ahead ? 1 : MEMO_CHUNK;
+    const int end = (index + 1) * chunk < j->n ? (index + 1) * chunk : j->n;
+    for (int k = index * chunk; k < end; k++) {
+        const int ci = j->order ? j->order[k] : k;
         cand_memo *m = &det->memo[ci];
         const component *comp = &det->cands[ci];
         m->screen = m->fit = -1;
+        m->ahead = 0;
         m->frame_sides = 0;
         const int bw = comp->maxx - comp->minx + 1, bh = comp->maxy - comp->miny + 1;
         const int undersized_whole = j->base > 1 && (bw < j->lo || bh < j->lo);
@@ -6177,7 +6301,43 @@ static void memo_candidates(void *ctx, int chunk, int worker) {
                                                    j->params->min_contrast, &width, j->cells, &m->frame_sides);
         memcpy(m->fine, fine, sizeof fine);
         m->edge_w = width;
+        if (j->ahead && m->fit) /* decoding ahead implies a detector per pool thread (can_decode_ahead) */
+            decode_ahead(j, worker == 0 ? det : &det->workers[worker - 1], m, comp, bw, bh, best_area, perim_q, rough);
     }
+}
+
+/* Decoding ahead on the pool's threads needs every path decoding and refining can take to leave the detector alone:
+ * no camera gamma (its linear frame), small-tag regrowth budget, soft capture or grid probe, and the tone tables built
+ * first. Those paths, and the code stamps, are all the shared state that decoding and refining write. */
+static int can_decode_ahead(napa_detector *det) {
+#ifdef NAPA_PROFILE
+    (void)det;
+    return 0; /* the stage timers are one set for the process */
+#else
+    return det->worker_count == det->threads - 1 && !det->has_camera_gamma && det->regrow_left <= 0 &&
+        !det->soft_capturing && det->grid_probe == NULL && tone_prepare(det);
+#endif
+}
+
+/* The pool threads' detectors: the family tables (with their own code stamps) and the settings that decoding and
+ * refining read. */
+static void prepare_workers(napa_detector *det) {
+    for (int w = 0; w < det->worker_count; w++) {
+        napa_detector *wd = &det->workers[w];
+        uint32_t *stamp = wd->fam.stamp;
+        const uint32_t now = wd->fam.stamp_now;
+        wd->fam = det->fam, wd->fam.stamp = stamp, wd->fam.stamp_now = now;
+        wd->align_corners = det->align_corners, wd->tone_blur = det->tone_blur;
+        memcpy(wd->linearize, det->linearize, sizeof wd->linearize);
+    }
+}
+
+/* log2 of a candidate's box area, largest first. */
+static int area_rank(const component *c) {
+    unsigned a = (unsigned)(c->maxx - c->minx + 1) * (unsigned)(c->maxy - c->miny + 1);
+    int b = 0;
+    while (a > 1 && b < 31) a >>= 1, b++;
+    return 31 - b;
 }
 
 static int params_valid(const napa_params *params) {
@@ -6188,20 +6348,6 @@ static int params_valid(const napa_params *params) {
         params->sharpening_x100 >= 0 && params->sharpening_x100 <= 100 &&
         params->split_touching >= 0 && params->split_touching <= 2;
 }
-
-/* Geometry passed from the early decode into final fitting. It owns no component or queue pointers. */
-typedef struct {
-    vec2 fine[4];
-    double reach, edge_w;
-    edge_levels lv;
-    int frame_sides;
-    napa_detection early;
-} candidate_fit;
-
-typedef struct {
-    const napa_params *params, *decode_params;
-    int shadow, piece, require_exact;
-} decode_policy;
 
 /* The converged profile and its alternate geometric hypotheses. */
 typedef struct {
@@ -6481,14 +6627,6 @@ static int polish_decoded_corners(napa_detector *det, const image_view *rview, c
     }
     return 0;
 }
-
-typedef enum {
-    REFINE_NO_MEMORY = -2,
-    REFINE_ACCEPTED = 0,
-    REFINE_FIT_FAILED,
-    REFINE_DECODE_FAILED,
-    REFINE_CUT_FAILED
-} refinement_result;
 
 static refinement_result refine_decoded_candidate(napa_detector *det, const image_view *view, const decode_policy *policy,
                                     candidate_fit *fit, napa_detection *result, image_view *result_view, pass_timer *timer) {
@@ -7023,6 +7161,19 @@ static int decode_initial_candidate(napa_detector *det, const image_view *view, 
     return rescued;
 }
 
+/* decode_initial_candidate, then refine_decoded_candidate if it decoded, updating *fit as they do. Returns -2 when out
+ * of memory. */
+static int decode_and_refine(napa_detector *det, const image_view *view, const decode_policy *policy, candidate_fit *fit,
+                             const vec2 rough[4], double regrow_extent, candidate_outcome *out, pass_timer *timer) {
+    out->view = *view;
+    out->decoded = decode_initial_candidate(det, view, policy->params, policy->decode_params, fit, rough, regrow_extent);
+    if (out->decoded < 0) return -2;
+    PROF_MARK(PROF_DECODE1);
+    if (!out->decoded) return 0;
+    out->refined = refine_decoded_candidate(det, view, policy, fit, &out->d, &out->view, timer);
+    return out->refined == REFINE_NO_MEMORY ? -2 : 0;
+}
+
 static int process_level_candidates(napa_detector *det, const pass_config *config, pass_outputs *outputs,
                                     const candidate_level *level, pass_timer *timer) {
     image_view view = config->view;
@@ -7048,17 +7199,31 @@ static int process_level_candidates(napa_detector *det, const pass_config *confi
     const int covered_prefix = level->covered_prefix;
     const int level_stride = s, terminal_level = last;
     const int ordinary_count = ncand + npieces;
-    /* With threads, work out every candidate's rough quad, screen and first fit in parallel first; the loop
-     * below takes them in order as it would have computed them. (A camera's lens memo isn't shared safely.) */
+    /* With threads, work out every candidate's rough quad, screen and first fit in parallel first, and where it can,
+     * its decode and refinement too; the loop below takes them in order as it would have computed them. (A camera's
+     * lens memo isn't shared safely.) */
     int memo_level = 0;
     if (det->pool != NULL && view.lens == NULL && !redo && ncand >= 2 * MEMO_CHUNK) {
         if ((size_t)ncand > det->memo_capacity) {
             cand_memo *m = (cand_memo *)realloc(det->memo, (size_t)ncand * sizeof(cand_memo));
-            if (m != NULL) det->memo = m, det->memo_capacity = (size_t)ncand;
+            if (m != NULL) det->memo = m;
+            int32_t *o = m != NULL ? (int32_t *)realloc(det->memo_order, (size_t)ncand * sizeof(int32_t)) : NULL;
+            if (o != NULL) det->memo_order = o, det->memo_capacity = (size_t)ncand;
         }
         if ((size_t)ncand <= det->memo_capacity) {
-            memo_job job = {det, &view, params, s, base, lo, last, shadow, sx, sy, offx, offy, smax, cells, ncand};
-            pool_run(det->pool, memo_candidates, &job, (ncand + MEMO_CHUNK - 1) / MEMO_CHUNK);
+            const int ahead = can_decode_ahead(det);
+            if (ahead) {
+                prepare_workers(det);
+                /* Largest boxes first: the few candidates that go on to refine are among them, and a refinement
+                 * started last would finish last. Which thread takes a candidate never changes its outcome. */
+                int at[33] = {0};
+                for (int ci = 0; ci < ncand; ci++) at[area_rank(&det->cands[ci]) + 1]++;
+                for (int b = 0; b < 32; b++) at[b + 1] += at[b];
+                for (int ci = 0; ci < ncand; ci++) det->memo_order[at[area_rank(&det->cands[ci])]++] = ci;
+            }
+            memo_job job = {det, &view, params, s, base, lo, last, shadow, shaped, sx, sy, offx, offy, smax, cells, ncand,
+                            ahead, ahead ? det->memo_order : NULL};
+            pool_run(det->pool, memo_candidates, &job, ahead ? ncand : (ncand + MEMO_CHUNK - 1) / MEMO_CHUNK);
             memo_level = 1;
         }
     }
@@ -7162,13 +7327,10 @@ static int process_level_candidates(napa_detector *det, const pass_config *confi
             continue;
         }
         /* The axis-aligned box grows when a thin tag rotates. Sparse or slender whole
-         * proposals use quad-relative fill and compactness; pieces use box-relative area.
-         * A rectangle of aspect eight has area/perimeter^2 = 2/81. */
+         * proposals use quad-relative fill and compactness; pieces use box-relative area. */
         int low_box_fill = best_area < 0.3 * bw * bh;
-        extended_shape = !piece && (undersized_whole || dense_whole_needs_deferral(base, s, last, bw, bh) ||
-                                       box_is_sparse(comp.count, bw, bh) || low_box_fill);
-        if ((piece && low_box_fill) || (extended_shape &&
-            (81.0 * best_area < 2.0 * perim_q * perim_q || comp.count < 0.2 * best_area))) {
+        extended_shape = !piece && whole_is_extended(base, s, last, undersized_whole, &comp, bw, bh, best_area);
+        if ((piece && low_box_fill) || (extended_shape && extended_shape_rejected(&comp, best_area, perim_q))) {
             PROF_MARK(PROF_QUAD);
             TRACE(6);
             *candidate_fate = CANDIDATE_ROUGH_REJECTED;
@@ -7181,16 +7343,7 @@ static int process_level_candidates(napa_detector *det, const pass_config *confi
             if (covered_footprint(det->shape_out, det->shape_centers, outputs->shape_found,
                                   ccx, ccy, 0.3 * big_px + 2.0)) continue;
         }
-        /* Short-code families match clutter more often even without bit correction.
-         * An extended shape in those families needs a complete dark border, using the
-         * same samples as decoding. Ordinary shapes use the caller's threshold. */
-        if (extended_shape && ((det->fam.piece_hamming < 0 && params->min_border_cells < 28) ||
-                               (undersized_whole && params->max_hamming != 0))) {
-            strict_border = *params;
-            if (det->fam.piece_hamming < 0) strict_border.min_border_cells = 28;
-            if (undersized_whole) strict_border.max_hamming = 0;
-            decode_params = &strict_border;
-        }
+        decode_params = candidate_decode_params(det, params, extended_shape, undersized_whole, &strict_border);
         PROF_MARK(PROF_QUAD);
         rough_corners(pick, s, sx, sy, offx, offy, rough);
         /* Ordinary rough corners are dark samples. A completed small corner is a
@@ -7271,12 +7424,17 @@ static int process_level_candidates(napa_detector *det, const pass_config *confi
             *candidate_fate = extended_shape ? CANDIDATE_ROUGH_REJECTED : CANDIDATE_DECODE_FAILED;
             continue;
         }
-        const double regrow_extent = !regrown && !shadow && !piece && (base >= 2 || shaped) &&
-            s == base && big_px + s <= NAPA_REGROW_MAX_PX ? big_px + s : 0;
-        int decoded = decode_initial_candidate(det, &view, params, decode_params, &fit, rough, regrow_extent);
-        if (decoded < 0) return -2;
-        if (!decoded) {
-            PROF_MARK(PROF_DECODE1);
+        decode_policy policy = {params, decode_params, shadow, piece, require_exact};
+        candidate_outcome computed;
+        const candidate_outcome *outcome = &computed;
+        if (mm && mm->ahead) {
+            outcome = &mm->outcome, fit = mm->fit_after; /* decode_ahead's, from the same first fit (mm->fit == 1) */
+        } else if (decode_and_refine(det, &view, &policy, &fit, rough,
+                                     regrow_extent_for(regrown, shadow, piece, base, shaped, s, big_px), &computed,
+                                     timer) < 0) {
+            return -2;
+        }
+        if (!outcome->decoded) {
             TRACE(8);
             *candidate_fate = extended_shape ? CANDIDATE_ROUGH_REJECTED : CANDIDATE_DECODE_FAILED;
             /* Pieces only read the list. A stricter border failure also cannot prove
@@ -7284,17 +7442,15 @@ static int process_level_candidates(napa_detector *det, const pass_config *confi
             if (!piece && !extended_shape && decode_params == params) remember_failure(det, fit.fine, s);
             continue;
         }
-        PROF_MARK(PROF_DECODE1);
-        decode_policy policy = {params, decode_params, shadow, piece, require_exact};
-        napa_detection d;
-        refinement_result rejected = refine_decoded_candidate(det, &view, &policy, &fit, &d, &lin_view, timer);
-        if (rejected == REFINE_NO_MEMORY) return -2;
+        const refinement_result rejected = outcome->refined;
         if (rejected) {
             int fate = rejected == REFINE_FIT_FAILED ? CANDIDATE_REFINE_FIT_FAILED : CANDIDATE_REFINE_DECODE_FAILED;
             TRACE(fate);
             if (rejected != REFINE_CUT_FAILED) *candidate_fate = extended_shape ? CANDIDATE_ROUGH_REJECTED : fate;
             continue;
         }
+        napa_detection d = outcome->d;
+        lin_view = outcome->view;
         rview = &lin_view;
         if ((shadow || require_exact) && d.hamming != 0) continue;
         if (piece) {
@@ -8213,6 +8369,8 @@ int napa_set_threads(napa_detector *det, int threads) {
     if (threads > 1 && (pool = pool_create(threads - 1)) == NULL) return -2;
     pool_destroy(det->pool);
     det->pool = pool, det->threads = threads;
+    free_workers(det);
+    if (threads > 1) make_workers(det, threads - 1);
     return 0;
 }
 
