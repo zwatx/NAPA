@@ -473,6 +473,9 @@ struct napa_detector {
         label_scratch scratch;
     } spare;
     int runs_swapped;
+    struct delayed_memo *dmemo; /* threads, terminal level: the first dmemo_n deferred fine wholes, worked out ahead */
+    size_t dmemo_capacity;
+    int dmemo_n;
     /* threads: the pool threads' own detectors for decoding and refining candidates ahead of the loop. Each holds only
      * what that reads (prepare_workers) and its own code stamps; worker_count is 0 if they couldn't be made. */
     struct napa_detector *workers;
@@ -815,6 +818,7 @@ void napa_destroy(napa_detector *det) {
     free(det->memo_order), free(det->cand_runs), free(det->cand_run_end);
     free(det->spare.runs), free(det->spare.parent), free(det->spare.slot), free(det->spare.boxes), free(det->spare.level_bits);
     scratch_free(&det->spare.scratch);
+    free(det->dmemo);
     pool_destroy(det->pool);
     band_free(det);
     free(det->floor_hist);
@@ -6247,6 +6251,16 @@ typedef struct cand_memo {
     candidate_fit fit_after; /* the fit as decode_and_refine left it */
 } cand_memo;
 
+/* threads, terminal level: a deferred fine whole's first-fit stage (stage: first_fit_stage's 1 or 0, with rough, fit and
+ * regrown; -1 where the pre-pass stopped before it) and, when ahead is set, its decode and refinement. */
+typedef struct delayed_memo {
+    signed char stage, regrown, ahead;
+    vec2 rough[4];
+    candidate_fit fit;
+    candidate_outcome outcome;
+    candidate_fit fit_after;
+} delayed_memo;
+
 enum { MEMO_CHUNK = 4 };
 
 typedef struct {
@@ -6262,10 +6276,13 @@ typedef struct {
     const uint64_t *bits;
     int bit_stride;
     struct next_level_job *next; /* index 0 samples and labels the next level instead (sample_next_level), else NULL */
+    const struct pass_config *config;
+    int ordinary_jobs; /* the indices after these (and after next) each take a deferred fine whole (decode_whole_ahead) */
 } memo_job;
 
 struct next_level_job;
 static void sample_next_level(struct next_level_job *job);
+static void decode_whole_ahead(const memo_job *j, napa_detector *wd, int index);
 
 /* The loop's decode_and_refine for a candidate whose first fit the pre-pass made, worked out ahead on this thread's
  * detector wd, with the same rough quad, fit, thresholds and regrowth extent the loop would use. Whether the loop
@@ -6296,6 +6313,10 @@ static void memo_candidates(void *ctx, int index, int worker) {
     napa_detector *det = j->det;
     if (j->next != NULL && index-- == 0) {
         sample_next_level(j->next);
+        return;
+    }
+    if (index >= j->ordinary_jobs) { /* decoding ahead implies a detector per pool thread (can_decode_ahead) */
+        decode_whole_ahead(j, worker == 0 ? det : &det->workers[worker - 1], index - j->ordinary_jobs);
         return;
     }
     const int chunk = j->ahead ? 1 : MEMO_CHUNK;
@@ -6826,7 +6847,7 @@ refine_candidate:
     return REFINE_ACCEPTED;
 }
 
-typedef struct {
+typedef struct pass_config {
     image_view view;
     const napa_params *params;
     const uint8_t *pimg;
@@ -7371,6 +7392,43 @@ static int first_fit_stage(napa_detector *det, const image_view *view_in, const 
     return first_fit;
 }
 
+/* The candidate loop's work on a deferred fine whole at the terminal level, up to its refinement, worked out ahead on
+ * this thread's detector wd with the same steps the loop takes (see process_level_candidates). The loop's checks
+ * against other candidates still decide, in order, whether it gets that far. */
+static void decode_whole_ahead(const memo_job *j, napa_detector *wd, int index) {
+    const pass_config *config = j->config;
+    delayed_memo *dm = &j->det->dmemo[index];
+    const fine_whole *whole = &j->det->fine_wholes[index];
+    const component *comp = &whole->shape;
+    const int s = whole->stride, last = whole->terminal, base = config->base, shadow = config->shadow;
+    const int bw = comp->maxx - comp->minx + 1, bh = comp->maxy - comp->miny + 1;
+    const int undersized_whole = base > 1 && (bw < config->lo || bh < config->lo);
+    dm->stage = -1, dm->ahead = 0;
+    int pick[4][2];
+    rough_pick(comp, undersized_whole, pick);
+    double best_area, perim_q;
+    if (rough_quad_too_full(&wd->fam, comp, pick, &best_area, &perim_q)) return;
+    const int extended_shape = whole_is_extended(base, s, last, undersized_whole, comp, bw, bh, best_area);
+    if (extended_shape && extended_shape_rejected(comp, best_area, perim_q)) return;
+    napa_params strict_border;
+    const napa_params *decode_params = candidate_decode_params(wd, config->params, extended_shape, undersized_whole,
+                                                               &strict_border);
+    candidate_fit fit;
+    fit.frame_sides = 0;
+    int regrown = 0;
+    const int stage = first_fit_stage(wd, j->view, config, comp, pick, s, last, 0, undersized_whole, extended_shape, NULL,
+                                      dm->rough, &fit, &regrown);
+    if (stage < 0) return;
+    dm->stage = (signed char)stage, dm->regrown = (signed char)regrown, dm->fit = fit;
+    if (!stage) return;
+    const double big_px = s * (bw * config->sx > bh * config->sy ? bw * config->sx : bh * config->sy);
+    const decode_policy policy = {config->params, decode_params, shadow, 0, undersized_whole};
+    pass_timer timing = {0};
+    const double regrow_extent = regrow_extent_for(regrown, shadow, 0, base, config->shaped, s, big_px);
+    dm->ahead = decode_and_refine(wd, j->view, &policy, &fit, dm->rough, regrow_extent, &dm->outcome, &timing) == 0;
+    dm->fit_after = fit;
+}
+
 static int process_level_candidates(napa_detector *det, const pass_config *config, pass_outputs *outputs,
                                     const candidate_level *level, pass_timer *timer, next_level_job *next) {
     image_view view = config->view;
@@ -7400,11 +7458,21 @@ static int process_level_candidates(napa_detector *det, const pass_config *confi
      * its decode and refinement too; the loop below takes them in order as it would have computed them. (A camera's
      * lens memo isn't shared safely.) */
     int memo_level = 0;
-    /* A level with a next level to label alongside runs the pre-pass for any candidates at all. */
+    det->dmemo_n = 0;
+    /* A level with a next level to label alongside, or the terminal level with deferred wholes to work out ahead, runs
+     * the pre-pass for any candidates at all. */
+    const size_t pending = last ? outputs->fine_whole_count : 0;
     if (level->extremes_deferred || level_pre_pass(det, &view, level) ||
-        (next != NULL && ncand >= 1 && det->pool != NULL && view.lens == NULL && !redo)) {
+        (det->pool != NULL && view.lens == NULL && !redo && ((next != NULL && ncand >= 1) || pending > 0))) {
         if (memo_reserve(det, ncand)) { /* always, when the extremes were deferred: assemble_level_candidates reserved it */
             const int ahead = can_decode_ahead(det);
+            if (ahead && pending > 0 && pending <= (size_t)INT32_MAX / 2) {
+                if (pending > det->dmemo_capacity) {
+                    delayed_memo *p = (delayed_memo *)realloc(det->dmemo, pending * sizeof(delayed_memo));
+                    if (p != NULL) det->dmemo = p, det->dmemo_capacity = pending;
+                }
+                if (pending <= det->dmemo_capacity) det->dmemo_n = (int)pending;
+            }
             if (ahead) {
                 prepare_workers(det);
                 /* Largest boxes first: the few candidates that go on to refine are among them, and a refinement
@@ -7416,9 +7484,10 @@ static int process_level_candidates(napa_detector *det, const pass_config *confi
             }
             memo_job job = {det, &view, params, s, base, lo, last, shadow, shaped, sx, sy, offx, offy, smax, cells, ncand,
                             ahead, ahead ? det->memo_order : NULL, level->extremes_deferred ? det->runs : NULL,
-                            det->level_bits, (level->lw + 63) / 64 + 1, next};
+                            det->level_bits, (level->lw + 63) / 64 + 1, next, config,
+                            ahead ? ncand : (ncand + MEMO_CHUNK - 1) / MEMO_CHUNK};
             if (next != NULL) run_set_swap(det); /* the job holds this level's buffers; the next level takes the others */
-            pool_run(det->pool, memo_candidates, &job, (next != NULL) + (ahead ? ncand : (ncand + MEMO_CHUNK - 1) / MEMO_CHUNK));
+            pool_run(det->pool, memo_candidates, &job, (next != NULL) + job.ordinary_jobs + det->dmemo_n);
             memo_level = 1;
         }
     }
@@ -7508,6 +7577,7 @@ static int process_level_candidates(napa_detector *det, const pass_config *confi
             continue;
         }
         const cand_memo *mm = memo_level && !piece && !delayed ? &det->memo[ci] : NULL;
+        const delayed_memo *dm = delayed && pending_index < (size_t)det->dmemo_n ? &det->dmemo[pending_index] : NULL;
         int pick[4][2];
         if (mm) memcpy(pick, mm->pick, sizeof pick);
         else rough_pick(&comp, undersized_whole, pick);
@@ -7540,10 +7610,15 @@ static int process_level_candidates(napa_detector *det, const pass_config *confi
         }
         decode_params = candidate_decode_params(det, params, extended_shape, undersized_whole, &strict_border);
         PROF_MARK(PROF_QUAD);
-        int regrown = 0;
-        const int fitted = first_fit_stage(det, &view, config, &comp, pick, s, last, piece, undersized_whole, extended_shape,
-                                           mm, rough, &fit, &regrown);
-        if (fitted < 0) return -2;
+        int regrown = 0, fitted;
+        if (dm && dm->stage >= 0) { /* decode_whole_ahead's */
+            fitted = dm->stage, regrown = dm->regrown, fit = dm->fit;
+            memcpy(rough, dm->rough, sizeof rough);
+        } else {
+            fitted = first_fit_stage(det, &view, config, &comp, pick, s, last, piece, undersized_whole, extended_shape, mm,
+                                     rough, &fit, &regrown);
+            if (fitted < 0) return -2;
+        }
         if (!fitted) {
             PROF_MARK(PROF_FIT1);
             TRACE(7);
@@ -7568,6 +7643,8 @@ static int process_level_candidates(napa_detector *det, const pass_config *confi
         const candidate_outcome *outcome = &computed;
         if (mm && mm->ahead) {
             outcome = &mm->outcome, fit = mm->fit_after; /* decode_ahead's, from the same first fit (mm->fit == 1) */
+        } else if (dm && dm->ahead) {
+            outcome = &dm->outcome, fit = dm->fit_after; /* decode_whole_ahead's, from the same first fit */
         } else if (decode_and_refine(det, &view, &policy, &fit, rough,
                                      regrow_extent_for(regrown, shadow, piece, base, shaped, s, big_px), &computed,
                                      timer) < 0) {
