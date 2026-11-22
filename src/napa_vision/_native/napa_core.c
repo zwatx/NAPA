@@ -104,7 +104,7 @@ typedef struct napa_pool {
     napa_thread_t thread[NAPA_MAX_THREADS];
     napa_mutex_t lock;
     napa_mutex_t owner; /* held by the one caller using the workers */
-    napa_cond_t work, done_cond;
+    napa_cond_t work, done_cond, progress; /* progress: pool_mark, for jobs waiting on lower indices (pool_await) */
     void (*fn)(void *ctx, int index, int worker);
     void *ctx;
     struct napa_pool_worker { struct napa_pool *pool; int id; } arg[NAPA_MAX_THREADS];
@@ -160,6 +160,7 @@ static void pool_destroy(napa_pool *pool) {
     }
     napa_cond_destroy(&pool->work);
     napa_cond_destroy(&pool->done_cond);
+    napa_cond_destroy(&pool->progress);
     napa_mutex_destroy(&pool->lock);
     napa_mutex_destroy(&pool->owner);
     free(pool);
@@ -173,6 +174,7 @@ static napa_pool *pool_create(int workers) {
     napa_mutex_init(&pool->owner);
     napa_cond_init(&pool->work);
     napa_cond_init(&pool->done_cond);
+    napa_cond_init(&pool->progress);
     for (int i = 0; i < workers; i++) {
         pool->arg[i].pool = pool, pool->arg[i].id = i + 1;
 #if defined(_WIN32)
@@ -207,6 +209,28 @@ static void pool_run(napa_pool *pool, void (*fn)(void *, int, int), void *ctx, i
     while (pool->done < pool->jobs) napa_cond_wait(&pool->done_cond, &pool->lock);
     napa_mutex_unlock(&pool->lock);
     napa_mutex_unlock(&pool->owner);
+}
+
+/* Set *flag from inside an index of the pool's current job (or serially, pool NULL), for indices in pool_await. */
+static void pool_mark(napa_pool *pool, int *flag) {
+    if (pool == NULL) {
+        *flag = 1;
+        return;
+    }
+    napa_mutex_lock(&pool->lock);
+    *flag = 1;
+    napa_cond_broadcast(&pool->progress);
+    napa_mutex_unlock(&pool->lock);
+}
+
+/* Wait until flags[from..to) are all set by pool_mark. Only for flags that lower indices of the same job set: those
+ * were handed out first, so they are running or done (serially, done), and the wait always ends. */
+static void pool_await(napa_pool *pool, const int *flags, int from, int to) {
+    if (pool == NULL) return;
+    napa_mutex_lock(&pool->lock);
+    for (int i = from; i < to; i++)
+        while (!flags[i]) napa_cond_wait(&pool->progress, &pool->lock);
+    napa_mutex_unlock(&pool->lock);
 }
 
 /* The builtin is one instruction on ARM64 and x86 with POPCNT, but a library call on baseline x86-64. */
@@ -473,6 +497,11 @@ struct napa_detector {
         label_scratch scratch;
     } spare;
     int runs_swapped;
+    /* contrast_floors_raked left the finest level's other rows to rake (rake_rows), alongside the threshold bands */
+    const uint8_t *rake_img;
+    int rake_stride, rake_s, rake_invert, rake_deferred;
+    int *rake_done; /* per chunk, set once raked */
+    size_t rake_done_capacity;
     struct delayed_memo *dmemo; /* threads, terminal level: the first dmemo_n deferred fine wholes, worked out ahead */
     size_t dmemo_capacity;
     int dmemo_n;
@@ -823,6 +852,7 @@ void napa_destroy(napa_detector *det) {
     scratch_free(&det->spare.scratch);
     free(det->dmemo), free(det->whole_index);
     pool_destroy(det->pool);
+    free(det->rake_done);
     band_free(det);
     free(det->floor_hist);
     for (int i = 0; i < 32; i++) free(det->saved[i].tiles);
@@ -2328,6 +2358,7 @@ struct napa_band {
 typedef struct {
     napa_detector *det;
     int lw, lh, factor, shadow, tw, th;
+    const int *first, *need; /* with the deferred rake: band k's rows lie in chunks [first[k], need[k]) */
 } band_job;
 
 static int band_reserve(napa_band *b, size_t runs, size_t row, size_t tiles) {
@@ -2384,12 +2415,66 @@ static void band_place(void *arg, int k, int worker) {
     for (int i = 0; i < b->n; i++) P[i] = b->parent[i] + b->offset;
 }
 
+static void invert_bytes(uint8_t *p, size_t n);
+enum { RAKE_CHUNK = 32 }; /* rows the threshold's raker marks done at a time */
+
+/* Rows [y0, y1) of the level that contrast_floors_raked left (all but every 8th), raked and inverted as it would
+ * have. */
+static void rake_rows(napa_detector *det, int lw, int y0, int y1) {
+    for (int y = y0; y < y1; y++) {
+        if (!(y & 7)) continue;
+        uint8_t *row = det->level + (size_t)y * lw;
+        gather_row(row, det->rake_img + (size_t)y * det->rake_s * det->rake_stride, lw, det->rake_s, det->ssse3);
+        if (det->rake_invert) invert_bytes(row, (size_t)lw);
+    }
+}
+
+typedef struct {
+    napa_detector *det;
+    int lw, lh;
+} rake_rest_job;
+
+static void rake_rest(void *arg, int k, int worker) {
+    (void)worker;
+    const rake_rest_job *j = (const rake_rest_job *)arg;
+    const int y1 = (k + 1) * RAKE_CHUNK < j->lh ? (k + 1) * RAKE_CHUNK : j->lh;
+    rake_rows(j->det, j->lw, k * RAKE_CHUNK, y1);
+}
+
+/* The deferred rows, before a threshold that isn't banded. */
+static void finish_rake(napa_detector *det, int lw, int lh) {
+    if (!det->rake_deferred) return;
+    rake_rest_job j = {det, lw, lh};
+    pool_run(det->pool, rake_rest, &j, (lh + RAKE_CHUNK - 1) / RAKE_CHUNK);
+    det->rake_deferred = 0;
+}
+
+/* Index 0 rakes the deferred rows chunk by chunk, in order; index k + 1 labels band k once its chunks are
+ * raked. */
+static void rake_band_job(void *arg, int i, int worker) {
+    band_job *job = (band_job *)arg;
+    napa_detector *det = job->det;
+    if (i == 0) {
+        for (int c = 0; c * RAKE_CHUNK < job->lh; c++) {
+            const int y1 = (c + 1) * RAKE_CHUNK < job->lh ? (c + 1) * RAKE_CHUNK : job->lh;
+            rake_rows(det, job->lw, c * RAKE_CHUNK, y1);
+            pool_mark(det->pool, &det->rake_done[c]);
+        }
+        return;
+    }
+    pool_await(det->pool, det->rake_done, job->first[i - 1], job->need[i - 1]);
+    band_label(arg, i - 1, worker);
+}
+
 static int threshold_banded(napa_detector *det, int lw, int lh, int factor, int shadow) {
     const int tw = (lw + TILE - 1) / TILE, th = (lh + TILE - 1) / TILE;
     /* A few bands per thread even out uneven rows; each keeps at least four tile rows. */
     int bands = det->threads * 3;
     if (bands > th / 4) bands = th / 4;
-    if (bands < 2) return threshold_rows(det, lw, lh, factor, 0, shadow, 0, th, 0);
+    if (bands < 2) {
+        finish_rake(det, lw, lh);
+        return threshold_rows(det, lw, lh, factor, 0, shadow, 0, th, 0);
+    }
     if (bands > det->band_count) {
         napa_band *p = (napa_band *)realloc(det->bands, (size_t)bands * sizeof(napa_band));
         if (p == NULL) return -1;
@@ -2402,8 +2487,26 @@ static int threshold_banded(napa_detector *det, int lw, int lh, int factor, int 
         int rows = (b->ty1 - b->ty0) * TILE;
         if (band_reserve(b, (size_t)rows * ((size_t)lw / 2 + 1) + 1, (size_t)lw, (size_t)(b->ty1 - b->ty0 + 2) * tw) != 0) return -1;
     }
-    band_job job = {det, lw, lh, factor, shadow, tw, th};
-    pool_run(det->pool, band_label, &job, bands);
+    band_job job = {det, lw, lh, factor, shadow, tw, th, NULL, NULL};
+    if (det->rake_deferred) {
+        const int chunks = (lh + RAKE_CHUNK - 1) / RAKE_CHUNK;
+        if ((size_t)chunks > det->rake_done_capacity) {
+            int *p = (int *)realloc(det->rake_done, (size_t)chunks * sizeof(int));
+            if (p == NULL) return -1;
+            det->rake_done = p, det->rake_done_capacity = (size_t)chunks;
+        }
+        memset(det->rake_done, 0, (size_t)chunks * sizeof(int));
+        int first[NAPA_MAX_THREADS * 3], need[NAPA_MAX_THREADS * 3];
+        for (int k = 0; k < bands; k++) {
+            /* The rows a band reads: its tile rows and one either side (tile extrema), and a tile row more. */
+            const int r0 = (det->bands[k].ty0 - 1) * TILE, r1 = (det->bands[k].ty1 + 2) * TILE;
+            first[k] = r0 > 0 ? r0 / RAKE_CHUNK : 0;
+            need[k] = r1 < lh ? (r1 + RAKE_CHUNK - 1) / RAKE_CHUNK : chunks;
+        }
+        job.first = first, job.need = need;
+        pool_run(det->pool, rake_band_job, &job, bands + 1);
+        det->rake_deferred = 0;
+    } else pool_run(det->pool, band_label, &job, bands);
 
     int n = 0;
     det->diag_n = det->neck_n = 0;
@@ -2427,6 +2530,7 @@ static int threshold_banded(napa_detector *det, int lw, int lh, int factor, int 
 
 static int threshold_level(napa_detector *det, int lw, int lh, int factor, int split, int shadow) {
     if (!split && pool_for(det, (size_t)lw * lh)) return threshold_banded(det, lw, lh, factor, shadow);
+    finish_rake(det, lw, lh);
     return threshold_rows(det, lw, lh, factor, split, shadow, 0, (lh + TILE - 1) / TILE, 0);
 }
 
@@ -5398,25 +5502,11 @@ static void gather_rest(void *arg, int k, int worker) {
     }
 }
 
-enum { RAKE_CHUNK = 32 };
-
-/* contrast_floors_raked's job ry: below the region rows, region row ry's every-8th rows raked, then its floors, then
- * those rows inverted for reversed families; past them, chunk ry - rows of RAKE_CHUNK rows, its other rows raked and
- * inverted. */
+/* contrast_floors_raked's job ry: region row ry's every-8th rows raked, then its floors, then those rows inverted for
+ * reversed families. The level's other rows are raked with the threshold's bands (rake_band_job). */
 static void floor_rake_job(void *arg, int ry, int worker) {
     floor_job *job = (floor_job *)arg;
     const gather_job *g = job->rake;
-    const int rows = (job->lh + NAPA_REGION - 1) / NAPA_REGION;
-    if (ry >= rows) {
-        const int k = ry - rows, y1 = (k + 1) * RAKE_CHUNK < g->lh ? (k + 1) * RAKE_CHUNK : g->lh;
-        for (int y = k * RAKE_CHUNK; y < y1; y++) {
-            if (!(y & 7)) continue;
-            uint8_t *row = g->det->level + (size_t)y * g->lw;
-            gather_row(row, g->img + (size_t)y * g->s * g->stride, g->lw, g->s, g->det->ssse3);
-            if (g->invert) invert_bytes(row, (size_t)g->lw);
-        }
-        return;
-    }
     const int y0 = ry * NAPA_REGION, y1 = y0 + NAPA_REGION < job->lh ? y0 + NAPA_REGION : job->lh;
     for (int y = y0; y < y1; y += 8)
         gather_row(g->det->level + (size_t)y * g->lw, g->img + (size_t)y * g->s * g->stride, g->lw, g->s, g->det->ssse3);
@@ -5446,7 +5536,12 @@ static int contrast_floors_raked(napa_detector *det, const uint8_t *L, int lw, i
     det->floor_cols = cols, det->floor_rows = rows;
     floor_job job = {det, L, lw, lh, cols, min_contrast, cap, sigmas, det->floor_hist, rake};
     /* Region rows are independent and the frame histogram is a sum, so threads change nothing. */
-    if (rake) pool_run(det->pool, floor_rake_job, &job, rows + (lh + RAKE_CHUNK - 1) / RAKE_CHUNK);
+    if (rake) {
+        /* Only the floors' rows now; threshold_level rakes the rest alongside its bands (rake_band_job). */
+        pool_run(det->pool, floor_rake_job, &job, rows);
+        det->rake_img = rake->img, det->rake_stride = rake->stride, det->rake_s = rake->s, det->rake_invert = rake->invert;
+        det->rake_deferred = 1;
+    }
     else pool_run(pool_for(det, (size_t)lw * lh), floor_row_regions, &job, rows);
     uint32_t all[64] = {0}, n_all = 0;
     for (int ry = 0; ry < rows; ry++)
@@ -6938,6 +7033,7 @@ static int sample_threshold_level(napa_detector *det, const pass_config *config,
     int split = config->split;
     int shadow = config->shadow;
     int lazy_rows = 0;
+    det->rake_deferred = 0;
 
     size_t pixels = (size_t)level->lw * level->lh;
     size_t tiles = (size_t)((level->lw + TILE - 1) / TILE) * ((level->lh + TILE - 1) / TILE);
@@ -6992,6 +7088,7 @@ static int sample_threshold_level(napa_detector *det, const pass_config *config,
                 det->box_rows = p;
                 det->box_capacity = (size_t)pw;
             }
+            det->rake_deferred = 0; /* the box rake replaces every row */
             sampling->boxed = 1;
             box_rake(det->level, level->lw, level->lh, pimg, pw, ph, pstride, level->s, base == 1 && level->s == 2 ? 3 : level->s, det->box_rows, det->box_rows + pw);
             if (view.invert) invert_bytes(det->level, pixels);
