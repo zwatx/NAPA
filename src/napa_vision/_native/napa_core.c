@@ -5331,12 +5331,14 @@ static void pair_diffs(const uint8_t *row, int n, uint8_t *out) {
     }
 }
 
+struct gather_job;
 typedef struct {
     napa_detector *det;
     const uint8_t *L;
     int lw, lh, cols, min_contrast, cap;
     double sigmas;
     uint32_t (*all)[64]; /* per region row: the sum of its regions' histograms */
+    const struct gather_job *rake; /* threads: also rake the rows the floors read, and the rest (contrast_floors_raked) */
 } floor_job;
 
 /* The noise floors of region row ry, and that row's share of the frame histogram. */
@@ -5375,7 +5377,7 @@ static void floor_row_regions(void *arg, int ry, int worker) {
 }
 
 static void invert_bytes(uint8_t *p, size_t n);
-typedef struct {
+typedef struct gather_job {
     napa_detector *det;
     const uint8_t *img;
     int stride, lw, lh, s, invert;
@@ -5393,9 +5395,38 @@ static void gather_rest(void *arg, int k, int worker) {
     }
 }
 
+enum { RAKE_CHUNK = 32 };
+
+/* contrast_floors_raked's job ry: below the region rows, region row ry's every-8th rows raked, then its floors, then
+ * those rows inverted for reversed families; past them, chunk ry - rows of RAKE_CHUNK rows, its other rows raked and
+ * inverted. */
+static void floor_rake_job(void *arg, int ry, int worker) {
+    floor_job *job = (floor_job *)arg;
+    const gather_job *g = job->rake;
+    const int rows = (job->lh + NAPA_REGION - 1) / NAPA_REGION;
+    if (ry >= rows) {
+        const int k = ry - rows, y1 = (k + 1) * RAKE_CHUNK < g->lh ? (k + 1) * RAKE_CHUNK : g->lh;
+        for (int y = k * RAKE_CHUNK; y < y1; y++) {
+            if (!(y & 7)) continue;
+            uint8_t *row = g->det->level + (size_t)y * g->lw;
+            gather_row(row, g->img + (size_t)y * g->s * g->stride, g->lw, g->s, g->det->ssse3);
+            if (g->invert) invert_bytes(row, (size_t)g->lw);
+        }
+        return;
+    }
+    const int y0 = ry * NAPA_REGION, y1 = y0 + NAPA_REGION < job->lh ? y0 + NAPA_REGION : job->lh;
+    for (int y = y0; y < y1; y += 8)
+        gather_row(g->det->level + (size_t)y * g->lw, g->img + (size_t)y * g->s * g->stride, g->lw, g->s, g->det->ssse3);
+    floor_row_regions(arg, ry, worker);
+    if (g->invert)
+        for (int y = y0; y < y1; y += 8) invert_bytes(g->det->level + (size_t)y * g->lw, (size_t)g->lw);
+}
+
 /* Each region's floor into det->floors (from pairs of samples on every 8th row), at most the frame's,
- * which is returned; a region too small to measure takes the frame's. Returns -1 if out of memory. */
-static int contrast_floors(napa_detector *det, const uint8_t *L, int lw, int lh, int min_contrast, double sigmas, int cap) {
+ * which is returned; a region too small to measure takes the frame's. Returns -1 if out of memory. With rake set
+ * (threads), the rows are raked in the same pool run: the level is sampled whole, inverted for reversed families. */
+static int contrast_floors_raked(napa_detector *det, const uint8_t *L, int lw, int lh, int min_contrast, double sigmas,
+                                 int cap, const gather_job *rake) {
     int cols = (lw + NAPA_REGION - 1) / NAPA_REGION, rows = (lh + NAPA_REGION - 1) / NAPA_REGION;
     if ((size_t)cols * rows > det->floor_alloc) {
         uint8_t *p = (uint8_t *)realloc(det->floors, (size_t)cols * rows);
@@ -5410,9 +5441,10 @@ static int contrast_floors(napa_detector *det, const uint8_t *L, int lw, int lh,
         det->floor_hist_rows = (size_t)rows;
     }
     det->floor_cols = cols, det->floor_rows = rows;
-    floor_job job = {det, L, lw, lh, cols, min_contrast, cap, sigmas, det->floor_hist};
+    floor_job job = {det, L, lw, lh, cols, min_contrast, cap, sigmas, det->floor_hist, rake};
     /* Region rows are independent and the frame histogram is a sum, so threads change nothing. */
-    pool_run(pool_for(det, (size_t)lw * lh), floor_row_regions, &job, rows);
+    if (rake) pool_run(det->pool, floor_rake_job, &job, rows + (lh + RAKE_CHUNK - 1) / RAKE_CHUNK);
+    else pool_run(pool_for(det, (size_t)lw * lh), floor_row_regions, &job, rows);
     uint32_t all[64] = {0}, n_all = 0;
     for (int ry = 0; ry < rows; ry++)
         for (int k = 0; k < 64; k++) all[k] += det->floor_hist[ry][k], n_all += det->floor_hist[ry][k];
@@ -5429,6 +5461,10 @@ static int contrast_floors(napa_detector *det, const uint8_t *L, int lw, int lh,
 
 static void invert_bytes(uint8_t *p, size_t n) {
     for (size_t i = 0; i < n; i++) p[i] = (uint8_t)(255 - p[i]);
+}
+
+static int contrast_floors(napa_detector *det, const uint8_t *L, int lw, int lh, int min_contrast, double sigmas, int cap) {
+    return contrast_floors_raked(det, L, lw, lh, min_contrast, sigmas, cap, NULL);
 }
 
 /* Remember a failed candidate's fitted quad. Best effort: without memory, nothing is remembered. */
@@ -6905,7 +6941,9 @@ static int sample_threshold_level(napa_detector *det, const pass_config *config,
             /* The noise floors read every 8th row. Sample only those first: a noisy frame re-rakes
              * every sample with block averages, and the rest would be thrown away. */
             lazy_rows = level->s > 1 && level->s <= 16;
-            for (int y = 0; y < level->lh; y += lazy_rows ? 8 : 1)
+            /* With threads, the floors' pool run rakes every row (contrast_floors_raked). */
+            if (lazy_rows && pool_for(det, pixels) != NULL) lazy_rows = 2;
+            else for (int y = 0; y < level->lh; y += lazy_rows ? 8 : 1)
                 gather_row(det->level + (size_t)y * level->lw, pimg + (size_t)y * level->s * pstride, level->lw, level->s, det->ssse3);
             if (view.invert && !lazy_rows) invert_bytes(det->level, pixels);
             sampling->gray = det->level;
@@ -6928,8 +6966,10 @@ static int sample_threshold_level(napa_detector *det, const pass_config *config,
         sampling->floor_stride = level->s;
         double sigmas = level->s == 1 && !level->last ? 7.0 : NAPA_FLOOR_SIGMAS;
         int cap = level->s == 1 && !level->last ? 255 : NAPA_FLOOR_CAP;
-        sampling->contrast = contrast_floors(det, sampling->gray, level->lw, level->lh, params->min_contrast, sigmas, cap);
-        if (lazy_rows && !(sampling->contrast > NAPA_NOISY_FLOOR && level->s > 1 && level->s <= 16)) {
+        const gather_job rake = {det, pimg, pstride, level->lw, level->lh, level->s, view.invert};
+        sampling->contrast = contrast_floors_raked(det, sampling->gray, level->lw, level->lh, params->min_contrast, sigmas, cap,
+                                                   lazy_rows == 2 ? &rake : NULL);
+        if (lazy_rows == 1 && !(sampling->contrast > NAPA_NOISY_FLOOR && level->s > 1 && level->s <= 16)) {
             gather_job job = {det, pimg, pstride, level->lw, level->lh, level->s, view.invert};
             pool_run(pool_for(det, pixels), gather_rest, &job, (level->lh + 63) / 64);
         }
