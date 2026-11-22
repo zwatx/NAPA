@@ -2380,8 +2380,12 @@ static void band_place(void *arg, int k, int worker) {
     napa_detector *det = job->det;
     const napa_band *b = &det->bands[k];
     memcpy(det->runs + b->offset, b->runs, (size_t)b->n * sizeof(napa_run));
-    int32_t *P = det->parent + b->offset;
-    for (int i = 0; i < b->n; i++) P[i] = b->parent[i] + b->offset;
+    int32_t *P = det->parent + b->offset, *bp = b->parent;
+    for (int i = 0; i < b->n; i++) {
+        const int32_t p = bp[i], r = p == i ? i : bp[p]; /* bp[p], p < i, is already its root */
+        bp[i] = r;
+        P[i] = r + b->offset;
+    }
 }
 
 static int threshold_banded(napa_detector *det, int lw, int lh, int factor, int shadow) {
@@ -2396,9 +2400,20 @@ static int threshold_banded(napa_detector *det, int lw, int lh, int factor, int 
         memset(p + det->band_count, 0, (size_t)(bands - det->band_count) * sizeof(napa_band));
         det->bands = p, det->band_count = bands;
     }
+    /* Guided heights: band k gets (1.8 - 1.6 k / (bands - 1)) even shares, in whole tile rows, and at least four. */
+    int edge[NAPA_MAX_THREADS * 3 + 1];
+    edge[0] = 0, edge[bands] = th;
+    for (int k = 1; k < bands; k++) {
+        /* shares before band k: 1.8 k - 0.8 k (k - 1) / (bands - 1), of bands in all */
+        const double before = 1.8 * k - 0.8 * k * (k - 1) / (bands - 1);
+        edge[k] = (int)(th * before / bands + 0.5);
+        if (edge[k] < edge[k - 1] + 4) edge[k] = edge[k - 1] + 4;
+    }
+    for (int k = bands - 1; k > 0; k--)
+        if (edge[k] > edge[k + 1] - 4) edge[k] = edge[k + 1] - 4;
     for (int k = 0; k < bands; k++) {
         napa_band *b = &det->bands[k];
-        b->ty0 = (int)((long long)th * k / bands), b->ty1 = (int)((long long)th * (k + 1) / bands);
+        b->ty0 = edge[k], b->ty1 = edge[k + 1];
         int rows = (b->ty1 - b->ty0) * TILE;
         if (band_reserve(b, (size_t)rows * ((size_t)lw / 2 + 1) + 1, (size_t)lw, (size_t)(b->ty1 - b->ty0 + 2) * tw) != 0) return -1;
     }
