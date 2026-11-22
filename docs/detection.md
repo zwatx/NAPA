@@ -152,10 +152,12 @@ detection got faster.
 
 `NapaDetector(threads=4)` lets one `detect` call use four threads, the caller's included, for lower latency on each
 frame. The detections are identical at every thread count. The finest search level is sampled and its noise floors
-measured in one pass across the threads, and each level is labelled in horizontal bands that are joined exactly. Each
-candidate's extremes, decode and refinement also run ahead on every thread, and the candidates are then taken in their
-usual order, so a frame with several tags no longer refines them one after another. The finest level also works out
-ahead the blobs it sets aside to try last. Meanwhile the next level is sampled and labelled.
+measured in one pass across the threads, and each level is labelled in horizontal bands, taller ones first so the
+threads finish together, that are joined exactly. Each candidate's extremes, decode and refinement also run ahead on
+every thread, and the candidates are then taken in their usual order, so a frame with several tags no longer refines
+them one after another. A level followed by another also works out ahead the blobs it sets aside to try last. Meanwhile
+the next level is sampled and labelled, and when that is the coarsest level, its candidates are found and fitted too;
+once this level's tags are known, the candidates they cover are dropped and the rest are decoded across the threads.
 
 On a Raspberry Pi 5 with 1920x1080 FRC frames, four threads took the default from 1.66 to 0.89 ms per frame and
 `min_tag_px=16` from 3.40 to 1.90 ms. Search levels below about 100,000 samples, and `split_touching`'s labelling, run
