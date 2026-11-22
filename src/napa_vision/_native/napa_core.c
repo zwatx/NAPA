@@ -6614,6 +6614,35 @@ static NAPA_NOINLINE void rough_pick(const component *comp, int undersized_whole
     const int(*E)[2] = comp->ext;
     int idx[4] = {0, 4, 8, 12};
     int64_t best2 = -1; /* twice the area: (p2 - p0) x (p3 - p1) */
+#if defined(__aarch64__) && !defined(NAPA_NO_SIMD)
+    /* The same 70 quads in the same order, written out: with constant indices the A76 keeps the extremes in registers
+     * instead of reloading them for every quad. */
+#define ROUGH_AREA(i, j, k, l)                                                                                         \
+    do {                                                                                                               \
+        const int64_t a2 = (int64_t)(E[k][0] - E[i][0]) * (E[l][1] - E[j][1]) -                                        \
+                           (int64_t)(E[k][1] - E[i][1]) * (E[l][0] - E[j][0]);                                         \
+        if (a2 > best2) best2 = a2, idx[0] = i, idx[1] = j, idx[2] = k, idx[3] = l;                                    \
+    } while (0)
+    ROUGH_AREA(0, 2, 4, 6); ROUGH_AREA(0, 2, 4, 8); ROUGH_AREA(0, 2, 4, 10); ROUGH_AREA(0, 2, 4, 12);
+    ROUGH_AREA(0, 2, 4, 14); ROUGH_AREA(0, 2, 6, 8); ROUGH_AREA(0, 2, 6, 10); ROUGH_AREA(0, 2, 6, 12);
+    ROUGH_AREA(0, 2, 6, 14); ROUGH_AREA(0, 2, 8, 10); ROUGH_AREA(0, 2, 8, 12); ROUGH_AREA(0, 2, 8, 14);
+    ROUGH_AREA(0, 2, 10, 12); ROUGH_AREA(0, 2, 10, 14); ROUGH_AREA(0, 2, 12, 14); ROUGH_AREA(0, 4, 6, 8);
+    ROUGH_AREA(0, 4, 6, 10); ROUGH_AREA(0, 4, 6, 12); ROUGH_AREA(0, 4, 6, 14); ROUGH_AREA(0, 4, 8, 10);
+    ROUGH_AREA(0, 4, 8, 12); ROUGH_AREA(0, 4, 8, 14); ROUGH_AREA(0, 4, 10, 12); ROUGH_AREA(0, 4, 10, 14);
+    ROUGH_AREA(0, 4, 12, 14); ROUGH_AREA(0, 6, 8, 10); ROUGH_AREA(0, 6, 8, 12); ROUGH_AREA(0, 6, 8, 14);
+    ROUGH_AREA(0, 6, 10, 12); ROUGH_AREA(0, 6, 10, 14); ROUGH_AREA(0, 6, 12, 14); ROUGH_AREA(0, 8, 10, 12);
+    ROUGH_AREA(0, 8, 10, 14); ROUGH_AREA(0, 8, 12, 14); ROUGH_AREA(0, 10, 12, 14); ROUGH_AREA(2, 4, 6, 8);
+    ROUGH_AREA(2, 4, 6, 10); ROUGH_AREA(2, 4, 6, 12); ROUGH_AREA(2, 4, 6, 14); ROUGH_AREA(2, 4, 8, 10);
+    ROUGH_AREA(2, 4, 8, 12); ROUGH_AREA(2, 4, 8, 14); ROUGH_AREA(2, 4, 10, 12); ROUGH_AREA(2, 4, 10, 14);
+    ROUGH_AREA(2, 4, 12, 14); ROUGH_AREA(2, 6, 8, 10); ROUGH_AREA(2, 6, 8, 12); ROUGH_AREA(2, 6, 8, 14);
+    ROUGH_AREA(2, 6, 10, 12); ROUGH_AREA(2, 6, 10, 14); ROUGH_AREA(2, 6, 12, 14); ROUGH_AREA(2, 8, 10, 12);
+    ROUGH_AREA(2, 8, 10, 14); ROUGH_AREA(2, 8, 12, 14); ROUGH_AREA(2, 10, 12, 14); ROUGH_AREA(4, 6, 8, 10);
+    ROUGH_AREA(4, 6, 8, 12); ROUGH_AREA(4, 6, 8, 14); ROUGH_AREA(4, 6, 10, 12); ROUGH_AREA(4, 6, 10, 14);
+    ROUGH_AREA(4, 6, 12, 14); ROUGH_AREA(4, 8, 10, 12); ROUGH_AREA(4, 8, 10, 14); ROUGH_AREA(4, 8, 12, 14);
+    ROUGH_AREA(4, 10, 12, 14); ROUGH_AREA(6, 8, 10, 12); ROUGH_AREA(6, 8, 10, 14); ROUGH_AREA(6, 8, 12, 14);
+    ROUGH_AREA(6, 10, 12, 14); ROUGH_AREA(8, 10, 12, 14);
+#undef ROUGH_AREA
+#else
     for (int i = 0; i < 10; i += 2) {
         for (int j = i + 2; j < 12; j += 2) {
             for (int k = j + 2; k < 14; k += 2) {
@@ -6625,6 +6654,7 @@ static NAPA_NOINLINE void rough_pick(const component *comp, int undersized_whole
             }
         }
     }
+#endif
     for (int moved = 1, sweep = 0; moved && sweep < 4; sweep++) {
         moved = 0;
         for (int v = 0; v < 4; v++) {
