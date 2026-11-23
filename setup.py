@@ -20,7 +20,16 @@ class BuildNative(build_ext):
                 # Python's own CFLAGS can carry -fwrapv or -fno-strict-overflow (wrapping signed
                 # arithmetic), which costs the core's loops several percent; the core doesn't rely on it.
                 # -pthread for the optional worker threads (napa_set_threads); older glibc keeps them in libpthread.
-                extension.extra_compile_args = ["-O3", "-std=c99", "-fvisibility=hidden", "-fno-wrapv", "-pthread"]
+                # -ffp-contract=off: Clang, and GCC outside ISO mode, fuse a * b + c into one rounding where the CPU
+                # has a multiply-add (every ARM64), so detections would differ between builds and machines.
+                extension.extra_compile_args = [
+                    "-O3",
+                    "-std=c99",
+                    "-ffp-contract=off",
+                    "-fvisibility=hidden",
+                    "-fno-wrapv",
+                    "-pthread",
+                ]
                 extension.extra_link_args = ["-pthread"]
                 extension.libraries = ["m"]
         super().build_extensions()
