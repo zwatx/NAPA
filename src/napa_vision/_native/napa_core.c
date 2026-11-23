@@ -4,11 +4,13 @@
 /*
  * Napa core: a sparse-sampling ("rake") AprilTag detector in portable C99.
  *
- * Pipeline per frame, level by level (each level doubles the sampling stride):
+ * Pipeline per frame, level by level (each level doubles the sampling stride, except that an ordinary
+ * pass skips from stride two straight to stride eight; see detect_pass):
  *   1. Rake: point-sample the image every 3/4 of the smallest cell. A tag's black border is one
  *      cell wide, so every border crossing contains a sample from its dark core. Coarser levels
- *      take every second sample of the level before.
- *   2. Threshold each sample against its 4x4-tile min/max over a 3x3 tile neighbourhood. Tiles
+ *      take every second (or fourth) sample of the level before.
+ *   2. Threshold each sample against its 4x4-tile min/max over a 3x3 tile neighbourhood; on a
+ *      stride-two pass, also against its 2x2 half tiles' neighbourhood (NAPA_HALF_CAP). Tiles
  *      without contrast are skipped outright: they cannot contain a tag edge. Rows of dark
  *      samples become runs (SIMD compare and bit masks), joined into blobs by union-find.
  *   3. Keep tag-sized, tag-shaped blobs; each one's extreme points give a rough quad.
@@ -17,7 +19,7 @@
  *   5. Sample the family's cell grid through the homography and decode. Multi-index hashing
  *      narrows the rotated codewords to those sharing a block with the payload.
  *   6. Repair the cases a plain fit gets wrong: a quiet zone darker than the background, a side
- *      fitted one cell out, and edges biased by clipped (saturated) exposure.
+ *      or a corner fitted one cell out, and edges biased by clipped (saturated) exposure.
  *
  * The library exposes a plain C ABI and uses the C math library and POSIX or Windows threads.
  */
@@ -355,8 +357,9 @@ typedef struct {
 } vec2;
 
 /* A vector's length. Not libm's hypot: its last bit differs between C libraries (glibc on x86-64 and on ARM disagree),
- * which made detections differ between machines. A correctly rounded square root gives the same bits everywhere, and
- * every length here is far from overflow. */
+ * which made detections differ between machines. A correctly rounded square root gives the same bits everywhere, as
+ * long as x * x + y * y isn't fused into one multiply-add: the builds turn that off (-ffp-contract=off). Every length
+ * here is far from overflow. */
 static inline double vec_length(double x, double y) { return sqrt(x * x + y * y); }
 
 /* A calibrated camera's lens (napa_set_lens), OpenCV's conventions: pixel centres at integers, normalized coordinates
@@ -860,6 +863,7 @@ napa_detector *napa_create_family(const char *family) {
 
 static void band_free(napa_detector *det);
 static void scratch_free(label_scratch *s);
+/* A pool thread's detector owns only its code stamps; the rest is borrowed from det (prepare_workers). */
 static void free_workers(napa_detector *det) {
     for (int w = 0; w < det->worker_count; w++) free(det->workers[w].fam.stamp);
     free(det->workers);
@@ -879,6 +883,11 @@ static void make_workers(napa_detector *det, int n) {
         }
         det->worker_count = i + 1;
     }
+}
+
+/* The detector pool thread `worker` decodes on: det itself for the caller (0), else that thread's own. */
+static napa_detector *thread_detector(napa_detector *det, int worker) {
+    return worker == 0 ? det : &det->workers[worker - 1];
 }
 
 void napa_destroy(napa_detector *det) {
@@ -2997,19 +3006,19 @@ static void fit_curve_side(curve_side *s, vec2 a, vec2 b, const double *px, cons
     memset(s, 0, sizeof *s);
     s->a = a;
     s->len = vec_length(b.x - a.x, b.y - a.y);
-    if (n < 12 || !(s->len >= 6)) return;
+    /* n is at most fit_sides_impl's NAPA_SIDE_SAMPLES samples per side. */
+    if (n < 12 || n > NAPA_SIDE_SAMPLES || !(s->len >= 6)) return;
     s->ex = (b.x - a.x) / s->len;
     s->ey = (b.y - a.y) / s->len;
     s->nx = -s->ey;
     s->ny = s->ex;
     double m[5] = {0}, v[3] = {0}, half[2] = {0};
-    double us[NAPA_SIDE_SAMPLES], ys[NAPA_SIDE_SAMPLES]; /* the caller's px holds at most this many */
-    const int kept = n <= NAPA_SIDE_SAMPLES;
+    double us[NAPA_SIDE_SAMPLES], ys[NAPA_SIDE_SAMPLES]; /* each sample's tangent and normal position, for the residuals */
     for (int i = 0; i < n; i++) {
         double u = ((px[i] - a.x) * s->ex + (py[i] - a.y) * s->ey) / s->len - 0.5;
         double y = (px[i] - a.x) * s->nx + (py[i] - a.y) * s->ny;
         if (!isfinite(u) || !isfinite(y) || !(wt[i] > 0) || !isfinite(wt[i])) return;
-        if (kept) us[i] = u, ys[i] = y;
+        us[i] = u, ys[i] = y;
         half[u >= 0] += wt[i];
         const double w = wt[i], wy = w * y, u2 = u * u, u3 = u2 * u, u4 = u3 * u;
         m[0] += w, m[1] += w * u, m[2] += w * u2, m[3] += w * u3, m[4] += w * u4;
@@ -3051,8 +3060,7 @@ static void fit_curve_side(curve_side *s, vec2 a, vec2 b, const double *px, cons
     }
     double sse1 = 0, sse2 = 0;
     for (int i = 0; i < n; i++) {
-        double u = kept ? us[i] : ((px[i] - a.x) * s->ex + (py[i] - a.y) * s->ey) / s->len - 0.5;
-        double y = kept ? ys[i] : (px[i] - a.x) * s->nx + (py[i] - a.y) * s->ny;
+        const double u = us[i], y = ys[i];
         double r1 = y - line[0] - line[1] * u;
         double r2 = y - s->c[0] - u * (s->c[1] + u * s->c[2]);
         sse1 += wt[i] * r1 * r1;
@@ -3687,23 +3695,15 @@ static NAPA_NOINLINE void lens_profiles(const lens_side *ls, vec2 a, vec2 b, dou
 /* Nearest falling midpoint crossing; equal distances retain the first crossing. */
 static double nearest_midpoint_crossing(const int64_t *prof, int K, int jl, int jr, double mid, double center) {
     double best_c = -1, best_d = 1e9;
-    /* prof holds fixed-point grey levels (under 2^33), which a double holds exactly, so for an
-     * entry p the tests (double)p >= mid and (double)p < mid are p >= ceil(mid) and
-     * p < ceil(mid): scan in integers and convert only a found crossing. */
-    if (mid >= -9223372036854775808.0 && mid < 9223372036854775808.0) {
-        /* ceil(mid) without libm: truncation toward zero already is it below zero. */
-        int64_t level = (int64_t)mid;
-        if ((double)level < mid) level++;
-        for (int j = jl - 1; j <= jr && j + 1 < K; j++) {
-            if (j < 0 || !(prof[j] >= level && prof[j + 1] < level)) continue;
-            double c = j + ((double)prof[j] - mid) / (double)(prof[j] - prof[j + 1]);
-            double d = fabs(c - center);
-            if (d < best_d) best_d = d, best_c = c;
-        }
-        return best_c;
-    }
+    /* prof holds fixed-point grey levels in [0, 2^33), which a double holds exactly, so for an entry p the tests
+     * (double)p >= mid and (double)p < mid are p >= ceil(mid) and p < ceil(mid): scan in integers and convert only a
+     * found crossing. A mid outside the int64 range (or NaN) has no level a profile falls through. */
+    if (!(mid >= -9223372036854775808.0 && mid < 9223372036854775808.0)) return -1;
+    /* ceil(mid) without libm: truncation toward zero already is it below zero. */
+    int64_t level = (int64_t)mid;
+    if ((double)level < mid) level++;
     for (int j = jl - 1; j <= jr && j + 1 < K; j++) {
-        if (j < 0 || !((double)prof[j] >= mid && (double)prof[j + 1] < mid)) continue;
+        if (j < 0 || !(prof[j] >= level && prof[j + 1] < level)) continue;
         double c = j + ((double)prof[j] - mid) / (double)(prof[j] - prof[j + 1]);
         double d = fabs(c - center);
         if (d < best_d) best_d = d, best_c = c;
@@ -5591,6 +5591,13 @@ static int dense_whole_needs_deferral(int base, int s, int last, int width, int 
     return base == 1 && s <= 2 && !last && width > 72 && height > 72;
 }
 
+/* Whether the candidate loop sets an ordinary whole aside for the terminal replay (remember_fine_whole) instead of
+ * trying it now: undersized for the search, or dense on a fine level. The threaded pre-pass numbers the wholes it works
+ * out ahead by this same test (whole_index), so the two must agree. */
+static int whole_set_aside(int base, int lo, int s, int last, int width, int height) {
+    return (base > 1 && (width < lo || height < lo)) || dense_whole_needs_deferral(base, s, last, width, height);
+}
+
 static int reserve_fine_whole(napa_detector *det, size_t index) {
     if (index >= det->fine_whole_capacity) {
         size_t cap = det->fine_whole_capacity ? 2 * det->fine_whole_capacity : 64;
@@ -6860,6 +6867,13 @@ static int small_tag_one_bit(const napa_detector *det, const napa_params *params
     return early->hamming <= 1 && params->max_hamming >= 1 && det->fam.max_hamming >= 1 && det->fam.piece_hamming >= 0;
 }
 
+/* Whether a re-decode of an accepted tag (an alternative fit or a repair) corrects few enough bits to replace it: within
+ * policy p, the caller's and the family's limits, none in shadow recovery, and the piece limit for a piece. */
+static int redecode_within_limits(const napa_detector *det, const decode_policy *p, int hamming) {
+    return within_bit_limit(p, hamming) && hamming <= p->params->max_hamming && hamming <= det->fam.max_hamming &&
+        (!p->shadow || hamming == 0) && (!p->piece || hamming <= det->fam.piece_hamming);
+}
+
 typedef enum {
     REFINE_NO_MEMORY = -2,
     REFINE_ACCEPTED = 0,
@@ -7003,7 +7017,7 @@ static void memo_candidates(void *ctx, int index, int worker) {
         return;
     }
     if (index >= j->ordinary_jobs) { /* decoding ahead implies a detector per pool thread (can_decode_ahead) */
-        decode_whole_ahead(j, worker == 0 ? det : &det->workers[worker - 1], det->dmemo_ready + index - j->ordinary_jobs);
+        decode_whole_ahead(j, thread_detector(det, worker), det->dmemo_ready + index - j->ordinary_jobs);
         return;
     }
     const int chunk = j->ahead || j->fit_only ? 1 : MEMO_CHUNK;
@@ -7030,10 +7044,9 @@ static void memo_candidates(void *ctx, int index, int worker) {
         const int bw = comp->maxx - comp->minx + 1, bh = comp->maxy - comp->miny + 1;
         const int undersized_whole = j->base > 1 && (bw < j->lo || bh < j->lo);
         rough_pick(comp, undersized_whole, m->pick);
-        if (undersized_whole || dense_whole_needs_deferral(j->base, j->s, j->last, bw, bh)) { /* set aside by the loop */
+        if (whole_set_aside(j->base, j->lo, j->s, j->last, bw, bh)) { /* by the loop, for the terminal replay */
             if (j->wholes_now)
-                decode_shape_ahead(j, worker == 0 ? det : &det->workers[worker - 1], comp, j->s, j->last,
-                                   &det->dmemo[det->whole_index[ci]]);
+                decode_shape_ahead(j, thread_detector(det, worker), comp, j->s, j->last, &det->dmemo[det->whole_index[ci]]);
             continue;
         }
         double best_area, perim_q;
@@ -7053,7 +7066,7 @@ static void memo_candidates(void *ctx, int index, int worker) {
         memcpy(m->fine, fine, sizeof fine);
         m->edge_w = width;
         if (j->ahead && m->fit) /* decoding ahead implies a detector per pool thread (can_decode_ahead) */
-            decode_ahead(j, worker == 0 ? det : &det->workers[worker - 1], m, comp, bw, bh, best_area, perim_q, rough);
+            decode_ahead(j, thread_detector(det, worker), m, comp, bw, bh, best_area, perim_q, rough);
     }
 }
 
@@ -7181,6 +7194,21 @@ static int decode_quad_reporting(napa_detector *det, const image_view *im, const
     return 1;
 }
 
+/* The two side ends that meet at each corner, as (side, end) of side_end_levels: corner 0 is side 0's start and side
+ * 3's start. */
+static const int corner_ends[4][2][2] = {{{0, 0}, {3, 0}}, {{0, 1}, {1, 0}}, {{1, 1}, {2, 1}}, {{2, 0}, {3, 1}}};
+
+/* The whitest of the corner's two side ends that across marks, from side_end_levels (0 when it marks neither). levels
+ * is read only, but a const parameter would need a cast at every call in C99. */
+static double corner_end_level(double levels[4][2], int corner, const int across[2]) {
+    double level = 0;
+    for (int j = 0; j < 2; j++) {
+        const double v = levels[corner_ends[corner][j][0]][corner_ends[corner][j][1]];
+        if (across[j] && v > level) level = v;
+    }
+    return level;
+}
+
 static void correct_border_geometry(napa_detector *det, const image_view *rview, const decode_policy *policy,
                                     refined_quad *q, border_correction *c) {
     const int W = det->fam.width;
@@ -7248,10 +7276,8 @@ static void correct_border_geometry(napa_detector *det, const image_view *rview,
      * whole must not end with more. */
     const refined_quad before_ends = *q;
     const border_correction before_c = *c;
-    /* The two side ends that meet at each corner: (side, end). Corner 0 (0,0) is side 0's start and side 3's start. */
-    static const int corner_ends[4][2][2] = {{{0, 0}, {3, 0}}, {{0, 1}, {1, 0}}, {{1, 1}, {2, 1}}, {{2, 0}, {3, 1}}};
-    for (int rep = 0, changed = 1; rep < 3 && changed && !q->cut && bad != 15; rep++) {
-        changed = 0;
+    /* Each pass repairs the whitest corner end; a pass that keeps nothing ends the repair. */
+    for (int rep = 0; rep < 3 && !q->cut && bad != 15; rep++) {
         double levels[4][2], end_white = 0.6;
         int corner = -1;
         if (side_end_levels(&det->fam, rview, q->finer, policy->params->min_contrast, levels))
@@ -7277,12 +7303,9 @@ static void correct_border_geometry(napa_detector *det, const image_view *rview,
             square_to_quad(trial, Hs);
             trial[corner] = project(Hs, cu, cv);
             if (!side_end_levels(&det->fam, rview, trial, policy->params->min_contrast, levels)) break;
-            level = 0;
-            for (int j = 0; j < 2; j++)
-                if (across[j] && levels[corner_ends[corner][j][0]][corner_ends[corner][j][1]] > level)
-                    level = levels[corner_ends[corner][j][0]][corner_ends[corner][j][1]];
+            level = corner_end_level(levels, corner, across);
         }
-        if (level >= end_white - 0.3) continue;
+        if (level >= end_white - 0.3) break;
         const double reach = 1.25 * q->edge_w > 1.5 ? 1.25 * q->edge_w : 1.5;
         vec2 fixed[4];
         napa_detection d2;
@@ -7293,28 +7316,21 @@ static void correct_border_geometry(napa_detector *det, const image_view *rview,
             !fit_sides(rview, first, fixed, reach, reach, policy->params->min_contrast, 0, NAPA_FINAL_POINTS, &edge_w, &lv, cells, NULL) ||
             signed_area(fixed) * signed_area(q->finer) <= 0 ||
             !decode_quad(det, rview, fixed, policy->decode_params, 0, &d2, side2, NULL, NULL) ||
-            !within_bit_limit(policy, d2.hamming) || d2.id != q->d.id ||
-            d2.hamming > policy->params->max_hamming || d2.hamming > det->fam.max_hamming ||
-            (policy->shadow && d2.hamming != 0) || (policy->piece && d2.hamming > det->fam.piece_hamming))
-            continue;
+            d2.id != q->d.id || !redecode_within_limits(det, policy, d2.hamming))
+            break;
         for (int k = 0; k < 4; k++) level_after += side2[k];
-        if (!side_end_levels(&det->fam, rview, fixed, policy->params->min_contrast, levels)) continue;
-        double end_after = 0;
-        for (int j = 0; j < 2; j++)
-            if (across[j] && levels[corner_ends[corner][j][0]][corner_ends[corner][j][1]] > end_after)
-                end_after = levels[corner_ends[corner][j][0]][corner_ends[corner][j][1]];
-        if (end_after < 0.5 && end_after < end_white - 0.3 && level_after <= c->accepted_border_level) {
-            q->d = d2;
-            c->corrected_border = 1;
-            c->accepted_border_level = level_after;
-            q->edge_w = edge_w, q->lv = lv;
-            memcpy(q->finer, fixed, sizeof q->finer);
-            /* The fits' alternatives described the quad before the repair. */
-            memcpy(q->alternative, fixed, sizeof q->alternative);
-            memcpy(q->curved, fixed, sizeof q->curved);
-            q->lens_ok = 0;
-            changed = 1;
-        }
+        if (!side_end_levels(&det->fam, rview, fixed, policy->params->min_contrast, levels)) break;
+        const double end_after = corner_end_level(levels, corner, across);
+        if (!(end_after < 0.5 && end_after < end_white - 0.3 && level_after <= c->accepted_border_level)) break;
+        q->d = d2;
+        c->corrected_border = 1;
+        c->accepted_border_level = level_after;
+        q->edge_w = edge_w, q->lv = lv;
+        memcpy(q->finer, fixed, sizeof q->finer);
+        /* The fits' alternatives described the quad before the repair. */
+        memcpy(q->alternative, fixed, sizeof q->alternative);
+        memcpy(q->curved, fixed, sizeof q->curved);
+        q->lens_ok = 0;
     }
     if (q->d.hamming > before_ends.d.hamming) *q = before_ends, *c = before_c;
     /* Clipped levels, and gamma-encoded images under blur, bias every edge the same way: the half-level
@@ -7368,11 +7384,8 @@ static void correct_border_geometry(napa_detector *det, const image_view *rview,
         double alternative_border[4];
         /* The fits share the same biased edge location, so they share its correction. */
         if (c->edge_shift != 0) grow_quad(q->alternative, c->edge_shift, q->alternative);
-        if (decode_quad(det, rview, q->alternative, policy->decode_params, 0, &refined, alternative_border, NULL,
-                        NULL) &&
-            within_bit_limit(policy, refined.hamming) && refined.id == q->d.id && refined.hamming <= policy->params->max_hamming &&
-            refined.hamming <= det->fam.max_hamming && (!policy->shadow || refined.hamming == 0) &&
-            (!policy->piece || refined.hamming <= det->fam.piece_hamming)) {
+        if (decode_quad(det, rview, q->alternative, policy->decode_params, 0, &refined, alternative_border, NULL, NULL) &&
+            refined.id == q->d.id && redecode_within_limits(det, policy, refined.hamming)) {
             double border_sum = 0;
             for (int k = 0; k < 4; k++) border_sum += alternative_border[k];
             if (!c->corrected_border || border_sum <= c->accepted_border_level) { q->d = refined; q->accepted_blur = 1; }
@@ -7440,9 +7453,8 @@ static void select_curve_geometry(napa_detector *det, const image_view *rview, c
             napa_detection proposal;
             if (c->edge_shift != 0) grow_quad(q->curved, c->edge_shift, q->curved);
             if (decode_quad(det, rview, q->curved, policy->decode_params, 0, &proposal, NULL, NULL, NULL) &&
-                within_bit_limit(policy, proposal.hamming) && proposal.id == q->d.id && proposal.hamming <= q->d.hamming &&
-                proposal.hamming <= policy->params->max_hamming && proposal.hamming <= det->fam.max_hamming &&
-                (!policy->shadow || proposal.hamming == 0) && (!policy->piece || proposal.hamming <= det->fam.piece_hamming))
+                proposal.id == q->d.id && proposal.hamming <= q->d.hamming &&
+                redecode_within_limits(det, policy, proposal.hamming))
                 q->d = proposal;
         }
     }
@@ -7659,8 +7671,7 @@ refine_candidate:
             if (move > 0.02 &&
                 decode_quad(det, rview, q.alternative, policy->decode_params, 0, &q.d, q.side_level, &q.final_lv,
                             &code) &&
-                within_bit_limit(policy, q.d.hamming) && q.d.id == fit->early.id && q.d.hamming <= policy->params->max_hamming && q.d.hamming <= det->fam.max_hamming &&
-                (!policy->shadow || q.d.hamming == 0) && (!policy->piece || q.d.hamming <= det->fam.piece_hamming)) {
+                q.d.id == fit->early.id && redecode_within_limits(det, policy, q.d.hamming)) {
                 q.accepted_blur = 1;
                 memcpy(q.finer, q.alternative, sizeof q.finer);
                 decoded_ = 1;
@@ -7847,9 +7858,10 @@ static int sample_threshold_level(napa_detector *det, const pass_config *config,
     return 0;
 }
 
+#define NAPA_SWAP(T, a, b) do { T t_ = a; a = b; b = t_; } while (0)
+
 /* Exchange the level buffers (runs, parents, slots, boxes, dark bits, labelling scratch) with the spare set. */
 static void run_set_swap(napa_detector *det) {
-#define NAPA_SWAP(T, a, b) do { T t_ = a; a = b; b = t_; } while (0)
     NAPA_SWAP(napa_run *, det->runs, det->spare.runs);
     NAPA_SWAP(int32_t *, det->parent, det->spare.parent);
     NAPA_SWAP(int32_t *, det->slot, det->spare.slot);
@@ -7858,13 +7870,11 @@ static void run_set_swap(napa_detector *det) {
     NAPA_SWAP(uint64_t *, det->level_bits, det->spare.level_bits);
     NAPA_SWAP(size_t, det->level_bits_capacity, det->spare.level_bits_capacity);
     NAPA_SWAP(label_scratch, det->scratch, det->spare.scratch);
-#undef NAPA_SWAP
     det->runs_swapped = !det->runs_swapped;
 }
 
 /* Exchange the candidate buffers (candidates, pre-pass results and order, run lists) with the spare set. */
 static void cand_set_swap(napa_detector *det) {
-#define NAPA_SWAP(T, a, b) do { T t_ = a; a = b; b = t_; } while (0)
     NAPA_SWAP(component *, det->cands, det->spare.cands);
     NAPA_SWAP(size_t, det->cand_capacity, det->spare.cand_capacity);
     NAPA_SWAP(cand_memo *, det->memo, det->spare.memo);
@@ -7874,9 +7884,9 @@ static void cand_set_swap(napa_detector *det) {
     NAPA_SWAP(int32_t *, det->cand_run_end, det->spare.cand_run_end);
     NAPA_SWAP(size_t, det->cand_runs_capacity, det->spare.cand_runs_capacity);
     NAPA_SWAP(size_t, det->cand_run_end_capacity, det->spare.cand_run_end_capacity);
-#undef NAPA_SWAP
     det->cands_swapped = !det->cands_swapped;
 }
+#undef NAPA_SWAP
 
 /* threads: the next level of an ordinary pass, sampled and labelled alongside this level's pre-pass. It depends on
  * nothing this level's candidates decide: sampling reads the frame, the previous level's samples and settings fixed for
@@ -7898,6 +7908,40 @@ typedef struct next_level_job {
 static int assemble_level_candidates(napa_detector *det, const pass_config *config, const pass_outputs *outputs,
                                      candidate_level *level, pass_timer *timer);
 
+/* Whether a detection so far covers the centre of a candidate's box on a level of stride s (levels run fine to coarse,
+ * so a coarser blob there is the same tag). Assembly and keep_uncovered must drop the same candidates. */
+static int box_covered(const napa_detector *det, const pass_config *config, const pass_outputs *outputs, int s,
+                       int minx, int maxx, int miny, int maxy) {
+    const int found = outputs->found < outputs->max_out ? outputs->found : outputs->max_out;
+    const double sx = config->sx, sy = config->sy;
+    const int bw = maxx - minx + 1, bh = maxy - miny + 1;
+    return covered_footprint(outputs->out, det->out_centers, found, 0.5 * (minx + maxx) * s * sx + config->offx,
+                             0.5 * (miny + maxy) * s * sy + config->offy,
+                             0.3 * s * (bw * sx > bh * sy ? bw * sx : bh * sy) + 2.0);
+}
+
+/* A pre-pass job over the level's first n candidates (det->cands), with the pass's geometry and settings. It only works
+ * out rough quads, screens and first fits; callers turn on the rest. */
+static memo_job memo_job_for(napa_detector *det, const pass_config *config, const candidate_level *level, int n) {
+    memo_job j = {0};
+    j.det = det, j.view = &config->view, j.params = config->params, j.config = config;
+    j.s = level->s, j.base = config->base, j.lo = config->lo, j.last = level->last;
+    j.shadow = config->shadow, j.shaped = config->shaped;
+    j.sx = config->sx, j.sy = config->sy, j.offx = config->offx, j.offy = config->offy, j.smax = config->smax;
+    j.cells = det->fam.cells, j.n = n;
+    j.cands = det->cands, j.memo = det->memo, j.cand_runs = det->cand_runs, j.cand_run_end = det->cand_run_end;
+    return j;
+}
+
+/* det->memo_order: the level's ncand candidates by box area, largest first (by power of two, in candidate order within
+ * one), the order the pre-pass takes them in when decoding ahead. */
+static void order_largest_first(napa_detector *det, int ncand) {
+    int at[33] = {0};
+    for (int ci = 0; ci < ncand; ci++) at[area_rank(&det->cands[ci]) + 1]++;
+    for (int b = 0; b < 32; b++) at[b + 1] += at[b];
+    for (int ci = 0; ci < ncand; ci++) det->memo_order[at[area_rank(&det->cands[ci])]++] = ci;
+}
+
 static void sample_next_level(next_level_job *job, int worker) {
     pass_timer timing = {0};
     job->status = sample_threshold_level(job->det, job->config, job->outputs, job->sampling, job->level, &timing);
@@ -7911,16 +7955,12 @@ static void sample_next_level(next_level_job *job, int worker) {
         job->assembled = job->status == 0;
         const int ncand = level->ncand;
         if (job->assembled && ncand > 0 && memo_reserve(det, ncand)) {
-            int at[33] = {0}; /* largest boxes first, as process_level_candidates orders them */
-            for (int ci = 0; ci < ncand; ci++) at[area_rank(&det->cands[ci]) + 1]++;
-            for (int b = 0; b < 32; b++) at[b + 1] += at[b];
-            for (int ci = 0; ci < ncand; ci++) det->memo_order[at[area_rank(&det->cands[ci])]++] = ci;
-            const memo_job c = {det, &config->view, config->params, level->s, config->base, config->lo, level->last,
-                                config->shadow, config->shaped, config->sx, config->sy, config->offx, config->offy,
-                                config->smax, det->fam.cells, ncand, 0, det->memo_order,
-                                level->extremes_deferred ? det->runs : NULL, det->level_bits, (level->lw + 63) / 64 + 1,
-                                NULL, config, ncand, 0, det->cands, det->memo, det->cand_runs, det->cand_run_end, NULL, 0, 1};
-            job->coarse = c;
+            order_largest_first(det, ncand); /* as process_level_candidates orders them */
+            memo_job *c = &job->coarse;
+            *c = memo_job_for(det, config, level, ncand);
+            c->order = det->memo_order, c->fit_only = 1, c->ordinary_jobs = ncand;
+            if (level->extremes_deferred) c->runs = det->runs;
+            c->bits = det->level_bits, c->bit_stride = (level->lw + 63) / 64 + 1;
             job->memo_ready = 1;
             if (!pool_extend(det->pool, job->pool_ctx, ncand))
                 for (int k = 0; k < ncand; k++) memo_candidates(&job->coarse, k, worker);
@@ -7948,23 +7988,17 @@ static void decode_kept(void *ctx, int index, int worker) {
     rough_quad_too_full(&det->fam, comp, m->pick, &best_area, &perim_q); /* false: the pre-pass went on to fit */
     vec2 rough[4];
     rough_corners(m->pick, j->s, j->sx, j->sy, j->offx, j->offy, rough);
-    decode_ahead(j, worker == 0 ? det : &det->workers[worker - 1], m, comp, bw, bh, best_area, perim_q, rough);
+    decode_ahead(j, thread_detector(det, worker), m, comp, bw, bh, best_area, perim_q, rough);
 }
 
 /* The terminal level assembled early (sample_next_level): drop the candidates the previous level's detections cover,
  * as assembly would have, keeping the rest and their pre-pass results in order. */
 static void keep_uncovered(napa_detector *det, const pass_config *config, const pass_outputs *outputs,
                            candidate_level *level, int memo) {
-    const int s = level->s, found = outputs->found < outputs->max_out ? outputs->found : outputs->max_out;
-    const double sx = config->sx, sy = config->sy, offx = config->offx, offy = config->offy;
     int n = 0;
     for (int ci = 0; ci < level->ncand; ci++) {
         const component *c = &det->cands[ci];
-        const int t_minx = c->minx, t_maxx = c->maxx, t_miny = c->miny, t_maxy = c->maxy;
-        const int bw = t_maxx - t_minx + 1, bh = t_maxy - t_miny + 1;
-        if (covered_footprint(outputs->out, det->out_centers, found,
-                              0.5 * (t_minx + t_maxx) * s * sx + offx, 0.5 * (t_miny + t_maxy) * s * sy + offy,
-                              0.3 * s * (bw * sx > bh * sy ? bw * sx : bh * sy) + 2.0)) continue;
+        if (box_covered(det, config, outputs, level->s, c->minx, c->maxx, c->miny, c->maxy)) continue;
         if (n != ci) {
             det->cands[n] = det->cands[ci];
             if (memo) det->memo[n] = det->memo[ci];
@@ -7972,7 +8006,7 @@ static void keep_uncovered(napa_detector *det, const pass_config *config, const 
         n++;
     }
     level->ncand = n;
-    level->covered_prefix = found;
+    level->covered_prefix = outputs->found < outputs->max_out ? outputs->found : outputs->max_out;
     level->extremes_deferred = 0; /* complete: the pre-pass added them */
     /* Two or more left to decode: decode them ahead on the pool, as the pre-pass would have. */
     int nk = 0;
@@ -7983,12 +8017,8 @@ static void keep_uncovered(napa_detector *det, const pass_config *config, const 
         nk = 0;
         for (int ci = 0; ci < n; ci++) if (det->memo[ci].fit > 0) list[nk++] = ci;
         kept_decode_job kj;
-        memset(&kj, 0, sizeof kj);
-        kj.job.det = det, kj.job.view = &config->view, kj.job.params = config->params, kj.job.s = s;
-        kj.job.base = config->base, kj.job.lo = config->lo, kj.job.last = level->last, kj.job.shadow = config->shadow;
-        kj.job.shaped = config->shaped, kj.job.sx = sx, kj.job.sy = sy, kj.job.offx = offx, kj.job.offy = offy;
-        kj.job.smax = config->smax, kj.job.cells = det->fam.cells, kj.job.n = n, kj.job.ahead = 1, kj.job.config = config;
-        kj.job.cands = det->cands, kj.job.memo = det->memo;
+        kj.job = memo_job_for(det, config, level, n);
+        kj.job.ahead = 1;
         kj.list = list;
         prepare_workers(det);
         pool_run(det->pool, decode_kept, &kj, nk);
@@ -8028,10 +8058,6 @@ static int assemble_level_candidates(napa_detector *det, const pass_config *conf
     int hi = config->hi;
     int split = config->split;
     int shadow = config->shadow;
-    double sx = config->sx;
-    double sy = config->sy;
-    double offx = config->offx;
-    double offy = config->offy;
     const int W = det->fam.width;
     const int s = level->s;
     /* Resolve runs into packed components, preserving root raster order. */
@@ -8134,9 +8160,7 @@ static int assemble_level_candidates(napa_detector *det, const pass_config *conf
         }
         /* Without split-piece dependencies, a candidate covered by an earlier level
          * will still be covered when decoded outputs grow later in this level. */
-        if ((shadow || !split) && covered_footprint(outputs->out, det->out_centers, outputs->found < outputs->max_out ? outputs->found : outputs->max_out,
-                              0.5 * (t_minx + t_maxx) * s * sx + offx, 0.5 * (t_miny + t_maxy) * s * sy + offy,
-                              0.3 * s * (bw * sx > bh * sy ? bw * sx : bh * sy) + 2.0)) continue;
+        if ((shadow || !split) && box_covered(det, config, outputs, s, t_minx, t_maxx, t_miny, t_maxy)) continue;
         if ((size_t)level->ncand >= det->cand_capacity) {
             size_t cap = det->cand_capacity ? 2 * det->cand_capacity : 256;
             component *c = (component *)realloc(det->cands, cap * sizeof(component));
@@ -8449,7 +8473,6 @@ static int process_level_candidates(napa_detector *det, const pass_config *confi
     double sy = config->sy;
     double offx = config->offx;
     double offy = config->offy;
-    double smax = config->smax;
     const double cells = det->fam.cells;
     const int s = level->s;
     const int last = level->last;
@@ -8495,8 +8518,7 @@ static int process_level_candidates(napa_detector *det, const pass_config *confi
                     for (int ci = 0; ci < ncand; ci++) {
                         const component *c = &det->cands[ci];
                         const int bw = c->maxx - c->minx + 1, bh = c->maxy - c->miny + 1;
-                        det->whole_index[ci] = (base > 1 && (bw < lo || bh < lo)) || dense_whole_needs_deferral(base, s, last, bw, bh)
-                            ? ready + count++ : -1;
+                        det->whole_index[ci] = whole_set_aside(base, lo, s, last, bw, bh) ? ready + count++ : -1;
                     }
                     const size_t total = (size_t)ready + (size_t)count;
                     if (total > det->dmemo_capacity && total <= (size_t)INT32_MAX / 2) {
@@ -8508,20 +8530,18 @@ static int process_level_candidates(napa_detector *det, const pass_config *confi
                 }
                 if (wholes_now) det->dmemo_ready = ready + count;
             }
+            memo_job job = memo_job_for(det, config, level, ncand);
             if (ahead) {
                 prepare_workers(det);
                 /* Largest boxes first: the few candidates that go on to refine are among them, and a refinement
                  * started last would finish last. Which thread takes a candidate never changes its outcome. */
-                int at[33] = {0};
-                for (int ci = 0; ci < ncand; ci++) at[area_rank(&det->cands[ci]) + 1]++;
-                for (int b = 0; b < 32; b++) at[b + 1] += at[b];
-                for (int ci = 0; ci < ncand; ci++) det->memo_order[at[area_rank(&det->cands[ci])]++] = ci;
+                order_largest_first(det, ncand);
+                job.ahead = 1, job.order = det->memo_order;
             }
-            memo_job job = {det, &view, params, s, base, lo, last, shadow, shaped, sx, sy, offx, offy, smax, cells, ncand,
-                            ahead, ahead ? det->memo_order : NULL, level->extremes_deferred ? det->runs : NULL,
-                            det->level_bits, (level->lw + 63) / 64 + 1, next, config,
-                            ahead ? ncand : (ncand + MEMO_CHUNK - 1) / MEMO_CHUNK, wholes_now,
-                            det->cands, det->memo, det->cand_runs, det->cand_run_end, NULL, 0, 0};
+            if (level->extremes_deferred) job.runs = det->runs;
+            job.bits = det->level_bits, job.bit_stride = (level->lw + 63) / 64 + 1;
+            job.next = next, job.wholes_now = wholes_now;
+            job.ordinary_jobs = ahead ? ncand : (ncand + MEMO_CHUNK - 1) / MEMO_CHUNK;
             const int jobs = (next != NULL) + job.ordinary_jobs + (last ? det->dmemo_n - det->dmemo_ready : 0);
             /* The terminal level next, with nothing deferred to its pre-pass: assemble it and work out its pre-pass
              * in this pool too (sample_next_level), in the spare candidate set. */
@@ -8565,8 +8585,7 @@ static int process_level_candidates(napa_detector *det, const pass_config *confi
             (comp.maxx - comp.minx + 1 < lo || comp.maxy - comp.miny + 1 < lo);
         const int bit_limit = undersized_whole ? 0 : -1;
         int extended_shape = 0;
-        if (!delayed && !piece && (undersized_whole || dense_whole_needs_deferral(base, s, last,
-                comp.maxx - comp.minx + 1, comp.maxy - comp.miny + 1))) {
+        if (!delayed && !piece && whole_set_aside(base, lo, s, last, comp.maxx - comp.minx + 1, comp.maxy - comp.miny + 1)) {
             if (!remember_fine_whole(det, outputs->fine_whole_count, &comp, s, last)) return -2;
             outputs->fine_whole_count++;
             /* Terminal entries join the replay after all normal candidates, including
