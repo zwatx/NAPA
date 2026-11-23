@@ -41,7 +41,7 @@ def _busy_frame(family: str = "tag36h11", seed: int = 7, size: tuple[int, int] =
 
 
 def _results(detector: NapaDetector, image: np.ndarray) -> list[tuple]:
-    return [(o.tag_id, o.hamming, o.corners.tobytes()) for o in detector.detect(image)]
+    return [(o.tag_id, o.hamming, o.decision_margin, o.corners.tobytes()) for o in detector.detect(image)]
 
 
 @pytest.mark.parametrize(

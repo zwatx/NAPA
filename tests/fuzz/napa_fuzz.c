@@ -125,20 +125,29 @@ static void compare(int n, const napa_detection *out, int nr, const napa_detecti
     }
 }
 
+/* Frame size multiplier. Above 1, every input also uses threads and may have a smooth, quiet texture, so CI's
+ * ThreadSanitizer run reaches what only large frames thread (NAPA_THREAD_MIN_SAMPLES): banded labelling on coarser
+ * levels and, on a quiet frame, the finest level's rows raked alongside its threshold bands. */
+#ifndef NAPA_FUZZ_SCALE
+#define NAPA_FUZZ_SCALE 1
+#endif
+static long large_threaded; /* inputs at least that large, with threads */
+
 static int fuzz_one(const uint8_t *data, size_t size) {
     if (size < 24) return 0;
-    const int w = 16 + (data[0] | (data[1] & 3) << 8) % 640, h = 16 + (data[2] | (data[3] & 1) << 8) % 400;
+    const int w = 16 + NAPA_FUZZ_SCALE * ((data[0] | (data[1] & 3) << 8) % 640);
+    const int h = 16 + NAPA_FUZZ_SCALE * ((data[2] | (data[3] & 1) << 8) % 400);
     const int stride = w + data[4] % 9;
     const int family = data[5] % napa_family_count();
     napa_params p;
-    p.min_tag_px = 8 + data[6] % 72;
+    p.min_tag_px = NAPA_FUZZ_SCALE > 1 ? 22 + data[6] % 24 : 8 + data[6] % 72; /* scaled: finest strides 2-4 */
     p.max_hamming = data[7] % 4;
     p.min_contrast = 1 + data[8] % 120;
     p.min_border_cells = data[9] % 29;
     p.sharpening_x100 = data[10] % 101;
     p.split_touching = data[11] & 1;
     const int mode = data[12] % 6, ntags = data[13] % 7, max_out = data[14] % MAX_OUT;
-    const int shape = data[15] % 3, texture = data[16] % 4;
+    const int shape = data[15] % 3, texture = NAPA_FUZZ_SCALE > 1 && data[16] & 1 ? 4 : data[16] % 4;
 
     uint8_t *img = (uint8_t *)malloc((size_t)stride * h); /* exact size: no padding to hide overreads */
     if (img == NULL) return 0;
@@ -147,7 +156,8 @@ static int fuzz_one(const uint8_t *data, size_t size) {
             size_t i = 24 + (size_t)y * stride + x;
             uint8_t v = byte_at(data, size, i);
             img[(size_t)y * stride + x] = texture == 0 ? v : texture == 1 ? (uint8_t)(200 + (v & 31)) :
-                                          texture == 2 ? (uint8_t)(((x / 7 + y / 5) & 1) ? 230 : 25) : (uint8_t)(v & 0xf0);
+                                          texture == 2 ? (uint8_t)(((x / 7 + y / 5) & 1) ? 230 : 25) :
+                                          texture == 3 ? (uint8_t)(v & 0xf0) : (uint8_t)(96 + (x + y) / 64 % 64 + (v & 1));
         }
     const char *name = napa_family_name(family);
     napa_family_layout L;
@@ -170,7 +180,8 @@ static int fuzz_one(const uint8_t *data, size_t size) {
         free(img);
         return 0;
     }
-    const int threads = data[21] & 1 ? 1 + data[22] % 6 : 1;
+    const int threads = NAPA_FUZZ_SCALE > 1 ? 2 + data[22] % 5 : data[21] & 1 ? 1 + data[22] % 6 : 1;
+    if (threads > 1 && (size_t)(w / 2) * (h / 2) >= 96 * 1024) large_threaded++;
     configure(det, name, data, size, w, h, shape, threads);
     configure(reference, name, data, size, w, h, shape, 1);
     napa_detection out[MAX_OUT], expected[MAX_OUT];
@@ -238,8 +249,9 @@ int main(int argc, char **argv) {
             fuzz_one(buf, size);
             free(buf);
         }
-        printf("%ld random fuzz inputs passed, %ld detections, %ld threaded comparisons (%ld non-empty)\n",
-               iterations, detections_seen, threaded_comparisons, nonempty_comparisons);
+        printf("%ld random fuzz inputs passed, %ld detections, %ld threaded comparisons (%ld non-empty), "
+               "%ld large threaded\n", iterations, detections_seen, threaded_comparisons, nonempty_comparisons,
+               large_threaded);
         return 0;
     }
     for (int a = 1; a < argc; a++) { /* replay files, e.g. libFuzzer crash reproducers */
