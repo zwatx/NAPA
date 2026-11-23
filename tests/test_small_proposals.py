@@ -118,3 +118,18 @@ def test_small_additions_correct_at_most_one_payload_bit() -> None:
     assert [(o.tag_id, o.hamming) for o in observations] == [(424, 1)]
     assert [(o.tag_id, o.hamming) for o in two_reference] == [(424, 2)]
     assert two_observations == []
+
+
+@pytest.mark.parametrize("threads", [1, 4])
+def test_small_additions_keep_the_callers_exact_limit(threads: int) -> None:
+    """max_hamming=0 admits no corrected bits, even the one a small addition may otherwise correct."""
+    image, _ = _small_scene((480, 640))
+    image[97:99, 123:125] = 255 - image[97:99, 123:125]  # one payload cell inverted, as above
+    exact = NapaDetector(min_tag_px=32, max_hamming=0, threads=threads)
+    one = NapaDetector(min_tag_px=32, max_hamming=1, threads=threads)
+    try:
+        assert exact.detect(image) == []
+        assert [(o.tag_id, o.hamming) for o in one.detect(image)] == [(424, 1)]
+    finally:
+        exact.close()
+        one.close()

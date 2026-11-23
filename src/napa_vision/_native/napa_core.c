@@ -6843,12 +6843,22 @@ typedef struct {
 
 typedef struct {
     const napa_params *params, *decode_params;
-    int shadow, piece, require_exact;
+    int shadow, piece;
+    /* An undersized tag's limit on the bits each of its decodes may correct: 0 exact, 1 one bit (to its first fit's ID
+     * only, see small_tag_one_bit). -1 for other candidates, which only the decode parameters limit. */
+    int bit_limit;
 } decode_policy;
 
-/* Whether a decode corrects few enough bits under policy p: an undersized tag must read exactly (require_exact 1),
- * or within one bit when its first fit read the same code (require_exact 2, see refine_decoded_candidate). */
-static int exact_enough(const decode_policy *p, int hamming) { return !p->require_exact || hamming <= p->require_exact - 1; }
+static int within_bit_limit(const decode_policy *p, int hamming) { return p->bit_limit < 0 || hamming <= p->bit_limit; }
+
+/* On cells of a pixel or two, moving a side by a tenth of a pixel can flip one bit, so the refined corners can miss a
+ * bit the first fit read. An undersized tag whose first fit read its code with at most one wrong bit may then correct
+ * one bit, only to that same ID, and only where the caller and the family allow corrections at all. Families whose
+ * codes are too short for pieces to decode (piece_hamming < 0) stay exact, since a chance match within one bit is not
+ * rare enough there. */
+static int small_tag_one_bit(const napa_detector *det, const napa_params *params, const napa_detection *early) {
+    return early->hamming <= 1 && params->max_hamming >= 1 && det->fam.max_hamming >= 1 && det->fam.piece_hamming >= 0;
+}
 
 typedef enum {
     REFINE_NO_MEMORY = -2,
@@ -6972,7 +6982,7 @@ static void decode_ahead(const memo_job *j, napa_detector *wd, cand_memo *m, con
     fit.edge_w = m->edge_w, fit.frame_sides = m->frame_sides;
     memcpy(fit.fine, m->fine, sizeof fit.fine);
     const double big_px = s * (bw * j->sx > bh * j->sy ? bw * j->sx : bh * j->sy);
-    const decode_policy policy = {j->params, decode_params, j->shadow, 0, 0};
+    const decode_policy policy = {j->params, decode_params, j->shadow, 0, -1};
     pass_timer timing = {0};
     const double regrow_extent = regrow_extent_for(0, j->shadow, 0, j->base, j->shaped, s, big_px);
     m->ahead = decode_and_refine(wd, j->view, &policy, &fit, rough, regrow_extent, &m->outcome, &timing) == 0;
@@ -7220,7 +7230,7 @@ static void correct_border_geometry(napa_detector *det, const image_view *rview,
         if (refit && r2 < r) refit = fit_sides(rview, first, fixed, r2, r2, policy->params->min_contrast, 0, NAPA_FINAL_POINTS, &q->edge_w, &q->lv, cells, NULL);
         else if (refit) memcpy(fixed, first, sizeof fixed);
         if (refit && decode_quad(det, rview, fixed, policy->decode_params, 0, &d2, side2, NULL, NULL) &&
-            exact_enough(policy, d2.hamming) && d2.id == q->d.id) {
+            within_bit_limit(policy, d2.hamming) && d2.id == q->d.id) {
             for (int k = 0; k < 4; k++) level_after += side2[k];
             if (level_after < level_before - 0.2) {
                 q->d = d2;
@@ -7283,7 +7293,7 @@ static void correct_border_geometry(napa_detector *det, const image_view *rview,
             !fit_sides(rview, first, fixed, reach, reach, policy->params->min_contrast, 0, NAPA_FINAL_POINTS, &edge_w, &lv, cells, NULL) ||
             signed_area(fixed) * signed_area(q->finer) <= 0 ||
             !decode_quad(det, rview, fixed, policy->decode_params, 0, &d2, side2, NULL, NULL) ||
-            !exact_enough(policy, d2.hamming) || d2.id != q->d.id ||
+            !within_bit_limit(policy, d2.hamming) || d2.id != q->d.id ||
             d2.hamming > policy->params->max_hamming || d2.hamming > det->fam.max_hamming ||
             (policy->shadow && d2.hamming != 0) || (policy->piece && d2.hamming > det->fam.piece_hamming))
             continue;
@@ -7341,7 +7351,7 @@ static void correct_border_geometry(napa_detector *det, const image_view *rview,
             napa_detection d3;
             grow_quad(q->finer, share * delta, grown);
             if (decode_quad(det, rview, grown, policy->decode_params, 0, &d3, NULL, NULL, NULL) &&
-                exact_enough(policy, d3.hamming) && d3.id == q->d.id) {
+                within_bit_limit(policy, d3.hamming) && d3.id == q->d.id) {
                 q->d = d3;
                 c->measured_bias = delta;
                 c->whole_share = share;
@@ -7360,7 +7370,7 @@ static void correct_border_geometry(napa_detector *det, const image_view *rview,
         if (c->edge_shift != 0) grow_quad(q->alternative, c->edge_shift, q->alternative);
         if (decode_quad(det, rview, q->alternative, policy->decode_params, 0, &refined, alternative_border, NULL,
                         NULL) &&
-            exact_enough(policy, refined.hamming) && refined.id == q->d.id && refined.hamming <= policy->params->max_hamming &&
+            within_bit_limit(policy, refined.hamming) && refined.id == q->d.id && refined.hamming <= policy->params->max_hamming &&
             refined.hamming <= det->fam.max_hamming && (!policy->shadow || refined.hamming == 0) &&
             (!policy->piece || refined.hamming <= det->fam.piece_hamming)) {
             double border_sum = 0;
@@ -7412,7 +7422,7 @@ static void select_curve_geometry(napa_detector *det, const image_view *rview, c
         if (signed_area(q->lens_quad) < 0) { vec2 swap = q->lens_quad[1]; q->lens_quad[1] = q->lens_quad[3]; q->lens_quad[3] = swap; }
         if (lens_bias != 0) grow_quad(q->lens_quad, lens_bias, q->lens_quad);
         if (decode_quad(det, rview, q->lens_quad, policy->decode_params, 0, &proposal, NULL, NULL, NULL) &&
-            exact_enough(policy, proposal.hamming) && proposal.id == q->d.id && proposal.hamming <= q->d.hamming &&
+            within_bit_limit(policy, proposal.hamming) && proposal.id == q->d.id && proposal.hamming <= q->d.hamming &&
             (!policy->shadow || proposal.hamming == 0) && (!policy->piece || proposal.hamming <= det->fam.piece_hamming)) {
             q->d = proposal;
             c->near_frame = 1, c->curve_span = 0; /* no later step should move these corners */
@@ -7430,7 +7440,7 @@ static void select_curve_geometry(napa_detector *det, const image_view *rview, c
             napa_detection proposal;
             if (c->edge_shift != 0) grow_quad(q->curved, c->edge_shift, q->curved);
             if (decode_quad(det, rview, q->curved, policy->decode_params, 0, &proposal, NULL, NULL, NULL) &&
-                exact_enough(policy, proposal.hamming) && proposal.id == q->d.id && proposal.hamming <= q->d.hamming &&
+                within_bit_limit(policy, proposal.hamming) && proposal.id == q->d.id && proposal.hamming <= q->d.hamming &&
                 proposal.hamming <= policy->params->max_hamming && proposal.hamming <= det->fam.max_hamming &&
                 (!policy->shadow || proposal.hamming == 0) && (!policy->piece || proposal.hamming <= det->fam.piece_hamming))
                 q->d = proposal;
@@ -7529,16 +7539,12 @@ static refinement_result refine_decoded_candidate(napa_detector *det, const imag
     const int W = det->fam.width, width = view->w, height = view->h, stride = view->stride;
     const double cells = det->fam.cells;
     const uint8_t *img = view->p;
-    /* On cells of a pixel or two, moving a side by a tenth of a pixel can flip one bit, so the refined corners can
-     * miss a bit the first fit read. An undersized tag whose first fit read its code with at most one wrong bit may
-     * then correct one bit, and only to that same ID. Families whose codes are too short for pieces to decode
-     * (piece_hamming < 0) stay exact, since a chance match within one bit is not rare enough there. */
+    /* An exact undersized tag may correct one bit (small_tag_one_bit): raise its decodes' limit to one. */
     decode_policy one_bit_policy;
     napa_params one_bit;
-    if (policy->require_exact == 1 && fit->early.hamming <= 1 && det->fam.piece_hamming >= 0 &&
-        policy->decode_params->max_hamming == 0 && det->fam.max_hamming >= 1) {
+    if (policy->bit_limit == 0 && policy->decode_params->max_hamming == 0 && small_tag_one_bit(det, policy->params, &fit->early)) {
         one_bit = *policy->decode_params, one_bit.max_hamming = 1;
-        one_bit_policy = *policy, one_bit_policy.decode_params = &one_bit, one_bit_policy.require_exact = 2;
+        one_bit_policy = *policy, one_bit_policy.decode_params = &one_bit, one_bit_policy.bit_limit = 1;
         policy = &one_bit_policy;
     }
     refined_quad q;
@@ -7614,7 +7620,7 @@ refine_candidate:
     q.accepted_blur = 0;
     /* An undersized tag must decode (almost) exactly, so it reads its cells through its centre-of-mass sides (below). */
     vec2 centred[4];
-    const int read_centred = policy->require_exact != 0;
+    const int read_centred = policy->bit_limit >= 0;
     if (ok) ok = fit_sides_alternate(rview, fit->fine, q.finer, fit->reach, fit->reach, policy->params->min_contrast, 0, NAPA_FINAL_POINTS, &q.edge_w, &q.lv, cells, q.alternative, q.curved, q.lens_quad, &q.lens_ok, q.side_widths_seen, &fit->frame_sides, read_centred ? centred : NULL);
     if (!ok && rview != view) { /* the linear patch failed: go again on the frame's own pixels */
         lin_tried = 1, rview = view;
@@ -7636,7 +7642,7 @@ refine_candidate:
      * more of those tags miss the exact decode. The crossing sides remain the tag's corners. */
     int decoded_ = read_centred ? decode_quad_reporting(det, rview, centred, q.finer, policy->decode_params, &q.d, q.side_level, &q.final_lv, &code)
                                 : decode_quad(det, rview, q.finer, policy->decode_params, 0, &q.d, q.side_level, &q.final_lv, &code);
-    if (decoded_ && (!exact_enough(policy, q.d.hamming) || (policy->require_exact == 2 && q.d.id != fit->early.id))) decoded_ = 0;
+    if (decoded_ && (!within_bit_limit(policy, q.d.hamming) || (policy->bit_limit == 1 && q.d.id != fit->early.id))) decoded_ = 0;
     /* The ordinary fit may fail decoding because its edge levels were mixed by blur.
      * Reuse the already-fitted alternate, with the same strict decode and path limits. */
     if (!decoded_ && !fit->frame_sides && q.lv.has_model) {
@@ -7653,7 +7659,7 @@ refine_candidate:
             if (move > 0.02 &&
                 decode_quad(det, rview, q.alternative, policy->decode_params, 0, &q.d, q.side_level, &q.final_lv,
                             &code) &&
-                exact_enough(policy, q.d.hamming) && q.d.id == fit->early.id && q.d.hamming <= policy->params->max_hamming && q.d.hamming <= det->fam.max_hamming &&
+                within_bit_limit(policy, q.d.hamming) && q.d.id == fit->early.id && q.d.hamming <= policy->params->max_hamming && q.d.hamming <= det->fam.max_hamming &&
                 (!policy->shadow || q.d.hamming == 0) && (!policy->piece || q.d.hamming <= det->fam.piece_hamming)) {
                 q.accepted_blur = 1;
                 memcpy(q.finer, q.alternative, sizeof q.finer);
@@ -7681,7 +7687,7 @@ refine_candidate:
         napa_detection d1;
         if (!extend_cut_sides(&det->fam, rview, q.finer, q.cut, code, q.final_lv.black, q.final_lv.white, extended) ||
             !decode_quad(det, rview, extended, policy->decode_params, 0, &d1, NULL, NULL, NULL) ||
-            !exact_enough(policy, d1.hamming) || d1.id != q.d.id) {
+            !within_bit_limit(policy, d1.hamming) || d1.id != q.d.id) {
             return REFINE_CUT_FAILED; /* cut extension failed without changing the component fate */
         }
         q.d = d1;
@@ -8106,7 +8112,8 @@ static int assemble_level_candidates(napa_detector *det, const pass_config *conf
      * box admits tilts to about 80 degrees. Clean tags stay readable past 75 degrees whenever their
      * narrow side is still min_tag_px or more, and decoding rejects thin blobs that aren't tags. */
     /* Only the finest grid tries smaller wholes; coarser bands already overlap the
-     * established finer candidates. Defer these additions and require an exact payload. */
+     * established finer candidates. Defer these additions and hold them to stricter decodes
+     * (an exact payload, or one bit under small_tag_one_bit). */
     int min_size = base > 1 && s == base ? (5 * W + 4) / 8 : lo;
     /* Overlapping size bands retain tilted tags. Large fine-grid outlines wait until
      * established proposals finish, because they can merge into their background later. */
@@ -8420,7 +8427,7 @@ static void decode_shape_ahead(const memo_job *j, napa_detector *wd, const compo
     dm->stage = (signed char)stage, dm->regrown = (signed char)regrown, dm->fit = fit;
     if (!stage) return;
     const double big_px = s * (bw * config->sx > bh * config->sy ? bw * config->sx : bh * config->sy);
-    const decode_policy policy = {config->params, decode_params, shadow, 0, undersized_whole};
+    const decode_policy policy = {config->params, decode_params, shadow, 0, undersized_whole ? 0 : -1};
     pass_timer timing = {0};
     const double regrow_extent = regrow_extent_for(regrown, shadow, 0, base, config->shaped, s, big_px);
     dm->ahead = decode_and_refine(wd, j->view, &policy, &fit, dm->rough, regrow_extent, &dm->outcome, &timing) == 0;
@@ -8556,7 +8563,7 @@ static int process_level_candidates(napa_detector *det, const pass_config *confi
         comp = *self;
         const int undersized_whole = !piece && base > 1 &&
             (comp.maxx - comp.minx + 1 < lo || comp.maxy - comp.miny + 1 < lo);
-        const int require_exact = undersized_whole;
+        const int bit_limit = undersized_whole ? 0 : -1;
         int extended_shape = 0;
         if (!delayed && !piece && (undersized_whole || dense_whole_needs_deferral(base, s, last,
                 comp.maxx - comp.minx + 1, comp.maxy - comp.miny + 1))) {
@@ -8674,7 +8681,7 @@ static int process_level_candidates(napa_detector *det, const pass_config *confi
             *candidate_fate = extended_shape ? CANDIDATE_ROUGH_REJECTED : CANDIDATE_DECODE_FAILED;
             continue;
         }
-        decode_policy policy = {params, decode_params, shadow, piece, require_exact};
+        decode_policy policy = {params, decode_params, shadow, piece, bit_limit};
         candidate_outcome computed;
         const candidate_outcome *outcome = &computed;
         if (mm && mm->ahead) {
@@ -8704,8 +8711,9 @@ static int process_level_candidates(napa_detector *det, const pass_config *confi
         napa_detection d = outcome->d;
         lin_view = outcome->view;
         rview = &lin_view;
-        const int one_bit = fit.early.hamming <= 1 && d.id == fit.early.id && det->fam.piece_hamming >= 0;
-        if ((shadow && d.hamming != 0) || (require_exact && d.hamming > one_bit)) continue;
+        /* An undersized tag's limit as refine_decoded_candidate applied it: one bit under small_tag_one_bit. */
+        const int limit = bit_limit == 0 && small_tag_one_bit(det, params, &fit.early) && d.id == fit.early.id ? 1 : bit_limit;
+        if ((shadow && d.hamming != 0) || (limit >= 0 && d.hamming > limit)) continue;
         if (piece) {
             /* Pieces are many and mostly not tags: correct fewer bits (in tag36h11, three admitted
              * chance matches from random-payload grids), and keep them apart until the end. */
