@@ -3773,7 +3773,7 @@ static int initial_plateau_peak(const int64_t *prof, const int64_t *g, int K, do
 static NAPA_FORCE_INLINE int fit_sides_impl(const image_view *im, const vec2 in[4], vec2 out[4], double r_out, double r_in, int min_edge,
                      int outermost, int max_points, double *edge_width, edge_levels *levels, double cells,
                      vec2 alternate[4], vec2 curved[4], vec2 est_lens[4], int *est_ok, double *width_ratio,
-                     int *frame_sides) {
+                     int *frame_sides, vec2 centred[4]) {
     const uint8_t *img = im->p;
     const int w = im->w, h = im->h, stride = im->stride;
     double width_sum = 0;
@@ -3790,7 +3790,8 @@ static NAPA_FORCE_INLINE int fit_sides_impl(const image_view *im, const vec2 in[
     }
     double lx[4], ly[4], dx[4], dy[4];
     double alx[4], aly[4], adx[4], ady[4];
-    int any_alternate = 0;
+    double clx[4], cly[4], cdx[4], cdy[4];
+    int any_alternate = 0, any_crossed = 0;
     curve_side curves[4];
     /* Through a known lens the sides are fitted where they are straight: in the plane facing the tag (lens_frame). */
     lens_frame lens_view;
@@ -3840,7 +3841,8 @@ static NAPA_FORCE_INLINE int fit_sides_impl(const image_view *im, const vec2 in[
         if (np > MAXP) np = MAXP;
         double px[MAXP], py[MAXP], wt[MAXP];
         double apx[MAXP], apy[MAXP], awt[MAXP];
-        int side_changed = 0;
+        double cpx[MAXP], cpy[MAXP];
+        int side_changed = 0, side_crossed = 0;
         int good = 0;
         double side_width_sum = width_sum;
         int side_width_n = width_n;
@@ -3862,6 +3864,7 @@ static NAPA_FORCE_INLINE int fit_sides_impl(const image_view *im, const vec2 in[
         const double kept_width_sum = width_sum, kept_side_width = side_width[k];
         const int kept_width_n = width_n, kept_side_widths = side_widths[k];
 retake:
+        side_crossed = 0;
         if (use_lens) lens_profiles(&lside, fit_a, plane[(k + 1) & 3], margin, dt, np, step, &lprof);
         for (int i = 0; i < np && good + (np - i) >= 3; i++) { /* stop once 3 edge points are out of reach */
             double t = margin + dt * (i + 0.5);
@@ -3935,6 +3938,7 @@ retake:
                 sj += g[j] * j;
             }
             double cj = sg > 0 ? (double)sj / (double)sg : bj;
+            const double mass_cj = cj;
             double acj = 0;
             int alternate_crossing = 0;
             /* When the edge ramp is wide against a cell (motion or defocus blur), the next edge's ramp
@@ -3980,6 +3984,12 @@ retake:
             double pos = -r_out + cj * step;
             if (use_lens) px[good] = q.x + back_x * pos, py[good] = q.y + back_y * pos;
             else px[good] = bx + pnx * pos, py[good] = by + pny * pos;
+            if (centred != NULL) {
+                const double mass_pos = -r_out + mass_cj * step;
+                if (use_lens) cpx[good] = q.x + back_x * mass_pos, cpy[good] = q.y + back_y * mass_pos;
+                else cpx[good] = bx + pnx * mass_pos, cpy[good] = by + pny * mass_pos;
+                side_crossed |= cj != mass_cj;
+            }
             wt[good] = (double)best * (1.0 / (1 << 24));
             if (est_lens != NULL && !use_lens) {
                 samples.x[k][good] = px[good], samples.y[k][good] = py[good];
@@ -4029,6 +4039,7 @@ retake:
             /* A frame boundary is in pixels, not the lens fit's tangent plane. */
             if (use_lens || frame_sides == NULL || !frame_side(im, a, b, r_out, &lx[k], &ly[k], &dx[k], &dy[k])) return 0;
             *frame_sides |= 1 << k;
+            clx[k] = lx[k], cly[k] = ly[k], cdx[k] = dx[k], cdy[k] = dy[k];
             curves[k].qualified = 0, samples.n[k] = crossing_samples.n[k] = 0;
             side_width[k] = 0, side_widths[k] = 0;
             alx[k] = lx[k], aly[k] = ly[k], adx[k] = dx[k], ady[k] = dy[k];
@@ -4074,7 +4085,14 @@ retake:
             for (int i = 0; i < good; i++) complete_points += samples.w[k][i] > 0;
             needs_partial |= complete_points < NAPA_LENS_MIN_SIDE_POINTS;
         }
+        if (centred != NULL && side_crossed) {
+            double cwt[MAXP]; /* the line fit drops outliers in place */
+            memcpy(cwt, wt, (size_t)good * sizeof(double));
+            if (!fit_side_line(cpx, cpy, cwt, good, reach, &clx[k], &cly[k], &cdx[k], &cdy[k])) side_crossed = 0;
+        }
         if (!fit_side_line(px, py, wt, good, reach, &lx[k], &ly[k], &dx[k], &dy[k])) return 0;
+        if (centred != NULL && !side_crossed) clx[k] = lx[k], cly[k] = ly[k], cdx[k] = dx[k], cdy[k] = dy[k];
+        any_crossed |= side_crossed;
         if (alternate != NULL) {
             any_alternate |= side_changed;
             if (!side_changed || !fit_side_line_soft(apx, apy, awt, good, reach, &alx[k], &aly[k], &adx[k], &ady[k])) {
@@ -4099,6 +4117,21 @@ retake:
         if (mv > 4.0 * reach + 2.0) return 0;
     }
     if (use_lens) lens_memo_chain(&lens_view, in, out, plane_out);
+    if (centred != NULL) {
+        int valid = any_crossed && !use_lens;
+        for (int k = 0; k < 4 && valid; k++) {
+            int p = (k + 3) & 3;
+            double cross = cdx[p] * cdy[k] - cdy[p] * cdx[k];
+            if (!(fabs(cross) >= 0.2)) { valid = 0; break; }
+            double ddx = clx[k] - clx[p], ddy = cly[k] - cly[p];
+            double t = (ddx * cdy[k] - ddy * cdx[k]) / cross;
+            centred[k].x = clx[p] + t * cdx[p];
+            centred[k].y = cly[p] + t * cdy[p];
+            double mv = fabs(centred[k].x - in[k].x) + fabs(centred[k].y - in[k].y);
+            if (!(mv <= 4.0 * reach + 2.0)) valid = 0;
+        }
+        if (!valid) memcpy(centred, out, 4 * sizeof(vec2));
+    }
     if (alternate != NULL && !any_alternate) memcpy(alternate, out, 4 * sizeof(vec2));
     if (alternate != NULL && any_alternate) {
         int valid = 1;
@@ -4154,7 +4187,7 @@ retake:
 static int fit_sides(const image_view *im, const vec2 in[4], vec2 out[4], double r_out, double r_in, int min_edge,
                      int outermost, int max_points, double *edge_width, edge_levels *levels, double cells, int *frame_sides) {
     return fit_sides_impl(im, in, out, r_out, r_in, min_edge, outermost, max_points, edge_width, levels, cells,
-                          NULL, NULL, NULL, NULL, NULL, frame_sides);
+                          NULL, NULL, NULL, NULL, NULL, frame_sides, NULL);
 }
 
 static int fit_initial_sides(const image_view *im, const vec2 in[4], vec2 out[4],
@@ -4168,16 +4201,17 @@ static int fit_initial_sides(const image_view *im, const vec2 in[4], vec2 out[4]
         if (x * x + y * y < 36.0) return 0;
     }
     return fit_sides_impl(im, in, out, r_out, r_in, min_edge, 1, INITIAL_SIDE_POINTS, width, NULL, cells,
-                          NULL, NULL, NULL, NULL, NULL, frame_sides);
+                          NULL, NULL, NULL, NULL, NULL, frame_sides, NULL);
 }
 
 /* fit_sides with the alternatives the final fit weighs. est_lens / est_ok: near the frame and without a calibrated
  * lens, the corners a radial lens estimated from the tag's own bowed sides would give (shared_lens_quad), and whether
- * one was found. */
+ * one was found. centred (may be NULL): the same sides through each profile's gradient centre of mass, before any
+ * midpoint crossing moved it. */
 static int fit_sides_alternate(const image_view *im, const vec2 in[4], vec2 out[4], double r_out, double r_in, int min_edge,
-                     int outermost, int max_points, double *edge_width, edge_levels *levels, double cells, vec2 alternate[4], vec2 curved[4], vec2 est_lens[4], int *est_ok, double *width_ratio, int *frame_sides) {
+                     int outermost, int max_points, double *edge_width, edge_levels *levels, double cells, vec2 alternate[4], vec2 curved[4], vec2 est_lens[4], int *est_ok, double *width_ratio, int *frame_sides, vec2 centred[4]) {
     return fit_sides_impl(im, in, out, r_out, r_in, min_edge, outermost, max_points, edge_width, levels, cells,
-                          alternate, curved, est_lens, est_ok, width_ratio, frame_sides);
+                          alternate, curved, est_lens, est_ok, width_ratio, frame_sides, centred);
 }
 
 /* The shared-white model denoises geometry after a tag already decodes.
@@ -4192,7 +4226,7 @@ static NAPA_NOINLINE int fit_independent_alternate(const image_view *im, const v
     vec2 ordinary[4];
     double width = 0;
     return fit_sides_alternate(im, in, ordinary, reach, reach, min_edge, 0, NAPA_FINAL_POINTS,
-                              &width, &independent, cells, alternate, NULL, NULL, NULL, NULL, NULL);
+                              &width, &independent, cells, alternate, NULL, NULL, NULL, NULL, NULL, NULL);
 }
 
 static double signed_area(const vec2 q[4]) {
@@ -5079,6 +5113,20 @@ static void blocked_capture(napa_detector *det, const vec2 q[4], double black, d
     det->blocked_count++;
 }
 
+/* Each side's non-corner border cells (top, right, bottom, left, unsharpened), as a fraction of the way from the
+ * tag's black to its white: about 0 for a true border side. */
+static void border_side_levels(const family_layout *L, const double *grid, double black, double white, double side_level[4]) {
+    const int W = L->width, o = L->outer, G = L->grid;
+    for (int k = 0; k < 4; k++) side_level[k] = 0;
+    for (int k = 1; k < W - 1; k++) {
+        side_level[0] += grid[o * G + k + o];
+        side_level[1] += grid[(k + o) * G + W - 1 + o];
+        side_level[2] += grid[(W - 1 + o) * G + k + o];
+        side_level[3] += grid[(k + o) * G + o];
+    }
+    for (int k = 0; k < 4; k++) side_level[k] = (side_level[k] / (W - 2) - black) / (white - black);
+}
+
 /* Decode the tag inside quad q (reordered in place to a consistent winding). `slack` loosens the
  * border and Hamming limits, for a cheap early decode on unrefined corners. Optionally reports each
  * side's border level (side_level), the tag's black and white levels, and its matched code in q's
@@ -5129,18 +5177,7 @@ static int decode_quad(napa_detector *det, const image_view *im, vec2 q[4],
             }
         }
     }
-    if (side_level != NULL) {
-        /* Each side's non-corner border cells (top, right, bottom, left, unsharpened), as a fraction of
-         * the way from the tag's black to its white: about 0 for a true border side. */
-        for (int k = 0; k < 4; k++) side_level[k] = 0;
-        for (int k = 1; k < W - 1; k++) {
-            side_level[0] += grid[o * G + k + o];
-            side_level[1] += grid[(k + o) * G + W - 1 + o];
-            side_level[2] += grid[(W - 1 + o) * G + k + o];
-            side_level[3] += grid[(k + o) * G + o];
-        }
-        for (int k = 0; k < 4; k++) side_level[k] = (side_level[k] / (W - 2) - black) / (white - black);
-    }
+    if (side_level != NULL) border_side_levels(L, grid, black, white, side_level);
     if (det->soft_capturing) {
         soft_capture(det, q, black, white, grid);
         blocked_capture(det, q, black, white, grid);
@@ -7108,6 +7145,32 @@ static int side_end_levels(const family_layout *L, const image_view *im, const v
     return side_end_levels_whiter(L, im, q, min_contrast, 0, levels);
 }
 
+/* decode_quad reading one quad of a tag and reporting another: the decode's corners come from report, in the order the
+ * decode gave read's. Both quads come from the same fit, so they share their winding (otherwise report is read). */
+static int decode_quad_reporting(napa_detector *det, const image_view *im, const vec2 read[4], vec2 report[4],
+                                 const napa_params *params, napa_detection *out, double side_level[4],
+                                 edge_levels *levels, uint64_t *code_out) {
+    vec2 r[4];
+    memcpy(r, read, sizeof r);
+    if (!(signed_area(r) * signed_area(report) > 0)) memcpy(r, report, sizeof r);
+    const int decoded = decode_quad(det, im, r, params, 0, out, side_level, levels, code_out);
+    if (signed_area(report) < 0) { vec2 t = report[1]; report[1] = report[3]; report[3] = t; } /* as decode_quad does */
+    if (!decoded) return 0;
+    if (memcmp(r, report, sizeof r) != 0 && (side_level != NULL || levels != NULL)) {
+        /* The levels later steps weigh are the reported quad's own, as if it had been decoded. */
+        const family_layout *L = &det->fam;
+        double H[9], grid[256], border[64], black, white;
+        square_to_quad(report, H);
+        read_border(L, im, H, params->min_contrast, grid, border, &black, &white, NULL);
+        if (levels != NULL) levels->black = black, levels->white = white, levels->has_model = 0, levels->model_pending = 0;
+        if (side_level != NULL) border_side_levels(L, grid, black, white, side_level);
+    }
+    int first = 0;
+    for (int k = 0; k < 4; k++) if (r[k].x == out->corners[0] && r[k].y == out->corners[1]) first = k;
+    for (int k = 0; k < 4; k++) out->corners[2 * k] = report[(first + k) & 3].x, out->corners[2 * k + 1] = report[(first + k) & 3].y;
+    return 1;
+}
+
 static void correct_border_geometry(napa_detector *det, const image_view *rview, const decode_policy *policy,
                                     refined_quad *q, border_correction *c) {
     const int W = det->fam.width;
@@ -7549,7 +7612,10 @@ refine_candidate:
     q.lens_ok = 0;
     q.side_widths_seen[0] = 1; q.side_widths_seen[1] = 0; /* the widest side's edge over the narrowest, and the widest */
     q.accepted_blur = 0;
-    if (ok) ok = fit_sides_alternate(rview, fit->fine, q.finer, fit->reach, fit->reach, policy->params->min_contrast, 0, NAPA_FINAL_POINTS, &q.edge_w, &q.lv, cells, q.alternative, q.curved, q.lens_quad, &q.lens_ok, q.side_widths_seen, &fit->frame_sides);
+    /* An undersized tag must decode (almost) exactly, so it reads its cells through its centre-of-mass sides (below). */
+    vec2 centred[4];
+    const int read_centred = policy->require_exact != 0;
+    if (ok) ok = fit_sides_alternate(rview, fit->fine, q.finer, fit->reach, fit->reach, policy->params->min_contrast, 0, NAPA_FINAL_POINTS, &q.edge_w, &q.lv, cells, q.alternative, q.curved, q.lens_quad, &q.lens_ok, q.side_widths_seen, &fit->frame_sides, read_centred ? centred : NULL);
     if (!ok && rview != view) { /* the linear patch failed: go again on the frame's own pixels */
         lin_tried = 1, rview = view;
         memcpy(fit->fine, raw_fine, sizeof fit->fine), fit->reach = raw_reach, q.edge_w = raw_edge_w, q.lv = raw_lv;
@@ -7565,7 +7631,11 @@ refine_candidate:
     q.final_lv.black = 255; q.final_lv.white = 0; q.final_lv.has_model = 0; q.final_lv.model_pending = 0;
     uint64_t code = 0;
     vec2 second = q.finer[1];
-    int decoded_ = decode_quad(det, rview, q.finer, policy->decode_params, 0, &q.d, q.side_level, &q.final_lv, &code);
+    /* An undersized tag's cells are read through the centre-of-mass sides: on small tags the midpoint crossing's
+     * levels, read half a cell out, take in the neighbouring cell, so its sides move with the payload's colour and
+     * more of those tags miss the exact decode. The crossing sides remain the tag's corners. */
+    int decoded_ = read_centred ? decode_quad_reporting(det, rview, centred, q.finer, policy->decode_params, &q.d, q.side_level, &q.final_lv, &code)
+                                : decode_quad(det, rview, q.finer, policy->decode_params, 0, &q.d, q.side_level, &q.final_lv, &code);
     if (decoded_ && (!exact_enough(policy, q.d.hamming) || (policy->require_exact == 2 && q.d.id != fit->early.id))) decoded_ = 0;
     /* The ordinary fit may fail decoding because its edge levels were mixed by blur.
      * Reuse the already-fitted alternate, with the same strict decode and path limits. */
