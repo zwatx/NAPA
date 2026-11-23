@@ -1,4 +1,4 @@
-"""Small whole outlines supplement ordinary detections without lowering decode confidence."""
+"""Small whole outlines supplement ordinary detections under stricter decode limits."""
 
 import numpy as np
 import pytest
@@ -97,17 +97,24 @@ def test_small_additions_follow_established_whole_outputs(split: bool, shadows: 
     np.testing.assert_array_equal(limited[0].corners, observations[0].corners)
 
 
-def test_small_additions_require_exact_payload() -> None:
+def test_small_additions_correct_at_most_one_payload_bit() -> None:
+    """A small addition may correct one bit its first fit also read, never two."""
     image, _ = _small_scene((480, 640))
-    # Invert one complete payload cell (row3,col1) in the uneven 18px rendering.
+    # Invert one complete payload cell (row3,col1) in the uneven 18px rendering, then a second (row5,col4).
     image[97:99, 123:125] = 255 - image[97:99, 123:125]
+    two_cells = image.copy()
+    two_cells[101:104, 129:131] = 255 - two_cells[101:104, 129:131]
     fine = NapaDetector(min_tag_px=16)
-    ordinary = NapaDetector(min_tag_px=32)  # a small addition there; at 22 it is ordinary and may correct a bit
+    ordinary = NapaDetector(min_tag_px=32)  # a small addition there; at 22 it is ordinary and may correct more
     try:
         reference = fine.detect(image)
         observations = ordinary.detect(image)
+        two_reference = fine.detect(two_cells)
+        two_observations = ordinary.detect(two_cells)
     finally:
         fine.close()
         ordinary.close()
     assert [(o.tag_id, o.hamming) for o in reference] == [(424, 1)]
-    assert observations == []
+    assert [(o.tag_id, o.hamming) for o in observations] == [(424, 1)]
+    assert [(o.tag_id, o.hamming) for o in two_reference] == [(424, 2)]
+    assert two_observations == []
