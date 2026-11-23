@@ -1271,8 +1271,6 @@ static void sample_at(const image_view *im, const double *x, const double *y, in
 /* A balanced crossing is used on cells at least this wide, and only if it stays this close, in pixels, to the plain one. */
 #define NAPA_BALANCE_MIN_CELL 2.4
 #define NAPA_BALANCE_MAX_MOVE 0.12
-/* Midpoint-crossing passes: the plateau levels are re-read around each new estimate. */
-#define NAPA_CROSS_ITERS 3
 /* Noise floors are measured per region on the current grid. Sparse grids cap the floor at
  * NAPA_FLOOR_CAP because texture can inflate the estimate. A noisy sparse grid re-rakes with
  * block averages, then re-measures. The dense grid keeps original pixels for tiny borders and
@@ -3962,21 +3960,18 @@ retake:
                         if (alternate_crossing && cell_len >= NAPA_BALANCE_MIN_CELL) acj = balanced_crossing(prof, K, step, acj, mid);
                     }
                 }
-                double half = half_cell;
-                for (int iter = 0; iter < NAPA_CROSS_ITERS; iter++) {
-                    double pos0 = -r_out + cj * step, level[2]; /* white outside, black inside */
-                    const double level_x[2] = {bx + pnx * (pos0 - half), bx + pnx * (pos0 + half)};
-                    const double level_y[2] = {by + pny * (pos0 - half), by + pny * (pos0 + half)};
-                    sample_at(im, level_x, level_y, 2, level);
-                    double mid = 0.5 * (level[0] + level[1]) * 16777216.0;
-                    double best_c = nearest_midpoint_crossing(prof, K, jl, jr, mid, cj);
-                    if (best_c < 0) break;
-                    int settled = fabs(best_c - cj) < 1e-3; /* the next pass would re-read the same levels */
+                /* The midpoint between the plateau levels half a cell either side of the centre of mass.
+                 * One reading: re-reading the levels around each new estimate was slower and found fewer
+                 * small tags. */
+                double pos0 = -r_out + cj * step, level[2]; /* white outside, black inside */
+                const double level_x[2] = {bx + pnx * (pos0 - half_cell), bx + pnx * (pos0 + half_cell)};
+                const double level_y[2] = {by + pny * (pos0 - half_cell), by + pny * (pos0 + half_cell)};
+                sample_at(im, level_x, level_y, 2, level);
+                double mid = 0.5 * (level[0] + level[1]) * 16777216.0;
+                double best_c = nearest_midpoint_crossing(prof, K, jl, jr, mid, cj);
+                if (best_c >= 0) {
                     cj = best_c;
-                    if (settled || iter == NAPA_CROSS_ITERS - 1) {
-                        if (cell_len >= NAPA_BALANCE_MIN_CELL) cj = balanced_crossing(prof, K, step, cj, mid);
-                        break;
-                    }
+                    if (cell_len >= NAPA_BALANCE_MIN_CELL) cj = balanced_crossing(prof, K, step, cj, mid);
                 }
             }
             width_sum += (jr - jl + 1) * step;
