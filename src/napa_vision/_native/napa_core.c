@@ -7135,7 +7135,7 @@ typedef struct {
 
 typedef struct {
     int corrected_border, accepted_clip, near_frame, corner_out[4];
-    double edge_shift, measured_bias, whole_share, bias_estimate, accepted_border_level, curve_span;
+    double edge_shift, measured_bias, whole_share, bias_estimate, payload_agreement, accepted_border_level, curve_span;
 } border_correction;
 
 /* Each side's two border cells at each end (the corner cell and its neighbour along the side) as a fraction of the way
@@ -7220,7 +7220,7 @@ static void correct_border_geometry(napa_detector *det, const image_view *rview,
     c->corrected_border = 0;
     c->accepted_clip = 0;
     c->edge_shift = 0; /* the measured bias moved every side by this, without visible clipping */
-    c->measured_bias = 0; c->whole_share = 0;
+    c->measured_bias = 0; c->whole_share = 0; c->payload_agreement = 1;
     double level_before = 0;
     for (int k = 0; k < 4; k++) {
         bad |= (q->side_level[k] > 0.3) << k;
@@ -7360,8 +7360,11 @@ static void correct_border_geometry(napa_detector *det, const image_view *rview,
             const double span = vec_length(bowed[k].x - q->finer[k].x, bowed[k].y - q->finer[k].y);
             if (span > bow) bow = span;
         }
-        if (share > 0 && bow < NAPA_CURVED_TAG_MIN && payload_bias(&det->fam, rview, q->finer, q->final_lv.black, q->final_lv.white, &payload_delta))
-            share *= fade(payload_delta / delta, 0.25, 0.75);
+        if (share > 0 && bow < NAPA_CURVED_TAG_MIN && payload_bias(&det->fam, rview, q->finer, q->final_lv.black, q->final_lv.white, &payload_delta)) {
+            const double agreement = fade(payload_delta / delta, 0.25, 0.75);
+            share *= agreement;
+            if (!clipped) c->payload_agreement = agreement;
+        }
         if (share > 0) {
             vec2 grown[4];
             napa_detection d3;
@@ -7481,7 +7484,9 @@ static int polish_decoded_corners(napa_detector *det, const image_view *rview, c
         /* How much each reason to refit applies, from 0 to 1, so a tag near a limit moves part of the way. */
         double straight_weight = 0;
         if (c->whole_share < 1 && q->final_lv.white < 250 && c->bias_estimate < 1.5) {
-            straight_weight = (1 - c->whole_share) * fade(c->bias_estimate, NAPA_LOCAL_BIAS_MIN - NAPA_FADE_BIAS, NAPA_LOCAL_BIAS_MIN + NAPA_FADE_BIAS) * fade(1.5 - c->bias_estimate, 0, 0.2) *
+            /* An actual narrow border can make the unshifted edges look wrong if the rejected bias
+             * is added back here. Carry the payload's evidence into the local refit too. */
+            straight_weight = c->payload_agreement * (1 - c->whole_share) * fade(c->bias_estimate, NAPA_LOCAL_BIAS_MIN - NAPA_FADE_BIAS, NAPA_LOCAL_BIAS_MIN + NAPA_FADE_BIAS) * fade(1.5 - c->bias_estimate, 0, 0.2) *
                               (1 - fade(q->side_widths_seen[0], NAPA_LOCAL_MAX_WIDTH_RATIO - NAPA_FADE_WIDTH_RATIO, NAPA_LOCAL_MAX_WIDTH_RATIO + NAPA_FADE_WIDTH_RATIO));
             if (straight_weight > 0 && c->measured_bias == 0) c->measured_bias = c->bias_estimate;
         }
