@@ -365,6 +365,7 @@ static inline double vec_length(double x, double y) { return sqrt(x * x + y * y)
 /* A calibrated camera's lens (napa_set_lens), OpenCV's conventions: pixel centres at integers, normalized coordinates
  * x = X/Z, y = Y/Z. Brown-Conrady k: k1 k2 p1 p2 k3 k4 k5 k6 s1 s2 s3 s4; fisheye (Kannala-Brandt) k: k1 k2 k3 k4. */
 typedef struct lens_memo lens_memo;
+typedef struct lens_replay lens_replay;
 typedef struct {
     int model; /* NAPA_LENS_* */
     double fx, fy, cx, cy, skew;
@@ -372,6 +373,7 @@ typedef struct {
     int rational, prism; /* Brown-Conrady: whether k4-k6 or s1-s4 are in use */
     lens_memo *memo;     /* the detector's cache of the view it last worked out for a tag, updated even through a
                           * const napa_lens */
+    lens_replay *replay; /* first query, only on a speculative lens copy */
 } napa_lens;
 
 /* One tag's view through the lens: the plane square to the ray through the tag's middle, where every straight edge of the
@@ -390,6 +392,15 @@ struct lens_memo {
     vec2 key[4], plane[4], next[4], next_plane[4];
     double bow, departure; /* departure: quad_map_init's, -1 until asked */
     lens_frame f;
+};
+
+/* A worker starts this candidate with an empty lens memo. If it would miss the preceding
+ * serial memo on its first query, the two memo histories coincide from then on. */
+struct lens_replay {
+    vec2 first[4];
+    double straight;
+    int queried;
+    lens_memo after;
 };
 
 /* What labelling a level (threshold_rows) writes besides its runs and the level's dark bits: row and tile
@@ -473,6 +484,11 @@ struct napa_detector {
     int has_camera_gamma;
     napa_lens lens; /* model NAPA_LENS_NONE unless napa_set_lens gave one */
     lens_memo lens_cache; /* lens.memo points here */
+    lens_replay *lens_candidates, *lens_wholes;
+    size_t lens_candidates_capacity, lens_wholes_capacity;
+#ifdef NAPA_LENS_REPLAY_DIAGNOSTICS
+    uint64_t lens_replay_counts[8];
+#endif
     uint8_t linearize[256]; /* undoes the camera's tone curve; used only while refining a tag */
     uint8_t *linear_frame;  /* frame-sized so a tag keeps its coordinates; only each tag's own rectangle is ever filled */
     size_t linear_capacity;
@@ -908,6 +924,7 @@ void napa_destroy(napa_detector *det) {
     free(det->level);
     free(det->failed);
     free(det->memo);
+    free(det->lens_candidates), free(det->lens_wholes);
     free(det->regrow_stack);
     free(det->regrow_mark);
     free(det->tone_blur);
@@ -3553,11 +3570,24 @@ static double lens_bow(const lens_frame *f, const vec2 in[4], const vec2 plane[4
 
 static int same_corners(const vec2 a[4], const vec2 b[4]) { return memcmp(a, b, 4 * sizeof(vec2)) == 0; }
 
+static int lens_memo_near(const lens_memo *m, const vec2 in[4], double straight) {
+    if (!(m->bow < 0.5 * straight)) return 0;
+    double moved = 0;
+    for (int k = 0; k < 4; k++) moved = fmax(moved, fabs(in[k].x - m->key[k].x) + fabs(in[k].y - m->key[k].y));
+    return moved < NAPA_LENS_MEMO_NEAR_PX;
+}
+
 /* The tag view for corners `in`, with their places in its plane. Returns 0 where the lens leaves every side straight to
  * within `straight` pixels: pixels serve as well there and cost less. The detector's memo answers the questions a
  * candidate's steps ask in turn: the same corners again, the corners the last lens fit returned (already in its plane),
  * and nearly the same corners where the sides were far straighter than this asks. */
 static int lens_frame_init(const napa_lens *L, const vec2 in[4], lens_frame *f, vec2 plane[4], double straight) {
+    lens_replay *replay = L->replay;
+    if (replay != NULL && !replay->queried) {
+        memcpy(replay->first, in, sizeof replay->first);
+        replay->straight = straight;
+        replay->queried = 1;
+    }
     lens_memo *m = L->memo;
     if (m != NULL && m->valid) {
         if (same_corners(in, m->key)) {
@@ -3583,11 +3613,7 @@ static int lens_frame_init(const napa_lens *L, const vec2 in[4], lens_frame *f, 
             memcpy(plane, m->plane, sizeof m->plane);
             return 1;
         }
-        if (m->bow < 0.5 * straight) {
-            double moved = 0;
-            for (int k = 0; k < 4; k++) moved = fmax(moved, fabs(in[k].x - m->key[k].x) + fabs(in[k].y - m->key[k].y));
-            if (moved < NAPA_LENS_MEMO_NEAR_PX) return 0;
-        }
+        if (lens_memo_near(m, in, straight)) return 0;
     }
     lens_frame g;
     vec2 q[4];
@@ -6981,6 +7007,71 @@ static void decode_whole_ahead(const memo_job *j, napa_detector *wd, int index);
 static void decode_shape_ahead(const memo_job *j, napa_detector *wd, const component *comp, int s, int last,
                                struct delayed_memo *dm);
 
+static int reserve_lens_replays(lens_replay **slot, size_t *capacity, size_t count) {
+    if (count <= *capacity) return 1;
+    if (count > SIZE_MAX / sizeof **slot) return 0;
+    lens_replay *larger = (lens_replay *)realloc(*slot, count * sizeof **slot);
+    if (larger == NULL) return 0;
+    *slot = larger, *capacity = count;
+    return 1;
+}
+
+static int decode_lens_ahead(napa_detector *wd, const image_view *view, const decode_policy *policy, candidate_fit *fit,
+                             const vec2 rough[4], double regrow_extent, candidate_outcome *out, pass_timer *timing,
+                             lens_replay *replay) {
+    if (view->lens == NULL)
+        return decode_and_refine(wd, view, policy, fit, rough, regrow_extent, out, timing);
+    lens_memo memo = {0};
+    napa_lens lens = *view->lens;
+    lens.memo = &memo, lens.replay = replay;
+    image_view local = *view;
+    local.lens = &lens;
+    replay->queried = 0;
+    const int result = decode_and_refine(wd, &local, policy, fit, rough, regrow_extent, out, timing);
+    out->view.lens = view->lens;
+    if (replay->queried) {
+        memo.f.L = view->lens;
+        replay->after = memo;
+    }
+    return result;
+}
+
+#ifdef NAPA_LENS_REPLAY_DIAGNOSTICS
+NAPA_API void napa_lens_replay_counts(const napa_detector *det, uint64_t counts[8]) {
+    memcpy(counts, det->lens_replay_counts, sizeof det->lens_replay_counts);
+}
+#define LENS_REPLAY_COUNT(det, k) ((void)++(det)->lens_replay_counts[k])
+#else
+#define LENS_REPLAY_COUNT(det, k) ((void)(det))
+#endif
+
+/* Called only at the serial decode boundary, after coverage and failed-quad checks. Even a
+ * failed decode has changed the memo. A skipped candidate must leave it alone. */
+static int take_lens_replay(napa_detector *det, const lens_replay *result) {
+    if (!result->queried) {
+        LENS_REPLAY_COUNT(det, 0);
+        return 1;
+    }
+    lens_memo *m = &det->lens_cache;
+    if (m->valid) {
+        if (same_corners(result->first, m->key)) {
+            LENS_REPLAY_COUNT(det, 1);
+            return 0;
+        }
+        if (m->chained && same_corners(result->first, m->next)) {
+            LENS_REPLAY_COUNT(det, 2);
+            return 0;
+        }
+        if (lens_memo_near(m, result->first, result->straight)) {
+            LENS_REPLAY_COUNT(det, 3);
+            return 0;
+        }
+    }
+    *m = result->after;
+    LENS_REPLAY_COUNT(det, 4);
+    return 1;
+}
+
 /* The loop's decode_and_refine for a candidate whose first fit the pre-pass made, worked out ahead on this thread's
  * detector wd, with the same rough quad, fit, thresholds and regrowth extent the loop would use. Whether the loop
  * gets that far (coverage, failed quads, duplicates) is still decided there, in candidate order. */
@@ -6999,7 +7090,8 @@ static void decode_ahead(const memo_job *j, napa_detector *wd, cand_memo *m, con
     const decode_policy policy = {j->params, decode_params, j->shadow, 0, -1};
     pass_timer timing = {0};
     const double regrow_extent = regrow_extent_for(0, j->shadow, 0, j->base, j->shaped, s, big_px);
-    m->ahead = decode_and_refine(wd, j->view, &policy, &fit, rough, regrow_extent, &m->outcome, &timing) == 0;
+    lens_replay *replay = j->view->lens == NULL ? NULL : &j->det->lens_candidates[m - j->memo];
+    m->ahead = decode_lens_ahead(wd, j->view, &policy, &fit, rough, regrow_extent, &m->outcome, &timing, replay) == 0;
     m->fit_after = fit;
 }
 
@@ -8033,7 +8125,8 @@ static void keep_uncovered(napa_detector *det, const pass_config *config, const 
 /* Whether a level's ordinary candidates get the threaded pre-pass (memo_candidates). (A camera's lens memo isn't
  * shared safely.) */
 static int level_pre_pass_possible(const napa_detector *det, const image_view *view, const candidate_level *level) {
-    return det->pool != NULL && view->lens == NULL && !level->redo;
+    (void)view;
+    return det->pool != NULL && !level->redo;
 }
 static int level_pre_pass(const napa_detector *det, const image_view *view, const candidate_level *level) {
     return level_pre_pass_possible(det, view, level) && level->ncand >= 2 * MEMO_CHUNK;
@@ -8459,7 +8552,8 @@ static void decode_shape_ahead(const memo_job *j, napa_detector *wd, const compo
     const decode_policy policy = {config->params, decode_params, shadow, 0, undersized_whole ? 0 : -1};
     pass_timer timing = {0};
     const double regrow_extent = regrow_extent_for(regrown, shadow, 0, base, config->shaped, s, big_px);
-    dm->ahead = decode_and_refine(wd, j->view, &policy, &fit, dm->rough, regrow_extent, &dm->outcome, &timing) == 0;
+    lens_replay *replay = j->view->lens == NULL ? NULL : &j->det->lens_wholes[dm - j->det->dmemo];
+    dm->ahead = decode_lens_ahead(wd, j->view, &policy, &fit, dm->rough, regrow_extent, &dm->outcome, &timing, replay) == 0;
     dm->fit_after = fit;
 }
 
@@ -8499,10 +8593,13 @@ static int process_level_candidates(napa_detector *det, const pass_config *confi
     if (memo_ready) {
         memo_level = 1; /* the previous level's pool worked it out (sample_next_level) */
     } else if (level->extremes_deferred || level_pre_pass(det, &view, level) ||
-        (det->pool != NULL && view.lens == NULL && !redo && ((next != NULL && ncand >= 1) || pending > 0))) {
+        (det->pool != NULL && !redo && ((next != NULL && ncand >= 1) || pending > 0))) {
         if (memo_reserve(det, ncand)) { /* always, when the extremes were deferred: assemble_level_candidates reserved it */
-            const int ahead = can_decode_ahead(det);
-            if (ahead && pending > 0 && pending <= (size_t)INT32_MAX / 2) {
+            int ahead = can_decode_ahead(det);
+            if (ahead && view.lens != NULL)
+                ahead = reserve_lens_replays(&det->lens_candidates, &det->lens_candidates_capacity, (size_t)ncand);
+            if (ahead && pending > 0 && pending <= (size_t)INT32_MAX / 2 &&
+                (view.lens == NULL || reserve_lens_replays(&det->lens_wholes, &det->lens_wholes_capacity, pending))) {
                 if (pending > det->dmemo_capacity) {
                     delayed_memo *p = (delayed_memo *)realloc(det->dmemo, pending * sizeof(delayed_memo));
                     if (p != NULL) det->dmemo = p, det->dmemo_capacity = pending;
@@ -8513,7 +8610,7 @@ static int process_level_candidates(napa_detector *det, const pass_config *confi
              * when every earlier level's were. */
             int wholes_now = 0, wholes_all = 0; /* wholes_all: none are left for the terminal level's pre-pass */
             const int ready = det->dmemo_ready;
-            if (ahead && next != NULL && outputs->fine_whole_count == (size_t)ready) {
+            if (ahead && next != NULL && outputs->fine_whole_count == (size_t)ready && ready <= INT32_MAX - ncand) {
                 if ((size_t)ncand > det->whole_index_capacity) {
                     int32_t *p = (int32_t *)realloc(det->whole_index, (size_t)ncand * sizeof(int32_t));
                     if (p != NULL) det->whole_index = p, det->whole_index_capacity = (size_t)ncand;
@@ -8530,7 +8627,8 @@ static int process_level_candidates(napa_detector *det, const pass_config *confi
                         delayed_memo *p = (delayed_memo *)realloc(det->dmemo, total * sizeof(delayed_memo));
                         if (p != NULL) det->dmemo = p, det->dmemo_capacity = total;
                     }
-                    wholes_now = count > 0 && total <= det->dmemo_capacity;
+                    wholes_now = count > 0 && total <= det->dmemo_capacity &&
+                        (view.lens == NULL || reserve_lens_replays(&det->lens_wholes, &det->lens_wholes_capacity, total));
                     wholes_all = count == 0 || wholes_now;
                 }
                 if (wholes_now) det->dmemo_ready = ready + count;
@@ -8550,7 +8648,7 @@ static int process_level_candidates(napa_detector *det, const pass_config *confi
             const int jobs = (next != NULL) + job.ordinary_jobs + (last ? det->dmemo_n - det->dmemo_ready : 0);
             /* The terminal level next, with nothing deferred to its pre-pass: assemble it and work out its pre-pass
              * in this pool too (sample_next_level), in the spare candidate set. */
-            const int early = next != NULL && ahead && wholes_all && next->level->last;
+            const int early = next != NULL && ahead && wholes_all && next->level->last && view.lens == NULL;
             if (early) next->early = 1, next->pool_ctx = &job, job.coarse = &next->coarse, job.coarse_from = jobs;
             if (next != NULL) run_set_swap(det); /* the job holds this level's buffers; the next level takes the others */
             if (early) cand_set_swap(det);
@@ -8708,9 +8806,11 @@ static int process_level_candidates(napa_detector *det, const pass_config *confi
         decode_policy policy = {params, decode_params, shadow, piece, bit_limit};
         candidate_outcome computed;
         const candidate_outcome *outcome = &computed;
-        if (mm && mm->ahead) {
+        if (mm && mm->ahead && (view.lens == NULL || take_lens_replay(det, &det->lens_candidates[ci]))) {
+            if (view.lens) LENS_REPLAY_COUNT(det, 5);
             outcome = &mm->outcome, fit = mm->fit_after; /* decode_ahead's, from the same first fit (mm->fit == 1) */
-        } else if (dm && dm->ahead) {
+        } else if (dm && dm->ahead && (view.lens == NULL || take_lens_replay(det, &det->lens_wholes[pending_index]))) {
+            if (view.lens) LENS_REPLAY_COUNT(det, 6);
             outcome = &dm->outcome, fit = dm->fit_after; /* decode_whole_ahead's, from the same first fit */
         } else if (decode_and_refine(det, &view, &policy, &fit, rough,
                                      regrow_extent_for(regrown, shadow, piece, base, shaped, s, big_px), &computed,
@@ -8718,6 +8818,7 @@ static int process_level_candidates(napa_detector *det, const pass_config *confi
             return -2;
         }
         if (!outcome->decoded) {
+            if (view.lens && outcome != &computed) LENS_REPLAY_COUNT(det, 7);
             TRACE(8);
             *candidate_fate = extended_shape ? CANDIDATE_ROUGH_REJECTED : CANDIDATE_DECODE_FAILED;
             /* Pieces only read the list. A stricter border failure also cannot prove
