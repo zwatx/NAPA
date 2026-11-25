@@ -72,6 +72,26 @@ def test_threads_give_identical_results(options: dict) -> None:
             detector.close()  # joins its worker threads now rather than at garbage collection
 
 
+def test_calibrated_replay_survives_worker_pool_resize() -> None:
+    camera = (
+        np.array([[600.0, 0.0, 319.5], [0.0, 600.0, 239.5], [0.0, 0.0, 1.0]]),
+        np.array([-0.3, 0.1, 0.0, 0.0, 0.0]),
+    )
+    frames = [_busy_frame(seed=seed, size=(640, 480)) for seed in (7, 11)]
+    serial = NapaDetector(camera=camera)
+    threaded = NapaDetector(camera=camera, threads=4)
+    try:
+        for count in (4, 2, 1, 8, 4):
+            assert threaded._library.napa_set_threads(threaded._handle, count) == 0
+            for frame in frames:
+                expected = _results(serial, frame)
+                assert len(expected) >= 5
+                assert _results(threaded, frame) == expected
+    finally:
+        threaded.close()
+        serial.close()
+
+
 def test_threads_across_detectors_running_at_once() -> None:
     frames = [_busy_frame(seed=seed) for seed in range(3)]
     expected = [_results(NapaDetector(min_tag_px=16), frame) for frame in frames]
