@@ -6864,6 +6864,8 @@ static NAPA_NOINLINE int quiet_zone_passes(const image_view *view, const vec2 ro
         }
         good_sides += contrast_sum >= min_contrast * 0.25;
         all_sides += contrast_sum;
+        if (good_sides < side) return 0; /* at most 3 - side more sides */
+        if (!strict && good_sides == 3) return 1;
     }
     return !(good_sides < 3 || (strict && all_sides < (shadow ? 6.0 : 4.8) * min_contrast));
 }
@@ -6983,7 +6985,8 @@ static double regrow_extent_for(int regrown, int shadow, int piece, int base, in
 
 /* threads: a candidate's rough quad, screen and first fit, for the candidate loop. screen and fit are -1 where the
  * pre-pass didn't get that far (the loop then works them out itself, if it gets there). When decoding ahead, ahead
- * says whether outcome holds what the loop's decode_and_refine would make of that first fit. */
+ * says whether outcome holds what the loop's decode_and_refine would make of that first fit.
+ * Piece fits may also hold the distinct PIECE_COVERED and PIECE_BAD_OUTLINE rejections. */
 typedef struct cand_memo {
     int pick[4][2];
     signed char screen, fit, ahead;
@@ -7029,6 +7032,9 @@ typedef struct memo_job {
     const int32_t *cand_runs, *cand_run_end;
     struct memo_job *coarse; /* indices from coarse_from on are the terminal level's (sample_next_level), else NULL */
     int coarse_from;
+    const napa_detection *known_out; /* stored detections at pre-pass dispatch */
+    const vec2 *known_centers;
+    int known_count, coverage_start;
     int fit_only; /* one candidate per index, but no decoding ahead (the terminal level assembled early) */
 } memo_job;
 
@@ -7037,6 +7043,18 @@ static void sample_next_level(struct next_level_job *job, int worker);
 static void decode_whole_ahead(const memo_job *j, napa_detector *wd, int index);
 static void decode_shape_ahead(const memo_job *j, napa_detector *wd, const component *comp, int s, int last,
                                struct delayed_memo *dm);
+
+/* During a level's worker pass the accepted prefix is stable. The ordered consumer still
+ * checks newly accepted detections and retains every candidate's original fate. */
+static int memo_covered(const memo_job *j, const component *c, int s, int from) {
+    if (j->known_count <= from) return 0;
+    const double x = 0.5 * (c->minx + c->maxx) * s * j->sx + j->offx;
+    const double y = 0.5 * (c->miny + c->maxy) * s * j->sy + j->offy;
+    const double w = (c->maxx - c->minx + 1) * j->sx, h = (c->maxy - c->miny + 1) * j->sy;
+    const double big_px = s * (w > h ? w : h);
+    return covered_footprint(j->known_out + from, j->known_centers + from, j->known_count - from,
+                             x, y, 0.3 * big_px + 2.0);
+}
 
 /* Individual threads own these arrays while the jobs run. The serial consumer holds
  * integer handles, so growing the owner array never invalidates an earlier result. */
@@ -7147,6 +7165,21 @@ static void decode_ahead(const memo_job *j, napa_detector *wd, cand_memo *m, con
     m->fit_after = fit;
 }
 
+/* The pixel-space fit has no lens memo or parent-fate side effects. */
+static void memo_first_fit(const memo_job *j, cand_memo *m, const vec2 rough[4],
+                           int piece, int undersized_whole) {
+    const int screen = rough_screen_mode(j->s, j->last, j->shadow, piece, undersized_whole, j->params->min_border_cells);
+    if (screen != QUIET_ZONE_SKIP) {
+        m->screen = (signed char)quiet_zone_passes(j->view, rough, 0.5 * j->s * j->smax, j->cells,
+                                                   j->params->min_contrast, screen == QUIET_ZONE_STRICT, j->shadow);
+        if (!m->screen) return;
+    }
+    m->frame_sides = 0;
+    m->edge_w = 0;
+    m->fit = (signed char)fit_initial_from_level(j->view, rough, m->fine, j->s, j->smax,
+                                                j->params->min_contrast, &m->edge_w, j->cells, &m->frame_sides);
+}
+
 /* One index of the pre-pass, for the ordinary candidates (det->cands), as the candidate loop treats them: MEMO_CHUNK
  * candidates, or one when decoding ahead. */
 static void memo_candidates(void *ctx, int index, int worker) {
@@ -7193,23 +7226,15 @@ static void memo_candidates(void *ctx, int index, int worker) {
                 decode_shape_ahead(j, thread_detector(det, worker), comp, j->s, j->last, &det->dmemo[det->whole_index[ci]]);
             continue;
         }
+        if (memo_covered(j, comp, j->s, j->coverage_start)) continue;
         double best_area, perim_q;
         if (rough_quad_too_full(&det->fam, comp, m->pick, &best_area, &perim_q)) continue;
-        vec2 rough[4], fine[4];
+        if (whole_is_extended(j->base, j->s, j->last, 0, comp, bw, bh, best_area) &&
+            extended_shape_rejected(comp, best_area, perim_q)) continue;
+        vec2 rough[4];
         rough_corners(m->pick, j->s, j->sx, j->sy, j->offx, j->offy, rough);
-        const int s = j->s;
-        const int screen_mode = rough_screen_mode(s, j->last, j->shadow, 0, undersized_whole, j->params->min_border_cells);
-        if (screen_mode != QUIET_ZONE_SKIP) {
-            m->screen = (signed char)quiet_zone_passes(j->view, rough, 0.5 * s * j->smax, j->cells, j->params->min_contrast,
-                                                       screen_mode == QUIET_ZONE_STRICT, j->shadow);
-            if (!m->screen) continue;
-        }
-        double width = 0;
-        m->fit = (signed char)fit_initial_from_level(j->view, rough, fine, s, j->smax,
-                                                   j->params->min_contrast, &width, j->cells, &m->frame_sides);
-        memcpy(m->fine, fine, sizeof fine);
-        m->edge_w = width;
-        if (j->ahead && m->fit) /* decoding ahead implies a detector per pool thread (can_decode_ahead) */
+        memo_first_fit(j, m, rough, 0, undersized_whole);
+        if (j->ahead && m->fit > 0) /* decoding ahead implies one detector per pool thread */
             decode_ahead(j, thread_detector(det, worker), m, comp, bw, bh, best_area, perim_q, rough);
     }
 }
@@ -7242,6 +7267,9 @@ static void prepare_workers(napa_detector *det) {
 
 /* Room for the pre-pass's results for ncand candidates. */
 static int memo_reserve(napa_detector *det, int ncand) {
+#if SIZE_MAX <= UINT32_MAX
+    if ((size_t)ncand > SIZE_MAX / sizeof(cand_memo)) return 0;
+#endif
     if ((size_t)ncand > det->memo_capacity) {
         cand_memo *m = (cand_memo *)realloc(det->memo, (size_t)ncand * sizeof(cand_memo));
         if (m != NULL) det->memo = m;
@@ -8584,6 +8612,7 @@ static void decode_shape_ahead(const memo_job *j, napa_detector *wd, const compo
     const int bw = comp->maxx - comp->minx + 1, bh = comp->maxy - comp->miny + 1;
     const int undersized_whole = base > 1 && (bw < config->lo || bh < config->lo);
     dm->stage = -1, dm->ahead = 0;
+    if (memo_covered(j, comp, s, 0)) return;
     int pick[4][2];
     rough_pick(comp, undersized_whole, pick);
     double best_area, perim_q;
@@ -8608,6 +8637,53 @@ static void decode_shape_ahead(const memo_job *j, napa_detector *wd, const compo
     dm->ahead = decode_lens_ahead(j->det, wd, j->view, &policy, &fit, dm->rough, regrow_extent,
                                   &dm->outcome, &timing, &wd->lens_wholes, &dm->replay) == 0;
     dm->fit_after = fit;
+}
+
+enum { PIECE_MIN = 48 };
+
+enum { PIECE_COVERED = -3, PIECE_BAD_OUTLINE = -2 };
+
+typedef struct {
+    memo_job prep;
+    int npieces, ncand, fine, redo, piece_found, chunk;
+} piece_memo_job;
+
+/* Ordinary fates and the accepted prefixes are final at dispatch. Piece fates stay ordered. */
+static void memo_pieces(void *ctx, int index, int worker) {
+    (void)worker;
+    const piece_memo_job *job = (const piece_memo_job *)ctx;
+    const memo_job *j = &job->prep;
+    napa_detector *det = j->det;
+    const int chunk = job->chunk;
+    const int end = (index + 1) * chunk < job->npieces ? (index + 1) * chunk : job->npieces;
+    for (int k = index * chunk; k < end; ++k) {
+        cand_memo *m = &j->memo[k];
+        const component *p = &det->pieces[k];
+        const int parent = det->piece_cand[k];
+        m->fit = m->screen = -1;
+        m->ahead = 0;
+        if (job->redo && (k >= job->fine && p->work.candidate.fate != CANDIDATE_WAITING_FOR_NECKS)) continue;
+        if (parent >= 0 && (j->s == 1 ||
+            (det->piece_next[k] < job->ncand && suppresses_pieces(det->cands[parent].work.candidate.fate)))) continue;
+        if (memo_covered(j, p, j->s, j->coverage_start)) { m->fit = PIECE_COVERED; continue; }
+        const int bw = p->maxx - p->minx + 1, bh = p->maxy - p->miny + 1;
+        const double px = 0.5 * (p->minx + p->maxx) * j->s * j->sx + j->offx;
+        const double py = 0.5 * (p->miny + p->maxy) * j->s * j->sy + j->offy;
+        const double big = j->s * (bw * j->sx > bh * j->sy ? bw * j->sx : bh * j->sy);
+        if (covered_footprint(det->piece_out, det->piece_centers, job->piece_found, px, py, 0.3 * big + 2.0)) {
+            m->fit = PIECE_COVERED;
+            continue;
+        }
+        rough_pick(p, 0, m->pick);
+        double area, perimeter;
+        if (rough_quad_too_full(&det->fam, p, m->pick, &area, &perimeter) || area < 0.3 * bw * bh) {
+            m->fit = PIECE_BAD_OUTLINE;
+            continue;
+        }
+        vec2 rough[4];
+        rough_corners(m->pick, j->s, j->sx, j->sy, j->offx, j->offy, rough);
+        memo_first_fit(j, m, rough, 1, 0);
+    }
 }
 
 static int process_level_candidates(napa_detector *det, const pass_config *config, pass_outputs *outputs,
@@ -8684,6 +8760,9 @@ static int process_level_candidates(napa_detector *det, const pass_config *confi
                 if (wholes_now) det->dmemo_ready = ready + count;
             }
             memo_job job = memo_job_for(det, config, level, ncand);
+            job.known_out = outputs->out, job.known_centers = det->out_centers;
+            job.known_count = outputs->found < outputs->max_out ? outputs->found : outputs->max_out;
+            job.coverage_start = level->covered_prefix;
             if (ahead) {
                 prepare_workers(det);
                 /* Largest boxes first: the few candidates that go on to refine are among them, and a refinement
@@ -8709,7 +8788,23 @@ static int process_level_candidates(napa_detector *det, const pass_config *confi
     }
     if (last && outputs->fine_whole_count > (size_t)(INT32_MAX - ordinary_count)) return -2;
     int candidate_count = ordinary_count + (last ? (int)outputs->fine_whole_count : 0);
+
+    int pieces_prepared = 0, prior_piece_count = 0;
     for (int ci = 0; ci < candidate_count; ci++) {
+        if (ci == ncand && npieces >= PIECE_MIN && det->pool && memo_reserve(det, npieces)) {
+            piece_memo_job job = {0};
+            job.prep = memo_job_for(det, config, level, npieces);
+            job.prep.known_out = outputs->out;
+            job.prep.known_centers = det->out_centers;
+            job.prep.known_count = outputs->found < outputs->max_out ? outputs->found : outputs->max_out;
+            job.prep.coverage_start = covered_prefix;
+            job.npieces = npieces, job.ncand = ncand, job.fine = fine;
+            job.redo = redo, job.piece_found = prior_piece_count = outputs->piece_found;
+            /* Small queues need enough ranges for all workers. Large queues save dispatch work. */
+            job.chunk = npieces >= 256 ? 12 : 4;
+            pool_run(det->pool, memo_pieces, &job, (npieces - 1) / job.chunk + 1);
+            pieces_prepared = 1;
+        }
         const int delayed = ci >= ordinary_count;
         const size_t pending_index = delayed ? (size_t)(ci - ordinary_count) : 0;
         const int piece = !delayed && ci >= ncand;
@@ -8783,15 +8878,22 @@ static int process_level_candidates(napa_detector *det, const pass_config *confi
         /* The earlier check ruled out the initial unsplit prefix; only appended centres
          * can cover this box now. The count guard also keeps pointer arithmetic off NULL. */
         int covered_count = outputs->found < outputs->max_out ? outputs->found : outputs->max_out;
-        if ((covered_count > coverage_start &&
-             covered_footprint(outputs->out + coverage_start, det->out_centers + coverage_start, covered_count - coverage_start,
-                     ccx, ccy, 0.3 * big_px + 2.0)) ||
-            (piece && covered_footprint(det->piece_out, det->piece_centers, outputs->piece_found, ccx, ccy, 0.3 * big_px + 2.0))) {
+        const cand_memo *pm = piece && pieces_prepared ? &det->memo[k] : NULL;
+        const int piece_ready = pm && (pm->fit != -1 || pm->screen >= 0);
+        const int pstart = piece_ready ? prior_piece_count : 0;
+        const int covered = piece_ready ? pm->fit == PIECE_COVERED :
+            covered_count > coverage_start &&
+            covered_footprint(outputs->out + coverage_start, det->out_centers + coverage_start,
+                              covered_count - coverage_start, ccx, ccy, 0.3 * big_px + 2.0);
+        if (covered || (piece && outputs->piece_found > pstart &&
+            covered_footprint(det->piece_out + pstart, det->piece_centers + pstart,
+                              outputs->piece_found - pstart, ccx, ccy, 0.3 * big_px + 2.0))) {
             TRACE(5);
             *candidate_fate = CANDIDATE_SKIPPED;
             continue;
         }
         const cand_memo *mm = memo_level && !piece && !delayed ? &det->memo[ci] : NULL;
+        if (piece_ready) mm = pm;
         const delayed_memo *dm = delayed && pending_index < (size_t)det->dmemo_n ? &det->dmemo[pending_index] : NULL;
         int pick[4][2];
         if (mm) memcpy(pick, mm->pick, sizeof pick);
@@ -8800,7 +8902,8 @@ static int process_level_candidates(napa_detector *det, const pass_config *confi
         /* Every tag36h11 code has at least 10 white payload cells, so at most 54/64 of a tag's
          * square is dark (0.85 measured, against the quad grown by the half sample its corner
          * samples sit inside). Solid strokes and filled shapes run well past that. */
-        if (rough_quad_too_full(&det->fam, &comp, pick, &best_area, &perim_q)) {
+        if (piece_ready ? pm->fit == PIECE_BAD_OUTLINE :
+            rough_quad_too_full(&det->fam, &comp, pick, &best_area, &perim_q)) {
             PROF_MARK(PROF_QUAD);
             TRACE(6);
             *candidate_fate = CANDIDATE_ROUGH_REJECTED;
@@ -8808,7 +8911,7 @@ static int process_level_candidates(napa_detector *det, const pass_config *confi
         }
         /* The axis-aligned box grows when a thin tag rotates. Sparse or slender whole
          * proposals use quad-relative fill and compactness; pieces use box-relative area. */
-        int low_box_fill = best_area < 0.3 * bw * bh;
+        int low_box_fill = !piece_ready && best_area < 0.3 * bw * bh;
         extended_shape = !piece && whole_is_extended(base, s, last, undersized_whole, &comp, bw, bh, best_area);
         if ((piece && low_box_fill) || (extended_shape && extended_shape_rejected(&comp, best_area, perim_q))) {
             PROF_MARK(PROF_QUAD);
