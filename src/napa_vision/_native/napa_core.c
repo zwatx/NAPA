@@ -8116,7 +8116,17 @@ static void order_largest_first(napa_detector *det, int ncand) {
     int at[33] = {0};
     for (int ci = 0; ci < ncand; ci++) at[area_rank(&det->cands[ci]) + 1]++;
     for (int b = 0; b < 32; b++) at[b + 1] += at[b];
-    for (int ci = 0; ci < ncand; ci++) det->memo_order[at[area_rank(&det->cands[ci])]++] = ci;
+    if (ncand < 256) {
+        for (int ci = 0; ci < ncand; ci++) det->memo_order[at[area_rank(&det->cands[ci])]++] = ci;
+        return;
+    }
+    const int requested = 2 * det->threads;
+    const int priority = ncand < requested ? ncand : requested;
+    int raster = priority;
+    for (int ci = 0; ci < ncand; ci++) {
+        const int rank = at[area_rank(&det->cands[ci])]++;
+        det->memo_order[rank < priority ? rank : raster++] = ci;
+    }
 }
 
 static void sample_next_level(next_level_job *job, int worker) {
