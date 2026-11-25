@@ -1167,6 +1167,7 @@ static void sample_at(const image_view *im, const double *x, const double *y, in
  * the sides disagreed about it. Beyond NAPA_LOCAL_MAX_BOW the border-width estimate of that bias stops holding. */
 #define NAPA_LOCAL_EDGE_SAMPLES 32
 #define NAPA_LOCAL_EDGE_CONTRAST 20.0
+#define NAPA_LOCAL_EDGE_RADIUS 3.0
 #define NAPA_LOCAL_EDGE_DISAGREE 0.2
 #define NAPA_LOCAL_MIN_MOVE 0.2
 #define NAPA_LOCAL_BIAS_MIN 0.25
@@ -4729,7 +4730,7 @@ static int payload_bias(const family_layout *L, const image_view *im, const vec2
 /* Where the dark-to-light edge crosses half level on a short ray through (x, y), as signed distance along the ray. */
 static int edge_crossing(const image_view *view, double x, double y, double nx, double ny, double *offset) {
     enum { N = 13 };
-    const double start = -3.0, step = 0.5;
+    const double start = -NAPA_LOCAL_EDGE_RADIUS, step = 2.0 * NAPA_LOCAL_EDGE_RADIUS / (N - 1);
     double v[N], xs[N], ys[N], best = 0;
     int peak = -1;
     for (int i = 0; i < N; i++) xs[i] = x + (start + step * i) * nx, ys[i] = y + (start + step * i) * ny;
@@ -4830,7 +4831,7 @@ static double corner_sides_offset(const image_view *view, const vec2 c, const co
 
 /* Re-find a corner from the two edge runs beside it. A fit along a whole side averages its bow, and a sharp corner
  * magnifies what's left; short runs follow the edges right where they meet. shift is the sides' measured bias. */
-static int refit_corner(const image_view *view, const vec2 c, const corner_sides *f, double cell, double shift, vec2 *out) {
+static int refit_corner(const image_view *view, const vec2 c, const corner_sides *f, double cell, double shift, double edge_width, vec2 *out) {
     double fits[2][3];
     const double scale = f->near_end + 3 * cell;
     double spacing = 3 * cell / NAPA_LOCAL_EDGE_SAMPLES;
@@ -4844,6 +4845,23 @@ static int refit_corner(const image_view *view, const vec2 c, const corner_sides
                 t[n] = d, y[n] = offset, n++;
         }
         if (n < 8 || !fit_edge_run(t, y, n, scale, fits[e])) return 0;
+        /* A broad ramp can fill the sampled profile and leave only a few crossings. If their fit
+         * extrapolates outside the profile at the corner, check the prediction
+         * near that end on fresh profiles centered on the fitted edge. The measured crossing should be
+         * closer to the predicted line than to the starting side in at least two of three profiles. */
+        if (edge_width > 2 * NAPA_LOCAL_EDGE_RADIUS && fabs(fits[e][0]) > NAPA_LOCAL_EDGE_RADIUS) {
+            int supported = 0;
+            for (int i = 0; i < 3; i++) {
+                double d = f->near_end + (i + 0.5) * spacing;
+                double u = d / scale, predicted = fits[e][0] + u * (fits[e][1] + u * fits[e][2]);
+                double x = c.x + d * f->ux[e] + predicted * f->nx[e];
+                double y0 = c.y + d * f->uy[e] + predicted * f->ny[e];
+                double offset;
+                if (edge_crossing(view, x, y0, f->nx[e], f->ny[e], &offset) &&
+                    fabs(offset) < fabs(predicted + offset)) supported++;
+            }
+            if (supported < 2) return 0;
+        }
         fits[e][0] += shift;
     }
     double a = 0, b = 0;
@@ -7629,7 +7647,7 @@ static int polish_decoded_corners(napa_detector *det, const image_view *rview, c
                     const double disagree = straight_weight * fade(corner_sides_offset(rview, start[k], &sides, one_cell, c->measured_bias), NAPA_LOCAL_EDGE_DISAGREE - NAPA_FADE_EDGE, NAPA_LOCAL_EDGE_DISAGREE + NAPA_FADE_EDGE);
                     if (disagree > weight) weight = disagree;
                 }
-                if (weight > 0 && refit_corner(rview, start[k], &sides, one_cell, c->measured_bias, &fitted)) {
+                if (weight > 0 && refit_corner(rview, start[k], &sides, one_cell, c->measured_bias, q->edge_w, &fitted)) {
                     const double dx = fitted.x - start[k].x, dy = fitted.y - start[k].y;
                     /* A small local move can still correct a bowed edge; fade it as bow confidence falls. */
                     const double move_weight = fade(vec_length(dx, dy), NAPA_LOCAL_MIN_MOVE - NAPA_FADE_MOVE, NAPA_LOCAL_MIN_MOVE + NAPA_FADE_MOVE);

@@ -9,6 +9,27 @@ from napa_vision import tags as tag_art
 from tests.test_napa_detector import _scene
 
 
+@pytest.mark.parametrize(
+    "fixture,tag_id,limit",
+    [("local-edge-motion-blurred-535.npz", 535, 3.1), ("local-edge-fisheye-466.npz", 466, 5.0)],
+)
+def test_extrapolated_corner_follows_nearby_edges(fixture: str, tag_id: int, limit: float) -> None:
+    # Cropped synthetic tags with projected vertex truth. On the blurred edge an unsupported
+    # extrapolation misses by 5.02 px. On the bowed edge discarding a supported one misses by 6.31 px.
+    with np.load(Path(__file__).parent / "fixtures" / fixture) as data:
+        image, corners = data["image"], data["corners"]
+        camera = (data["camera_matrix"], data["distortion"]) if "camera_matrix" in data else None
+    detector = NapaDetector(min_tag_px=22, min_contrast=8, camera=camera)
+    try:
+        observations = detector.detect(image)
+    finally:
+        detector.close()
+    assert [(o.tag_id, o.hamming) for o in observations] == [(tag_id, 0)]
+    observed = observations[0].corners
+    error = min(np.abs(np.roll(q, k, axis=0) - corners).max() for q in (observed, observed[::-1]) for k in range(4))
+    assert error < limit
+
+
 @pytest.mark.parametrize("minimum", [16, 32])
 @pytest.mark.parametrize("recovery", [False, True])
 @pytest.mark.parametrize("radial", [0.0, 0.2], ids=["straight", "curved"])
