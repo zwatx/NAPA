@@ -2662,19 +2662,21 @@ static void band_label(void *arg, int k, int worker) {
     band_job *job = (band_job *)arg;
     napa_band *b = &job->det->bands[k];
     band_arena *a = &job->det->band_arenas[worker];
-    /* At most half a row's samples (plus one) start runs, in each of the band's rows. */
-    if (arena_reserve(a, a->used + (size_t)(b->ty1 - b->ty0) * TILE * ((size_t)job->lw / 2 + 1) + 1) != 0) {
-        b->n = -1;
-        return;
-    }
     label_context ctx = label_context_for(job->det);
-    b->worker = worker, b->at = a->used;
-    ctx.runs = a->runs + b->at, ctx.parent = a->parent + b->at;
+    if (k != 0) {
+        /* Only band zero knows its final offset before labelling. */
+        if (arena_reserve(a, a->used + (size_t)(b->ty1 - b->ty0) * TILE * ((size_t)job->lw / 2 + 1) + 1) != 0) {
+            b->n = -1;
+            return;
+        }
+        b->worker = worker, b->at = a->used;
+        ctx.runs = a->runs + b->at, ctx.parent = a->parent + b->at;
+    }
     ctx.scratch = &a->scratch;
     ctx.level_extrema_out = NULL;
     const int base = b->ty0 > 0 ? b->ty0 - 1 : 0;
     b->n = threshold_context(&ctx, NULL, job->lw, job->lh, job->factor, 0, job->shadow, b->ty0, b->ty1, base);
-    if (b->n > 0) a->used += (size_t)b->n;
+    if (k != 0 && b->n > 0) a->used += (size_t)b->n;
     uint8_t *out = job->det->level_extrema_out;
     if (out != NULL) { /* the band's own rows, saved for a later pass over this level (never set with saved input) */
         const size_t at = (size_t)b->ty0 * job->tw, count = (size_t)(b->ty1 - b->ty0) * job->tw;
@@ -2687,6 +2689,7 @@ static void band_label(void *arg, int k, int worker) {
 /* Band k's runs into the level's arrays at its offset, parents shifted with them. */
 static void band_place(void *arg, int k, int worker) {
     (void)worker;
+    k++; /* band zero is already in place */
     band_job *job = (band_job *)arg;
     napa_detector *det = job->det;
     const napa_band *b = &det->bands[k];
@@ -2809,7 +2812,7 @@ static int threshold_banded(napa_detector *det, int lw, int lh, int factor, int 
         det->bands[k].offset = n;
         n += det->bands[k].n;
     }
-    pool_run(det->pool, band_place, &job, bands);
+    pool_run(det->pool, band_place, &job, bands - 1);
     n = 0;
     label_context ctx = label_context_for(det);
     for (int k = 0; k < bands; k++) {
