@@ -2692,12 +2692,11 @@ static void band_place(void *arg, int k, int worker) {
     const napa_band *b = &det->bands[k];
     const band_arena *a = &det->band_arenas[b->worker];
     memcpy(det->runs + b->offset, a->runs + b->at, (size_t)b->n * sizeof(napa_run));
-    int32_t *P = det->parent + b->offset;
-    const int32_t *bp = a->parent + b->at;
-    for (int i = 0; i < b->n; i++) {
-        const int32_t p = bp[i];
-        P[i] = p == i ? i + b->offset : P[p]; /* P[p], p < i, is already its root */
-    }
+    int32_t *NAPA_RESTRICT P = det->parent + b->offset;
+    const int32_t *NAPA_RESTRICT bp = a->parent + b->at;
+    const int n = b->n;
+    const int32_t offset = b->offset;
+    for (int i = 0; i < n; i++) P[i] = bp[i] + offset;
 }
 
 static void invert_bytes(uint8_t *p, size_t n);
