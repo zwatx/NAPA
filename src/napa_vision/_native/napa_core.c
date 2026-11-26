@@ -7220,12 +7220,12 @@ static void memo_candidates(void *ctx, int index, int worker) {
         m->frame_sides = 0;
         const int bw = comp->maxx - comp->minx + 1, bh = comp->maxy - comp->miny + 1;
         const int undersized_whole = j->base > 1 && (bw < j->lo || bh < j->lo);
-        rough_pick(comp, undersized_whole, m->pick);
         if (whole_set_aside(j->base, j->lo, j->s, j->last, bw, bh)) { /* by the loop, for the terminal replay */
             if (j->wholes_now)
                 decode_shape_ahead(j, thread_detector(det, worker), comp, j->s, j->last, &det->dmemo[det->whole_index[ci]]);
             continue;
         }
+        rough_pick(comp, undersized_whole, m->pick);
         if (memo_covered(j, comp, j->s, j->coverage_start)) continue;
         double best_area, perim_q;
         if (rough_quad_too_full(&det->fam, comp, m->pick, &best_area, &perim_q)) continue;
