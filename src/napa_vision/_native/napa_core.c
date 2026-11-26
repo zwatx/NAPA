@@ -7206,11 +7206,17 @@ static void memo_candidates(void *ctx, int index, int worker) {
             /* The extremes assemble_level_candidates left: this candidate's runs, in the order it would have added them. */
             component *c = &j->cands[ci];
             const int32_t *next_run = j->cand_runs, tail = j->cand_run_end[ci];
-            int32_t e = tail;
-            do {
-                e = next_run[e];
+            int32_t e = next_run[tail];
+            for (;;) {
+                const int32_t next = next_run[e];
+#if defined(__aarch64__) && (defined(__GNUC__) || defined(__clang__))
+                __builtin_prefetch(&next_run[next], 0, 3);
+                __builtin_prefetch(&j->runs[next], 0, 3);
+#endif
                 comp_add_pair_run(c, &j->runs[e], j->bits, j->bit_stride);
-            } while (e != tail);
+                if (e == tail) break;
+                e = next;
+            }
             comp_flush_pair(c, j->bits, j->bit_stride);
             c->work.candidate.fate = CANDIDATE_UNTRIED, c->work.candidate.piece_count = 0;
         }
