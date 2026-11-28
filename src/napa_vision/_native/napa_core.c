@@ -7545,13 +7545,15 @@ static int decode_quad_reporting(napa_detector *det, const image_view *im, const
     if (signed_area(report) < 0) { vec2 t = report[1]; report[1] = report[3]; report[3] = t; } /* as decode_quad does */
     if (!decoded) return 0;
     if (memcmp(r, report, sizeof r) != 0 && (side_level != NULL || levels != NULL)) {
-        /* The levels later steps weigh are the reported quad's own, as if it had been decoded. */
+        /* The levels later steps weigh are the reported quad's own, as if it had been decoded. A reported quad whose
+         * border can't be read (too little contrast) keeps the decoded quad's levels rather than undefined ones. */
         const family_layout *L = &det->fam;
         double H[9], grid[256], border[64], black, white;
         square_to_quad(report, H);
-        read_border(L, im, H, params->min_contrast, grid, border, &black, &white, NULL);
-        if (levels != NULL) levels->black = black, levels->white = white, levels->has_model = 0, levels->model_pending = 0;
-        if (side_level != NULL) border_side_levels(L, grid, black, white, side_level);
+        if (read_border(L, im, H, params->min_contrast, grid, border, &black, &white, NULL) >= 0 && white > black) {
+            if (levels != NULL) levels->black = black, levels->white = white, levels->has_model = 0, levels->model_pending = 0;
+            if (side_level != NULL) border_side_levels(L, grid, black, white, side_level);
+        }
     }
     int first = 0;
     for (int k = 0; k < 4; k++) if (r[k].x == out->corners[0] && r[k].y == out->corners[1]) first = k;
