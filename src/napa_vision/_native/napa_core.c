@@ -7047,6 +7047,27 @@ static int fit_initial_from_level(const image_view *view, const vec2 rough[4], v
                              min_contrast, width, cells, frame_sides);
 }
 
+/* The first fit of a trimmed outline (trimmed_rough_quad) after a failed one. TRIM_NONE: no outline, or it failed the
+ * strict quiet-zone screen; TRIM_UNFIT: the fit ran (fine, edge_w and frame_sides as it left them) and failed; TRIM_FIT:
+ * it fitted, from rough. -2 if memory runs out. The candidate loop and the threaded pre-pass both use it. */
+enum { TRIM_NONE, TRIM_UNFIT, TRIM_FIT };
+static int trimmed_first_fit(const image_view *view, const component *comp, int s, double sx, double sy, double offx,
+                             double offy, double smax, double cells, int min_contrast, const vec2 failed[4], vec2 rough[4],
+                             vec2 fine[4], double *edge_w, int *frame_sides) {
+    const int trim = trimmed_rough_quad(view, comp, s, sx, sy, offx, offy, failed, rough);
+    if (trim <= 0) return trim;
+    if (!quiet_zone_passes(view, rough, 0.5 * s * smax, cells, min_contrast, 1, 0)) return TRIM_NONE;
+    *edge_w = 0, *frame_sides = 0;
+    return fit_initial_from_level(view, rough, fine, s, smax, min_contrast, edge_w, cells, frame_sides) ? TRIM_FIT
+                                                                                                        : TRIM_UNFIT;
+}
+
+/* Which candidates may try a trimmed outline: large blobs whose first fit failed, on the coarse levels. On the finest
+ * level trimming costs about a tenth more on busy real frames for few tags, which mostly come back coarser anyway. */
+static int may_trim(int s, int piece, int shadow, int extended_shape) {
+    return s >= 8 && !piece && !shadow && !extended_shape;
+}
+
 /* Geometry passed from the early decode into final fitting. It owns no component or queue pointers. */
 typedef struct {
     vec2 fine[4];
@@ -7148,6 +7169,11 @@ typedef struct cand_memo {
     candidate_outcome outcome;
     candidate_fit fit_after; /* the fit as decode_and_refine left it */
     uint32_t replay;
+    /* After a failed first fit, the trimmed outline's (trimmed_first_fit's result, or -1: left to the loop) */
+    signed char trim;
+    int trim_frame_sides;
+    vec2 trimmed[4], trim_fine[4];
+    double trim_edge_w;
 } cand_memo;
 
 /* threads, terminal level: a deferred fine whole's first-fit stage (stage: first_fit_stage's 1 or 0, with rough, fit and
@@ -7374,7 +7400,7 @@ static void memo_candidates(void *ctx, int index, int worker) {
             c->work.candidate.fate = CANDIDATE_UNTRIED, c->work.candidate.piece_count = 0;
         }
         const component *comp = &j->cands[ci];
-        m->screen = m->fit = -1;
+        m->screen = m->fit = m->trim = -1;
         m->ahead = 0;
         m->frame_sides = 0;
         const int bw = comp->maxx - comp->minx + 1, bh = comp->maxy - comp->miny + 1;
@@ -7393,6 +7419,14 @@ static void memo_candidates(void *ctx, int index, int worker) {
         vec2 rough[4];
         rough_corners(m->pick, j->s, j->sx, j->sy, j->offx, j->offy, rough);
         memo_first_fit(j, m, rough, 0, undersized_whole);
+        /* The loop tries a trimmed outline when the fit fails, unless restoring a rough corner fits first (rare). */
+        if (m->fit == 0 && may_trim(j->s, 0, j->shadow, whole_is_extended(j->base, j->s, j->last, undersized_whole, comp, bw,
+                                                                         bh, best_area))) {
+            const int trim = trimmed_first_fit(j->view, comp, j->s, j->sx, j->sy, j->offx, j->offy, j->smax, j->cells,
+                                               j->params->min_contrast, rough, m->trimmed, m->trim_fine, &m->trim_edge_w,
+                                               &m->trim_frame_sides);
+            m->trim = (signed char)(trim < 0 ? -1 : trim); /* without memory, the loop tries again and reports it */
+        }
         if (j->ahead && m->fit > 0) /* decoding ahead implies one detector per pool thread */
             decode_ahead(j, thread_detector(det, worker), m, comp, bw, bh, best_area, perim_q, rough);
     }
@@ -8756,18 +8790,22 @@ static int first_fit_stage(napa_detector *det, const image_view *view_in, const 
             }
         }
     }
-    /* A large blob may be a tag with lines touching it. Only on the coarse levels: on the finest level trimming costs
-     * about a tenth more on busy real frames for few tags, which mostly come back on the coarser levels anyway. */
-    if (!first_fit && !piece && !shadow && !extended_shape && s >= 8) {
+    /* A large blob may be a tag with lines touching it. */
+    if (!first_fit && may_trim(s, piece, shadow, extended_shape)) {
         vec2 trimmed[4];
-        const int trim = trimmed_rough_quad(&view, comp, s, sx, sy, offx, offy, rough, trimmed);
-        if (trim < 0) return -2;
-        if (trim && quiet_zone_passes(&view, trimmed, 0.5 * s * smax, cells, params->min_contrast, 1, 0)) {
-            fit.edge_w = 0, fit.frame_sides = 0;
-            first_fit = fit_initial_from_level(&view, trimmed, fit.fine, s, smax,
-                params->min_contrast, &fit.edge_w, cells, &fit.frame_sides);
-            if (first_fit) memcpy(rough, trimmed, sizeof trimmed), fit.trimmed = 1;
+        int trim;
+        if (mm && mm->trim >= 0) {
+            trim = mm->trim;
+            if (trim != TRIM_NONE) {
+                memcpy(trimmed, mm->trimmed, sizeof trimmed), memcpy(fit.fine, mm->trim_fine, sizeof fit.fine);
+                fit.edge_w = mm->trim_edge_w, fit.frame_sides = mm->trim_frame_sides;
+            }
+        } else {
+            trim = trimmed_first_fit(&view, comp, s, sx, sy, offx, offy, smax, cells, params->min_contrast, rough, trimmed,
+                                     fit.fine, &fit.edge_w, &fit.frame_sides);
+            if (trim < 0) return -2;
         }
+        if (trim == TRIM_FIT) first_fit = 1, memcpy(rough, trimmed, sizeof trimmed), fit.trimmed = 1;
     }
     /* The same for a small candidate whose first fit fails: a fragment's quad may not fit at all. */
     int regrown = 0;
