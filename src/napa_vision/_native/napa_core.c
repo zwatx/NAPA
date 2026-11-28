@@ -6752,6 +6752,19 @@ static NAPA_NOINLINE void rough_pick(const component *comp, int undersized_whole
      * cross(p[t], p[t + 1]), so moving vertex v to point m changes it by a term linear in m:
      * cross(m, next - prev). Each move is one dot product. */
     const int(*E)[2] = comp->ext;
+    /* These extremes already form the bounding rectangle, the largest
+     * possible quad. The first maximum in the ordered search starts 0,2,4;
+     * its fourth extreme then has to be the top left corner. */
+    const int x0 = comp->minx, x1 = comp->maxx, y0 = comp->miny, y1 = comp->maxy;
+    if (x0 < x1 && y0 < y1 &&
+        E[0][0] == x1 && E[0][1] == y0 && E[2][0] == x1 && E[2][1] == y1 &&
+        E[4][0] == x0 && E[4][1] == y1 && E[8][0] == x0 && E[8][1] == y0) {
+        pick[0][0] = x1, pick[0][1] = y0;
+        pick[1][0] = x1, pick[1][1] = y1;
+        pick[2][0] = x0, pick[2][1] = y1;
+        pick[3][0] = x0, pick[3][1] = y0;
+        return;
+    }
     int idx[4] = {0, 4, 8, 12};
     int64_t best2 = -1; /* twice the area: (p2 - p0) x (p3 - p1) */
 #if defined(__aarch64__) && !defined(NAPA_NO_SIMD)
