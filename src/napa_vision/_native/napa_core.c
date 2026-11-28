@@ -6363,33 +6363,19 @@ static void tone_sample(const image_view *view, const vec2 q[4], int step, float
     tone_standardize(raw, step, y);
 }
 
-/* Blur search along one axis, keeping the best fit so far: from the current blur, step to the better neighbour while
- * the fit improves. A tag's fit error falls to one minimum along each blur axis. */
+/* Blur sweep along one axis, keeping the best fit so far. */
 static void tone_sweep(const napa_detector *det, const float cells[10][10], const float y[NAPA_SOFT_AREA], int step, int vary_v, int *u, int *v,
                        double *best, double tone[3]) {
     float across[10][30];
     const int was_u = *u, was_v = *v;
-    double sse[NAPA_TONE_SIGMAS], fits[NAPA_TONE_SIGMAS][3];
-    for (int b = 0; b < NAPA_TONE_SIGMAS; b++) sse[b] = -1;
-    if (vary_v) tone_across(cells, (const float (*)[10])det->tone_blur[was_u], step, across);
-    int at = vary_v ? was_v : was_u;
-    if (*best != HUGE_VAL) sse[at] = *best, memcpy(fits[at], tone, sizeof fits[at]); /* the incumbent pair */
-    for (;;) {
-        for (int b = at - 1; b <= at + 1; b++) {
-            if (b < 0 || b >= NAPA_TONE_SIGMAS || sse[b] >= 0) continue;
-            const int su = vary_v ? was_u : b, sv = vary_v ? b : was_v;
-            if (!vary_v) tone_across(cells, (const float (*)[10])det->tone_blur[su], step, across);
-            sse[b] = tone_fit(y, (const float (*)[30])across, (const float (*)[10])det->tone_blur[sv], step, fits[b]);
-        }
-        int next = at;
-        for (int b = at - 1; b <= at + 1; b++)
-            if (b >= 0 && b < NAPA_TONE_SIGMAS && sse[b] < sse[next]) next = b;
-        if (next == at) break;
-        at = next;
-    }
-    if (sse[at] < *best) {
-        *best = sse[at], memcpy(tone, fits[at], 3 * sizeof *tone);
-        if (vary_v) *v = at; else *u = at;
+    for (int b = 0; b < NAPA_TONE_SIGMAS; b++) {
+        const int su = vary_v ? was_u : b, sv = vary_v ? b : was_v;
+        const int incumbent = *best != HUGE_VAL && su == *u && sv == *v;
+        if ((!vary_v && !incumbent) || b == 0) tone_across(cells, (const float (*)[10])det->tone_blur[su], step, across);
+        if (incumbent) continue; /* this pair already produced *best; refitting cannot improve it */
+        double c[3];
+        const double sse = tone_fit(y, (const float (*)[30])across, (const float (*)[10])det->tone_blur[sv], step, c);
+        if (sse < *best) *best = sse, *u = su, *v = sv, memcpy(tone, c, 3 * sizeof *tone);
     }
 }
 
