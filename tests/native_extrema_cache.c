@@ -127,7 +127,11 @@ static int check_case(napa_detector *det, const uint8_t *image, int min_px, int 
     for (int k = 0; k < levels; k++) {
         assert(same_level(with[k], without[k]));
         saved_extrema *saved = &det->saved[with[k].s];
-        assert(saved->valid); /* every recovery step here was an ordinary step too */
+        if (!saved->valid) {
+            /* An ordinary pass from step two skips step four (detect_pass), so recovery thresholds that step itself. */
+            assert(with[k].s == 4 && min_px * 3 / (4 * 8) == 2);
+            continue;
+        }
         /* Full-range extrema threshold every tile at mid-grey: a level that reads them labels other runs. */
         const int lw = (W + with[k].s - 1) / with[k].s, lh = (H + with[k].s - 1) / with[k].s;
         const size_t tiles = (size_t)((lw + TILE - 1) / TILE) * ((lh + TILE - 1) / TILE);

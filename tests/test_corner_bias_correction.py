@@ -3,6 +3,7 @@ import numpy as np
 import pytest
 
 from napa_vision.napa_detector import NapaDetector
+from napa_vision.tags import tag_cells
 from tests.test_napa_detector import _scene
 
 
@@ -24,6 +25,31 @@ def test_corners_stay_accurate_whatever_the_camera_encoding(side: int, angle: fl
     found = NapaDetector(min_tag_px=16, recover_shadows=False).detect(image)
     assert [o.tag_id for o in found] == [42]
     assert _worst_corner_error(found[0].corners, expected) < 0.2
+
+
+@pytest.mark.parametrize("border", [0.9, 1.0])
+def test_sharp_printed_border_width_does_not_move_corners(border: float) -> None:
+    tag_id = 42
+    corners = np.array([[94.25, 81.6], [174.15, 95.1], [159.2, 175.8], [85.35, 161.45]])
+    square = np.array([[1, 1], [9, 1], [9, 9], [1, 9]], dtype=np.float32)
+    matrix = cv2.getPerspectiveTransform(corners.astype(np.float32), square)
+    # Keep the outer black square fixed and redistribute the six inner cells.
+    bounds = np.r_[0, 1, 1 + border, 1 + border + np.arange(1, 7) * (8 - 2 * border) / 6, 9, 10]
+    size, oversample = 200, 8
+    axis = (np.arange(size * oversample) + 0.5) / oversample - 0.5
+    pixels = np.stack(np.meshgrid(axis, axis), axis=-1)
+    u, v = cv2.perspectiveTransform(pixels.reshape(1, -1, 2), matrix).reshape(-1, 2).T
+    col = np.searchsorted(bounds, u, side="right") - 1
+    row = np.searchsorted(bounds, v, side="right") - 1
+    inside = (0 <= row) & (row < 10) & (0 <= col) & (col < 10)
+    white = tag_cells(tag_id)[row.clip(0, 9), col.clip(0, 9)]
+    levels = np.where(inside, np.where(white, 0.8, 0.05), 0.3)
+    image = levels.reshape(size, oversample, size, oversample).mean(axis=(1, 3))
+    # Linear light and unclipped levels isolate the artwork from camera tone.
+    image = np.rint(image * (255 * 0.85 / 0.8)).astype(np.uint8)
+    found = NapaDetector(min_tag_px=22).detect(image)
+    assert [tag.tag_id for tag in found] == [tag_id]
+    assert _worst_corner_error(found[0].corners, corners) < 0.05
 
 
 def _outward_shift(actual: np.ndarray, expected: np.ndarray) -> float:

@@ -151,12 +151,21 @@ detection got faster.
 ## Threads
 
 `NapaDetector(threads=4)` lets one `detect` call use four threads, the caller's included, for lower latency on each
-frame. The detections are identical at every thread count. The search is split into horizontal bands that are joined
-exactly, so the gain grows with the search's share of the work: smaller `min_tag_px`, larger frames.
+frame. The detections are identical at every thread count. Each level is labelled in horizontal bands, taller ones first
+so the threads finish together, that are joined exactly. On the finest search level, one thread reads the frame a strip at
+a time while the others measure the noise floors and then label the bands, each band starting once the strips around it
+are read. On a Raspberry Pi 5, one thread reads a frame from memory about as fast as several, so the labelling runs
+alongside the reading rather than after it. Each candidate's extremes, decode and refinement also run ahead on every
+thread, and the candidates are then taken in their usual order, so a frame with several tags no longer refines them one
+after another. A level followed by another also works out ahead the blobs it sets aside to try last. Meanwhile the next
+level is sampled and labelled, and when that is the coarsest level, its candidates are found and fitted too; once this
+level's tags are known, the candidates they cover are dropped and the rest are decoded across the threads.
 
-On a Raspberry Pi 5 with 1280x800 frames, four threads took the default from 0.97 to 0.85 ms per frame and
-`min_tag_px=16` from 2.57 to 1.87 ms. Search levels below about 100,000 samples, and `split_touching`'s labelling, run
-on one thread. With several cameras already keeping the cores busy, leave it at 1 and run one detector per camera instead.
+On a Raspberry Pi 5 with 1920x1080 FRC frames, four threads took the default from 1.66 to 0.89 ms per frame and
+`min_tag_px=16` from 3.40 to 1.90 ms. Search levels below about 100,000 samples, and `split_touching`'s labelling, run
+on one thread. Decoding ahead is off with `camera_gamma` or `soft_decode`, and with `regrow_small_tags`
+until the frame's regrowth budget is spent. With several cameras already keeping the cores busy, leave it at 1 and run
+one detector per camera instead.
 
 ## Tag families
 

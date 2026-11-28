@@ -20,9 +20,9 @@ static void check(const int *order, int n, const double *x, const double *y, con
     int kept = 0;
     for (int i = 0; i < n; i++) kept += fabs(-(px[i]-mx)*dy + (py[i]-my)*dx) <= 1;
     assert(kept == (n == 6 ? 2 : 3));
-    double lx, ly, ux, uy; int rejected = 0;
-    assert(fit_side_line_impl(px, py, wt, n, 0, &lx, &ly, &ux, &uy, &rejected));
-    assert(rejected && fabs(lx-mx) < 1e-12 && fabs(ly-my) < 1e-12);
+    double lx, ly, ux, uy;
+    assert(fit_side_line(px, py, wt, n, 0, &lx, &ly, &ux, &uy));
+    assert(fabs(lx-mx) < 1e-12 && fabs(ly-my) < 1e-12);
     assert(fabs(ux*dy-uy*dx) < 1e-12);
     for (int i = 0; i < n; i++) {
         assert(px[i] == x[order[i]] && py[i] == y[order[i]] && wt[i] == w[order[i]]);
@@ -57,9 +57,9 @@ int main(void) {
     check(p, 9, x, y, w);
     /* A supported inlier set still refits to its own exact horizontal line. */
     double xx[] = {-30,-20,-10,10,20,30}, yy[] = {0,0,0,0,0,5}, ww[] = {1,1,1,1,1,1};
-    double lx,ly,dx,dy; int rejected;
-    assert(fit_side_line_impl(xx,yy,ww,6,0,&lx,&ly,&dx,&dy,&rejected));
-    assert(rejected && fabs(ly)<1e-12 && fabs(dy)<1e-12);
+    double lx,ly,dx,dy;
+    assert(fit_side_line(xx,yy,ww,6,0,&lx,&ly,&dx,&dy));
+    assert(fabs(ly)<1e-12 && fabs(dy)<1e-12);
     puts("TLS independent fallback, permutation, weighted and refit cases passed");
     return 0;
 }

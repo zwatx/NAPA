@@ -14,13 +14,20 @@ border's dark core, even with blur. At the default `min_tag_px=22` that is every
 third (1 in 9).
 
 Bigger tags are caught on coarser grids (2x, 4x, 8x…), each built from the last. Bands overlap, so a tilted or blurred
-tag can surface on several grids. Your pixels are never modified.
+tag can surface on several grids. When the finest grid samples every other pixel, the next one skips straight to 4x
+coarser: with the capped thresholds below, it and the finest grid find nearly all of what the skipped grid did. Your
+pixels are never modified.
 
 ## 2. Skip flat regions
 
 The grid is tiled. Tiles without enough dark-to-bright range cannot contain a tag edge, so they are skipped whole.
 The bar rises with measured sensor noise, region by region, so one noisy patch does not blind the rest of the frame.
 On noisy frames samples average their neighbours, except on the finest grid, where that would erase tiny borders.
+
+A sample is dark when it falls below the midpoint of its neighbourhood, 3x3 tiles of 4x4 samples (24 px on a grid of
+every other pixel). On that grid, and on the every-eighth-pixel grid after it, a sample in the brightest part of its
+half-tile neighbourhood (12 px on the finer grid) also stays light. That keeps a grey quiet zone light beside the black
+border even when a brighter scene lies just beyond it.
 
 ## 3. Group dark samples into blobs
 
@@ -49,7 +56,11 @@ A few shapes need repairs. Each is kept only if the tag still decodes to the sam
 - **Small fragmented tags**, with `regrow_small_tags=True`: follow the fragment's connected dark pixels at full
   resolution and try its outline again, within a fixed attempt budget.
 - **Grey quiet zone**: if the outline was really the margin, retry at its inner eight tenths.
-- **Side one cell out**: move it in a cell and re-fit.
+- **Side one cell out**: move it in a cell and re-fit, unless one end still lies on the border. Such a side pivoted
+  out from that end, and the next repair moves only the corner that left.
+- **One corner out**: a speck of a grey margin can pull a corner onto the margin's edge, along one side or both. If
+  the border reads white there, step that corner in a cell at a time and re-fit. Keep it only if the ID, the
+  corrected bits and a dark border all hold.
 - **Clipped exposure**: the border must be exactly one cell wide; measure the shrink on the tag and undo it.
 - **Blur and tone curves**: blur on gamma-encoded cameras reads tags a few percent small. NAPA measures blur and tone
   per tag after decoding and shifts sides back. [`camera_gamma`](detection.md#camera-gamma) goes further with a value

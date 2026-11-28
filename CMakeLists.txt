@@ -28,8 +28,9 @@ set_target_properties(napa PROPERTIES
 if(MSVC)
   target_compile_options(napa PRIVATE $<$<CONFIG:Release>:/O2>)
 else()
-  # Signed overflow isn't relied on; -fno-wrapv keeps compilers free to optimise the inner loops.
-  target_compile_options(napa PRIVATE $<$<CONFIG:Release>:-O3> -fno-wrapv)
+  # Signed overflow isn't relied on; -fno-wrapv keeps compilers free to optimise the inner loops. No fused
+  # multiply-adds (GCC's gnu99 and Clang make them on ARM64), so every build gives the same detections.
+  target_compile_options(napa PRIVATE $<$<CONFIG:Release>:-O3> -fno-wrapv -ffp-contract=off)
   # Optional worker threads (napa_set_threads). A plain flag rather than Threads::Threads, so the exported
   # napaConfig.cmake needs no find_dependency; empty where libc has pthreads (Android, glibc 2.34+).
   set(THREADS_PREFER_PTHREAD_FLAG ON)
