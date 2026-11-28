@@ -6943,9 +6943,14 @@ static int trimmed_rough_quad(const image_view *view, const component *comp, int
     memcpy(core.ext, best_ext, sizeof core.ext);
     int pick[4][2];
     rough_pick(&core, 0, pick);
+    /* A thin or tiny piece can pick one extreme twice: no quad to grow (grow_quad divides by each side's length). */
+    for (int k = 0; k < 4; k++)
+        if (pick[k][0] == pick[(k + 1) & 3][0] && pick[k][1] == pick[(k + 1) & 3][1]) return 0;
     vec2 q[4];
     rough_corners(pick, 1, g, g, x0, y0, q);
     grow_quad(q, g, rough);
+    for (int k = 0; k < 4; k++)
+        if (!isfinite(rough[k].x) || !isfinite(rough[k].y)) return 0;
     /* Nothing came off: the outline that already failed. */
     for (int k = 0; k < 4; k++) {
         double nearest = HUGE_VAL;
@@ -7316,6 +7321,7 @@ static void decode_ahead(const memo_job *j, napa_detector *wd, cand_memo *m, con
     candidate_fit fit;
     fit.reach = 0.5 * ((1.5 * s * j->smax + 1.0) + (0.5 * s * j->smax + 1.0));
     fit.edge_w = m->edge_w, fit.frame_sides = m->frame_sides;
+    fit.trimmed = 0; /* decoded ahead only from the ordinary first fit (m->fit > 0) */
     memcpy(fit.fine, m->fine, sizeof fit.fine);
     const double big_px = s * (bw * j->sx > bh * j->sy ? bw * j->sx : bh * j->sy);
     const decode_policy policy = {j->params, decode_params, j->shadow, 0, -1};
