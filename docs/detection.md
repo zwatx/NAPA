@@ -163,7 +163,7 @@ level's tags are known, the candidates they cover are dropped and the rest are d
 
 On a Raspberry Pi 5 with 1920x1080 FRC frames, four threads took the default from 1.66 to 0.89 ms per frame and
 `min_tag_px=16` from 3.40 to 1.90 ms. Search levels below about 100,000 samples, and `split_touching`'s labelling, run
-on one thread. Decoding ahead is off with `camera_gamma`, a camera lens or `soft_decode`, and with `regrow_small_tags`
+on one thread. Decoding ahead is off with `camera_gamma` or `soft_decode`, and with `regrow_small_tags`
 until the frame's regrowth budget is spent. With several cameras already keeping the cores busy, leave it at 1 and run
 one detector per camera instead.
 

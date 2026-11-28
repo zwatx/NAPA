@@ -1334,8 +1334,8 @@ static void sample_at(const image_view *im, const double *x, const double *y, in
 #define NAPA_NOISY_FLOOR 42
 /* The cap after box averaging. Averaging already took most of the noise out, so a floor still above 64 there means
  * extreme noise (sigma above about 30 at stride two): capped at 64 it would let the noise form networks of dark blobs,
- * thousands of candidates a frame. A tag's border survives a floor this high only with strong contrast, but such noise
- * hides weaker borders at this level anyway; coarser levels average more of it out. */
+ * thousands of candidates a frame. The coarser levels reuse this level's floors, so the cap holds for them too: a tag in
+ * such noise needs contrast well above it to be read (in a sweep, sigma 30 at contrast 60 read 7 of 12 tags, not 8). */
 #define NAPA_BOXED_FLOOR_CAP 128
 #define NAPA_BOX_SIGMAS 7.0
 
