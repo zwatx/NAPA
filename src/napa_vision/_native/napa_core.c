@@ -1317,6 +1317,11 @@ static void sample_at(const image_view *im, const double *x, const double *y, in
 #define NAPA_FLOOR_SIGMAS 6.0
 #define NAPA_FLOOR_CAP 64
 #define NAPA_NOISY_FLOOR 42
+/* The cap after box averaging. Averaging already took most of the noise out, so a floor still above 64 there means
+ * extreme noise (sigma above about 30 at stride two): capped at 64 it would let the noise form networks of dark blobs,
+ * thousands of candidates a frame. A tag's border survives a floor this high only with strong contrast, but such noise
+ * hides weaker borders at this level anyway; coarser levels average more of it out. */
+#define NAPA_BOXED_FLOOR_CAP 128
 #define NAPA_BOX_SIGMAS 7.0
 
 /* Debug-only candidate trace (compile with -DNAPA_TRACE): one record per non-trivial blob with the
@@ -8003,7 +8008,7 @@ static int sample_threshold_level(napa_detector *det, const pass_config *config,
             /* Stride-two 3x3 means share one column: their difference measures sqrt(2/3)
              * times their noise sigma. Disjoint averaging blocks need no correction. */
             double sigmas = base == 1 && level->s == 2 ? NAPA_BOX_SIGMAS * sqrt(1.5) : NAPA_BOX_SIGMAS;
-            sampling->contrast = contrast_floors(det, det->level, level->lw, level->lh, params->min_contrast, sigmas, NAPA_FLOOR_CAP);
+            sampling->contrast = contrast_floors(det, det->level, level->lw, level->lh, params->min_contrast, sigmas, NAPA_BOXED_FLOOR_CAP);
         }
         if (sampling->contrast < 0) return -2;
     }
