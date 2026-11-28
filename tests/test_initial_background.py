@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 from napa_vision import NapaDetector
+from napa_vision.tags import tag_image
 
 FIXTURE = Path(__file__).parent / "fixtures" / "initial-background-2.npz"
 
@@ -70,3 +71,32 @@ def test_default_grid_finds_oblique_tag_turned_twice():
         detector.close()
     assert [o.tag_id for o in observations] == [2]
     assert _max_error(observations[0].corners, corners) < 0.25
+
+
+def _raw(observations):
+    return [(o.tag_id, o.hamming, o.decision_margin, o.corners.tolist()) for o in observations]
+
+
+@pytest.mark.filterwarnings("ignore:a frame filled all:RuntimeWarning")
+@pytest.mark.parametrize("capacity", [1, 2, 64])
+@pytest.mark.parametrize(("split", "shadows"), [(False, False), (True, False), (False, True), (True, True)])
+def test_capacity_keeps_the_leading_detections(capacity, split, shadows):
+    # The fixture turned twice (found at min_tag_px=32) beside a plain tag: whatever the capacity and recovery passes,
+    # the detections kept are the leading ones of an uncapped ordinary call, unchanged.
+    left = np.rot90(_fixture()[0], 2).copy()
+    image = np.full((240, 640), 190, np.uint8)
+    image[:, :320] = left
+    marker = tag_image(5, cell_px=8)
+    image[72 : 72 + marker.shape[0], 432 : 432 + marker.shape[1]] = marker
+    ordinary = NapaDetector(min_tag_px=32)
+    try:
+        expected = _raw(ordinary.detect(image))
+    finally:
+        ordinary.close()
+    assert [o[0] for o in expected] == [5, 2]
+    detector = NapaDetector(min_tag_px=32, max_detections=capacity, split_touching=split, recover_shadows=shadows)
+    try:
+        actual = _raw(detector.detect(image))
+    finally:
+        detector.close()
+    assert actual == expected[:capacity]
