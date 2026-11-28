@@ -487,6 +487,11 @@ typedef struct {
     int valid; /* written during this frame, not merely allocated */
 } saved_extrema;
 
+typedef struct {
+    float weights[30][10];
+    uint8_t first[30], end[30];
+} tone_kernel;
+
 struct napa_detector {
     family_layout fam;
     int threads;      /* napa_set_threads: 1 (the default) runs on the calling thread only */
@@ -521,7 +526,7 @@ struct napa_detector {
     soft_candidate *blocked_candidates, *grid_probe; /* probe: where a decode attempt copies its samples */
     size_t blocked_count, blocked_capacity;
     uint64_t *blocked_codes; /* every rotated code as a 6x6 bitboard, row by row */
-    float (*tone_blur)[30][10]; /* blur tables for measuring blur and tone curve on a decoded tag; built on first use */
+    tone_kernel *tone_blur; /* blur tables for measuring blur and tone curve on a decoded tag; built on first use */
     soft_candidate *soft_candidates;
     size_t soft_count, soft_capacity;
     int soft_capturing, soft_failed;
@@ -6165,13 +6170,21 @@ static inline double soft_position(int i);
 
 static int tone_prepare(napa_detector *det) {
     if (det->tone_blur != NULL) return 1;
-    float (*t)[30][10] = (float (*)[30][10])malloc(NAPA_TONE_SIGMAS * sizeof *t);
+    tone_kernel *t = (tone_kernel *)malloc(NAPA_TONE_SIGMAS * sizeof *t);
     if (t == NULL) return 0;
     for (int b = 0; b < NAPA_TONE_SIGMAS; b++) {
         const double sigma = 0.06 * (b + 1);
         for (int r = 0; r < 30; r++)
             for (int c = 0; c < 10; c++)
-                t[b][r][c] = (float)(normal_cdf((soft_position(r) - (c - 1.0)) / sigma) - normal_cdf((soft_position(r) - c) / sigma));
+                t[b].weights[r][c] = (float)(normal_cdf((soft_position(r) - (c - 1.0)) / sigma) - normal_cdf((soft_position(r) - c) / sigma));
+    }
+    for (int b = 0; b < NAPA_TONE_SIGMAS; b++) {
+        for (int r = 0; r < 30; r++) {
+            int first = 0, end = 10;
+            while (first < end && t[b].weights[r][first] == 0) first++;
+            while (end > first && t[b].weights[r][end - 1] == 0) end--;
+            t[b].first[r] = (uint8_t)first, t[b].end[r] = (uint8_t)end;
+        }
     }
     det->tone_blur = t;
     return 1;
@@ -6256,9 +6269,9 @@ static double tone_straight_shift(double s) {
 
 /* The tag's picture against its code, blurred separately along each axis and passed through a quadratic tone curve.
  * Returns the residual, and the tone terms through c. */
-/* across[r][col] for the lattice columns in use: the cells of each row, blurred along it. Sums per column rather
+/* across[r][i] for lattice column i * step: the cells of each row, blurred along it. Sums per column rather
  * than per sample so they vectorize; each still adds its terms in the same order, so the rounding doesn't change. */
-static void tone_across(const float cells[10][10], const float (*blur)[10], int step, float across[10][30]) {
+static void tone_across(const float cells[10][10], const float (*blur)[10], int step, float across[10][32]) {
     float by_column[10][10];
     for (int r = 0; r < 10; r++)
         for (int k = 0; k < 10; k++) by_column[k][r] = cells[r][k];
@@ -6282,31 +6295,31 @@ static void tone_across(const float cells[10][10], const float (*blur)[10], int 
             for (int r = 0; r < 10; r++) value[r] += by_column[k][r] * weight;
         }
 #endif
-        for (int r = 0; r < 10; r++) across[r][col] = value[r];
+        for (int r = 0; r < 10; r++) across[r][col / step] = value[r];
     }
+    const int cols = (30 + step - 1) / step;
+    if (cols % 4)
+        for (int r = 0; r < 10; r++)
+            for (int i = cols; i < (cols + 3) / 4 * 4; i++) across[r][i] = 0;
 }
 
-static double tone_fit(const float y[NAPA_SOFT_AREA], const float across[10][30], const float (*down)[10], int step, double c[3]) {
+static double tone_fit(const float y[NAPA_SOFT_AREA], const float across[10][32], const tone_kernel *kernel, int step, double c[3]) {
     double m[5] = {0, 0, 0, 0, 0}, v[2] = {0, 0}, a[3][4];
     int count = 0;
     const int columns = (30 + step - 1) / step;
-    float packed[10][30];
-    for (int k = 0; k < 10; k++)
-        for (int i = 0; i < columns; i++) packed[k][i] = across[k][i * step];
     for (int r = 0; r < 30; r += step) {
-        float values[30];
+        float values[32];
         memset(values, 0, sizeof values);
-        for (int k = 0; k < 10; k++) {
-            const float weight = down[r][k];
+        for (int k = kernel->first[r]; k < kernel->end[r]; k++) {
+            const float weight = kernel->weights[r][k];
 #if defined(__aarch64__) && defined(__ARM_NEON) && !defined(NAPA_NO_SIMD)
             const float32x4_t w = vdupq_n_f32(weight);
-            const float *pk = packed[k];
+            const float *pk = across[k];
             int i = 0;
-            for (; i + 4 <= columns; i += 4)
+            for (; i < columns; i += 4)
                 vst1q_f32(values + i, vaddq_f32(vld1q_f32(values + i), vmulq_f32(w, vld1q_f32(pk + i))));
-            for (; i < columns; i++) values[i] += weight * packed[k][i];
 #else
-            for (int i = 0; i < columns; i++) values[i] += weight * packed[k][i];
+            for (int i = 0; i < columns; i++) values[i] += weight * across[k][i];
 #endif
         }
         for (int i = 0; i < columns; i++) {
@@ -6381,15 +6394,15 @@ static void tone_sample(const image_view *view, const vec2 q[4], int step, float
 /* Blur sweep along one axis, keeping the best fit so far. */
 static void tone_sweep(const napa_detector *det, const float cells[10][10], const float y[NAPA_SOFT_AREA], int step, int vary_v, int *u, int *v,
                        double *best, double tone[3]) {
-    float across[10][30];
+    float across[10][32];
     const int was_u = *u, was_v = *v;
     for (int b = 0; b < NAPA_TONE_SIGMAS; b++) {
         const int su = vary_v ? was_u : b, sv = vary_v ? b : was_v;
         const int incumbent = *best != HUGE_VAL && su == *u && sv == *v;
-        if ((!vary_v && !incumbent) || b == 0) tone_across(cells, (const float (*)[10])det->tone_blur[su], step, across);
+        if ((!vary_v && !incumbent) || b == 0) tone_across(cells, (const float (*)[10])det->tone_blur[su].weights, step, across);
         if (incumbent) continue; /* this pair already produced *best; refitting cannot improve it */
         double c[3];
-        const double sse = tone_fit(y, (const float (*)[30])across, (const float (*)[10])det->tone_blur[sv], step, c);
+        const double sse = tone_fit(y, (const float (*)[32])across, &det->tone_blur[sv], step, c);
         if (sse < *best) *best = sse, *u = su, *v = sv, memcpy(tone, c, 3 * sizeof *tone);
     }
 }
@@ -6405,17 +6418,17 @@ typedef struct {
 } tone_measure;
 
 static void tone_picture(const napa_detector *det, const float cells[10][10], int u, int v, float picture[NAPA_SOFT_AREA]) {
-    float across[10][30];
+    float across[10][32];
     for (int r = 0; r < 10; r++)
         for (int col = 0; col < 30; col++) {
             float value = 0;
-            for (int k = 0; k < 10; k++) value += cells[r][k] * det->tone_blur[u][col][k];
+            for (int k = 0; k < 10; k++) value += cells[r][k] * det->tone_blur[u].weights[col][k];
             across[r][col] = value;
         }
     for (int r = 0; r < 30; r++)
         for (int col = 0; col < 30; col++) {
             float value = 0;
-            for (int k = 0; k < 10; k++) value += det->tone_blur[v][r][k] * across[k][col];
+            for (int k = 0; k < 10; k++) value += det->tone_blur[v].weights[r][k] * across[k][col];
             picture[r * 30 + col] = 0.5f * value + 0.5f;
         }
 }
@@ -6447,13 +6460,13 @@ static int tone_measure_tag(napa_detector *det, const image_view *view, const na
     double best = HUGE_VAL, tone[3] = {0, 0, 0};
     /* A few samples and blurs are enough to see that a tone curve is straight, which is most tags. */
     {
-        float across[10][30];
-        tone_across((const float (*)[10])m->cells, (const float (*)[10])det->tone_blur[NAPA_TONE_START], 3, across);
+        float across[10][32];
+        tone_across((const float (*)[10])m->cells, (const float (*)[10])det->tone_blur[NAPA_TONE_START].weights, 3, across);
         tone_read(view, q, 3, 0, raw);
         tone_standardize(raw, 3, y);
         for (int b = 2; b <= 6; b += 2) {
             double c[3];
-            const double sse = tone_fit(y, (const float (*)[30])across, (const float (*)[10])det->tone_blur[b], 3, c);
+            const double sse = tone_fit(y, (const float (*)[32])across, &det->tone_blur[b], 3, c);
             if (sse < best) best = sse, memcpy(tone, c, sizeof tone);
         }
     }
@@ -6473,9 +6486,9 @@ static int tone_measure_tag(napa_detector *det, const image_view *view, const na
     /* The search ran on a quarter of the lattice; judge its answer on all of it. */
     tone_standardize(raw, 1, y);
     {
-        float across[10][30];
-        tone_across((const float (*)[10])m->cells, (const float (*)[10])det->tone_blur[u], 1, across);
-        best = tone_fit(y, (const float (*)[30])across, (const float (*)[10])det->tone_blur[v], 1, tone);
+        float across[10][32];
+        tone_across((const float (*)[10])m->cells, (const float (*)[10])det->tone_blur[u].weights, 1, across);
+        best = tone_fit(y, (const float (*)[32])across, &det->tone_blur[v], 1, tone);
     }
     memcpy(m->tone, tone, sizeof tone);
     m->fit = 1 - best / NAPA_SOFT_AREA;
