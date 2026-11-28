@@ -1081,7 +1081,7 @@ static inline double sample_bilinear(const image_view *im, double x, double y) {
     double fy = y - y0;
     const uint8_t *p = img + (size_t)y0 * stride + x0;
     double a = p[0] + (p[1] - p[0]) * fx;
-    double b = p[stride] + (p[stride + 1] - p[stride]) * fx;
+    double b = p[stride] + ((p + stride)[1] - p[stride]) * fx;
     double v = a + (b - a) * fy;
     return im->invert ? 255.0 - v : v;
 }
@@ -1105,7 +1105,7 @@ static inline __m128d sample_bilinear_pair(const image_view *im, __m128d x, __m1
     __m128d p0 = _mm_cvtepi32_pd(_mm_setr_epi32(pa[0], pb[0], 0, 0));
     __m128d d01 = _mm_cvtepi32_pd(_mm_setr_epi32(pa[1] - pa[0], pb[1] - pb[0], 0, 0));
     __m128d p2 = _mm_cvtepi32_pd(_mm_setr_epi32(pa[stride], pb[stride], 0, 0));
-    __m128d d23 = _mm_cvtepi32_pd(_mm_setr_epi32(pa[stride + 1] - pa[stride], pb[stride + 1] - pb[stride], 0, 0));
+    __m128d d23 = _mm_cvtepi32_pd(_mm_setr_epi32((pa + stride)[1] - pa[stride], (pb + stride)[1] - pb[stride], 0, 0));
     __m128d fx = _mm_sub_pd(x, _mm_cvtepi32_pd(xi)), fy = _mm_sub_pd(y, _mm_cvtepi32_pd(yi));
     __m128d a = _mm_add_pd(p0, _mm_mul_pd(d01, fx)), b = _mm_add_pd(p2, _mm_mul_pd(d23, fx));
     __m128d val = _mm_add_pd(a, _mm_mul_pd(_mm_sub_pd(b, a), fy));
@@ -1126,7 +1126,7 @@ static inline float64x2_t sample_bilinear_pair(const image_view *im, float64x2_t
     const uint8_t *pb = img + (size_t)vgetq_lane_s64(yi, 1) * stride + vgetq_lane_s64(xi, 1);
     const float64x2_t p0 = {pa[0], pb[0]}, d01 = {pa[1] - pa[0], pb[1] - pb[0]};
     const float64x2_t p2 = {pa[stride], pb[stride]};
-    const float64x2_t d23 = {pa[stride + 1] - pa[stride], pb[stride + 1] - pb[stride]};
+    const float64x2_t d23 = {(pa + stride)[1] - pa[stride], (pb + stride)[1] - pb[stride]};
     const float64x2_t fx = vsubq_f64(x, vcvtq_f64_s64(xi)), fy = vsubq_f64(y, vcvtq_f64_s64(yi));
     const float64x2_t a = vaddq_f64(p0, vmulq_f64(d01, fx)), b = vaddq_f64(p2, vmulq_f64(d23, fx));
     const float64x2_t val = vaddq_f64(a, vmulq_f64(vsubq_f64(b, a), fy));
@@ -2908,7 +2908,7 @@ static void profile_fixed(const uint8_t *img, int stride, int32_t fxp, int32_t f
         int32_t fx = (fxp >> 4) & 4095, fy = (fyp >> 4) & 4095;
         const uint8_t *q = img + (size_t)y0 * stride + x0;
         int32_t top = (q[0] << 12) + (q[1] - q[0]) * fx;
-        int32_t bot = (q[stride] << 12) + (q[stride + 1] - q[stride]) * fx;
+        int32_t bot = (q[stride] << 12) + ((q + stride)[1] - q[stride]) * fx;
         prof[j] = ((int64_t)top << 12) + (int64_t)(bot - top) * fy;
     }
 #else
@@ -2917,7 +2917,7 @@ static void profile_fixed(const uint8_t *img, int stride, int32_t fxp, int32_t f
         int32_t fx = (fxp >> 4) & 4095, fy = (fyp >> 4) & 4095;
         const uint8_t *q = img + (size_t)y0 * stride + x0;
         int32_t top = (q[0] << 12) + (q[1] - q[0]) * fx;
-        int32_t bot = (q[stride] << 12) + (q[stride + 1] - q[stride]) * fx;
+        int32_t bot = (q[stride] << 12) + ((q + stride)[1] - q[stride]) * fx;
         prof[j] = ((int64_t)top << 12) + (int64_t)(bot - top) * fy;
     }
 #endif
