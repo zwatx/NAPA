@@ -53,6 +53,9 @@ A few shapes need repairs. Each is kept only if the tag still decodes to the sam
 - **Sides cut by the frame**: use the frame boundary as a temporary side, then locate the missing outer side from
   the border's inner edge beside decoded white cells. Keep it only if the other sides agree and the ID still matches.
   Fully visible sides can supply a bow estimate; corners outside the frame are never locally re-fit.
+- **Lines touching a tag** (cables, clips, clutter): they join the tag's blob and pull its rough quad off the tag. If
+  a large blob on a coarse grid fails its first fit, its box is re-read at about 48 samples across, eroded by one
+  sample to cut off anything thin, and the largest piece left gets the fit instead.
 - **Small fragmented tags**, with `regrow_small_tags=True`: follow the fragment's connected dark pixels at full
   resolution and try its outline again, within a fixed attempt budget.
 - **Grey quiet zone**: if the outline was really the margin, retry at its inner eight tenths.

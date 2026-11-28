@@ -6819,6 +6819,145 @@ static NAPA_NOINLINE void rough_corners(int pick[4][2], int s, double sx, double
     }
 }
 
+/* A blob whose rough quad fails its first fit can be a tag with thin dark lines touching it (cables, clips, tape,
+ * clutter): the lines carry the blob's extremes, and so its rough quad, off the tag. Read the blob's box at full
+ * resolution on a grid about NAPA_TRIM_GRID samples across, threshold it at the box's mid grey, erode it by one sample
+ * (taking off anything up to two samples thick), and take the extremes of the largest remaining piece. A tag that
+ * fills a third of the box has a border at least two grid steps thick, so its eroded ring holds together; the lines
+ * that touched it come off. Returns 1 with that piece's rough quad grown back by the eroded step, 0 if the blob is
+ * too small, too long or too large for this, or if trimming left the outline that already failed, -2 if memory runs
+ * out. */
+#define NAPA_TRIM_GRID 48       /* grid steps across the box's short side */
+#define NAPA_TRIM_MIN_PX 48     /* smallest box side, in pixels */
+#define NAPA_TRIM_MIN_LEVEL 20  /* smallest box side, in level samples */
+#define NAPA_TRIM_MAX_SIDE 256  /* grid steps: four words of a row's bits */
+static int trimmed_rough_quad(const image_view *view, const component *comp, int s, double sx, double sy, double offx,
+                              double offy, const vec2 failed[4], vec2 rough[4]) {
+    const double x0 = (comp->minx - 1) * (double)s * sx + offx, y0 = (comp->miny - 1) * (double)s * sy + offy;
+    const double wpx = (comp->maxx - comp->minx + 2) * (double)s * sx, hpx = (comp->maxy - comp->miny + 2) * (double)s * sy;
+    const double short_px = wpx < hpx ? wpx : hpx, long_px = wpx < hpx ? hpx : wpx;
+    if (short_px < NAPA_TRIM_MIN_PX || comp->maxx - comp->minx + 1 < NAPA_TRIM_MIN_LEVEL ||
+        comp->maxy - comp->miny + 1 < NAPA_TRIM_MIN_LEVEL) return 0;
+    /* A tag with a few lines on it keeps a squarish box; a blob over most of the frame is scenery. */
+    if (long_px > 2 * short_px || (wpx > 0.5 * view->w && hpx > 0.5 * view->h)) return 0;
+    double g = floor(short_px / NAPA_TRIM_GRID);
+    if (g < 1) g = 1;
+    const int bw = (int)(wpx / g) + 1, bh = (int)(hpx / g) + 1;
+    if (bw > NAPA_TRIM_MAX_SIDE || bh > NAPA_TRIM_MAX_SIDE) return 0;
+    enum { TW = NAPA_TRIM_MAX_SIDE / 64 + 1 }; /* words per row, with a zero guard word */
+    const size_t rows = (size_t)bh + 2;
+    uint64_t *D = (uint64_t *)calloc(rows * TW * 2, sizeof(uint64_t));
+    int32_t *stack = (int32_t *)malloc(sizeof(int32_t) * ((size_t)bw * bh + 3 * rows));
+    if (D == NULL || stack == NULL) {
+        free(D), free(stack);
+        return -2;
+    }
+    uint64_t *E = D + rows * TW;
+    int32_t *rmin = stack + (size_t)bw * bh, *rmax = rmin + rows, *touched = rmax + rows;
+    int col[NAPA_TRIM_MAX_SIDE];
+    for (int x = 0; x < bw; x++) {
+        const int px = (int)(x0 + x * g + 0.5);
+        col[x] = px < 0 ? 0 : px >= view->w ? view->w - 1 : px;
+    }
+    /* Two reads of the grid: its range sets the threshold, then its dark samples. Rereading costs less than storing it. */
+    int lo = 255, hi = 0;
+    for (int y = 0; y < bh; y++) {
+        int py = (int)(y0 + y * g + 0.5);
+        py = py < 0 ? 0 : py >= view->h ? view->h - 1 : py;
+        const uint8_t *src = view->p + (size_t)py * view->stride;
+        for (int x = 0; x < bw; x++) {
+            const int v = view->invert ? 255 - src[col[x]] : src[col[x]];
+            lo = v < lo ? v : lo, hi = v > hi ? v : hi;
+        }
+    }
+    const int t = (lo + hi) / 2;
+    for (int y = 0; y < bh; y++) {
+        int py = (int)(y0 + y * g + 0.5);
+        py = py < 0 ? 0 : py >= view->h ? view->h - 1 : py;
+        const uint8_t *src = view->p + (size_t)py * view->stride;
+        uint64_t *r = D + (size_t)(y + 1) * TW;
+        for (int x = 0; x < bw; x++) {
+            const int v = view->invert ? 255 - src[col[x]] : src[col[x]];
+            r[x >> 6] |= (uint64_t)(v < t) << (x & 63);
+        }
+    }
+    /* Erode: dark with all eight neighbours dark. Rows AND vertically, then horizontally with carries across words. */
+    for (int y = 1; y <= bh; y++) {
+        const uint64_t *u = D + (size_t)(y - 1) * TW, *c = D + (size_t)y * TW, *d = D + (size_t)(y + 1) * TW;
+        uint64_t v[TW];
+        for (int w = 0; w < TW; w++) v[w] = u[w] & c[w] & d[w];
+        uint64_t *e = E + (size_t)y * TW;
+        for (int w = 0; w < TW; w++) {
+            const uint64_t left = (v[w] << 1) | (w > 0 ? v[w - 1] >> 63 : 0);
+            const uint64_t right = (v[w] >> 1) | (w + 1 < TW ? v[w + 1] << 63 : 0);
+            e[w] = v[w] & left & right;
+        }
+    }
+    /* The largest 4-connected piece left, flooded bit by bit (each sample is cleared as it is pushed). Its rows' first
+     * and last samples give its 16 directional extremes, as a blob's rows give its own. */
+    for (size_t y = 0; y < rows; y++) rmin[y] = INT32_MAX, rmax[y] = -1;
+    int best_count = 0, best_ext[16][2];
+    const int row_bits = TW * 64;
+    for (int y = 1; y <= bh; y++) {
+        for (int w = 0; w < TW; w++) {
+            uint64_t *seed = &E[(size_t)y * TW + w];
+            while (*seed) {
+                const int x = 64 * w + napa_ctz64(*seed);
+                int n = 0, count = 0, nrows = 0;
+                *seed &= *seed - 1;
+                stack[n++] = y * row_bits + x;
+                while (n) {
+                    const int p = stack[--n], px = p % row_bits, py = p / row_bits;
+                    count++;
+                    if (rmax[py] < 0) touched[nrows++] = py;
+                    rmin[py] = px < rmin[py] ? px : rmin[py], rmax[py] = px > rmax[py] ? px : rmax[py];
+                    const int nb[4][2] = {{px - 1, py}, {px + 1, py}, {px, py - 1}, {px, py + 1}};
+                    for (int j = 0; j < 4; j++) {
+                        const int qx = nb[j][0], qy = nb[j][1];
+                        if (qx < 0 || qx >= row_bits) continue; /* rows 0 and bh + 1 are zero */
+                        uint64_t *word = &E[(size_t)qy * TW + (qx >> 6)];
+                        const uint64_t bit = (uint64_t)1 << (qx & 63);
+                        if (*word & bit) *word &= ~bit, stack[n++] = qy * row_bits + qx;
+                    }
+                }
+                if (count > best_count) {
+                    int extv[16];
+                    best_count = count;
+                    for (int k = 0; k < 16; k++) extv[k] = INT32_MIN;
+                    for (int i = 0; i < nrows; i++) {
+                        const int ry = touched[i];
+                        for (int k = 0; k < 16; k++) {
+                            const int rx = comp_dirs[k][0] > 0 ? rmax[ry] : rmin[ry];
+                            const int v = comp_dirs[k][0] * rx + comp_dirs[k][1] * (ry - 1);
+                            if (v > extv[k]) extv[k] = v, best_ext[k][0] = rx, best_ext[k][1] = ry - 1;
+                        }
+                    }
+                }
+                for (int i = 0; i < nrows; i++) rmin[touched[i]] = INT32_MAX, rmax[touched[i]] = -1;
+            }
+        }
+    }
+    free(D), free(stack);
+    if (best_count < 4 * NAPA_TRIM_GRID) return 0; /* at least the eroded ring of a tag a third of the box across */
+    component core = *comp;
+    memcpy(core.ext, best_ext, sizeof core.ext);
+    int pick[4][2];
+    rough_pick(&core, 0, pick);
+    vec2 q[4];
+    rough_corners(pick, 1, g, g, x0, y0, q);
+    grow_quad(q, g, rough);
+    /* Nothing came off: the outline that already failed. */
+    for (int k = 0; k < 4; k++) {
+        double nearest = HUGE_VAL;
+        for (int j = 0; j < 4; j++) {
+            const double d = vec_length(rough[k].x - failed[j].x, rough[k].y - failed[j].y);
+            nearest = d < nearest ? d : nearest;
+        }
+        if (nearest > 3 * g) return 1;
+    }
+    return 0;
+}
+
 /* A maximum-area inscribed quad can slide a corner along a long side, leaving
  * another component extremum beyond the short side's outward fit window. After
  * that fit fails, restore the nearest endpoint from the retained support point.
@@ -6923,6 +7062,7 @@ typedef struct {
     double reach, edge_w;
     edge_levels lv;
     int frame_sides;
+    int trimmed; /* the first fit is the trimmed outline's (trimmed_rough_quad): one tag of the blob, whose pieces stay open */
     napa_detection early;
 } candidate_fit;
 
@@ -8575,6 +8715,7 @@ static int first_fit_stage(napa_detector *det, const image_view *view_in, const 
     const int bw = comp->maxx - comp->minx + 1, bh = comp->maxy - comp->miny + 1;
     const double big_px = s * (bw * sx > bh * sy ? bw * sx : bh * sy);
     candidate_fit fit = *out;
+    fit.trimmed = 0;
     rough_corners(pick, s, sx, sy, offx, offy, rough);
     /* Ordinary rough corners are dark samples. A completed small corner is a
      * geometric hypothesis from the same component bounds, not a new dark sample.
@@ -8621,6 +8762,19 @@ static int first_fit_stage(napa_detector *det, const image_view *view_in, const 
                     params->min_contrast, &fit.edge_w, cells, &fit.frame_sides);
                 if (first_fit) memcpy(rough, supported, sizeof supported);
             }
+        }
+    }
+    /* A large blob may be a tag with lines touching it. Only on the coarse levels: on the finest level trimming costs
+     * about a tenth more on busy real frames for few tags, which mostly come back on the coarser levels anyway. */
+    if (!first_fit && !piece && !shadow && !extended_shape && s >= 8) {
+        vec2 trimmed[4];
+        const int trim = trimmed_rough_quad(&view, comp, s, sx, sy, offx, offy, rough, trimmed);
+        if (trim < 0) return -2;
+        if (trim && quiet_zone_passes(&view, trimmed, 0.5 * s * smax, cells, params->min_contrast, 1, 0)) {
+            fit.edge_w = 0, fit.frame_sides = 0;
+            first_fit = fit_initial_from_level(&view, trimmed, fit.fine, s, smax,
+                params->min_contrast, &fit.edge_w, cells, &fit.frame_sides);
+            if (first_fit) memcpy(rough, trimmed, sizeof trimmed), fit.trimmed = 1;
         }
     }
     /* The same for a small candidate whose first fit fails: a fragment's quad may not fit at all. */
@@ -9067,7 +9221,8 @@ static int process_level_candidates(napa_detector *det, const pass_config *confi
             continue; /* No ordinary coverage, output count or restart decision changes. */
         }
         TRACE(12);
-        *candidate_fate = CANDIDATE_DECODED;
+        /* A tag read from a trimmed outline is one tag of its blob: the blob's pieces may hold others. */
+        *candidate_fate = fit.trimmed ? CANDIDATE_FIT_FAILED : CANDIDATE_DECODED;
         if ((split || watch) && !outputs->necks && !outputs->touching) outputs->touching = corners_touch(rview, &d, cells);
         if (outputs->found < outputs->max_out) {
             if (!save_center(&det->out_centers, &det->out_center_capacity, outputs->found, &d)) return -2;
