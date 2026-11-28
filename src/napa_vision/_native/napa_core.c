@@ -251,7 +251,12 @@ static int pool_extend(napa_pool *pool, const void *ctx, int n) {
     if (pool == NULL) return 0;
     napa_mutex_lock(&pool->lock);
     const int on_pool = pool->ctx == ctx && pool->done < pool->jobs;
-    if (on_pool) pool->jobs += n;
+    if (on_pool) {
+        /* Workers that ran out of indices sleep until the generation changes: start a new one so they take part. */
+        pool->jobs += n;
+        pool->generation++;
+        napa_cond_broadcast(&pool->work);
+    }
     napa_mutex_unlock(&pool->lock);
     return on_pool;
 }
