@@ -73,12 +73,12 @@
 typedef HANDLE napa_thread_t;
 typedef SRWLOCK napa_mutex_t;
 typedef CONDITION_VARIABLE napa_cond_t;
-#define napa_mutex_init(m) InitializeSRWLock(m)
+#define napa_mutex_init(m) (InitializeSRWLock(m), 0)
 #define napa_mutex_destroy(m) ((void)0)
 #define napa_mutex_lock(m) AcquireSRWLockExclusive(m)
 #define napa_mutex_trylock(m) (TryAcquireSRWLockExclusive(m) != 0)
 #define napa_mutex_unlock(m) ReleaseSRWLockExclusive(m)
-#define napa_cond_init(c) InitializeConditionVariable(c)
+#define napa_cond_init(c) (InitializeConditionVariable(c), 0)
 #define napa_cond_destroy(c) ((void)0)
 #define napa_cond_wait(c, m) SleepConditionVariableSRW(c, m, INFINITE, 0)
 #define napa_cond_broadcast(c) WakeAllConditionVariable(c)
@@ -172,11 +172,21 @@ static void pool_destroy(napa_pool *pool) {
 static napa_pool *pool_create(int workers) {
     napa_pool *pool = (napa_pool *)calloc(1, sizeof(napa_pool));
     if (pool == NULL) return NULL;
-    napa_mutex_init(&pool->lock);
-    napa_mutex_init(&pool->owner);
-    napa_cond_init(&pool->work);
-    napa_cond_init(&pool->done_cond);
-    napa_cond_init(&pool->progress);
+    /* Initialized in order; on a failure, undo the ones before it (pool_destroy assumes all five). */
+    int ready = 0;
+    if (napa_mutex_init(&pool->lock) == 0) ready++;
+    if (ready == 1 && napa_mutex_init(&pool->owner) == 0) ready++;
+    if (ready == 2 && napa_cond_init(&pool->work) == 0) ready++;
+    if (ready == 3 && napa_cond_init(&pool->done_cond) == 0) ready++;
+    if (ready == 4 && napa_cond_init(&pool->progress) == 0) ready++;
+    if (ready < 5) {
+        if (ready > 3) napa_cond_destroy(&pool->done_cond);
+        if (ready > 2) napa_cond_destroy(&pool->work);
+        if (ready > 1) napa_mutex_destroy(&pool->owner);
+        if (ready > 0) napa_mutex_destroy(&pool->lock);
+        free(pool);
+        return NULL;
+    }
     for (int i = 0; i < workers; i++) {
         pool->arg[i].pool = pool, pool->arg[i].id = i + 1;
 #if defined(_WIN32)
